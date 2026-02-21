@@ -1,8 +1,5 @@
 [workspace]
-members = [
-    "contracts/attestation",
-    "contracts/integration-registry",
-]
+members = ["contracts/attestation", "contracts/lender-consumer"]
 resolver = "2"
 
 [profile.release]
