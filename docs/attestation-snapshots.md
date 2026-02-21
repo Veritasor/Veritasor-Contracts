@@ -42,14 +42,14 @@ The attestation snapshot contract stores periodic checkpoints of key attestation
 
 ## Build (WASM)
 
-When building the snapshot contract for `wasm32-unknown-unknown`, the attestation contract WASM must exist first (the snapshot uses `contractimport!` and does not link the attestation crate to avoid duplicate symbols). From the workspace root, run:
+When building the snapshot contract for `wasm32-unknown-unknown`, the attestation contract WASM must exist first (the snapshot uses `contractimport!`; the path is relative to the workspace root). From the workspace root, run:
 
 ```bash
 cargo build --release -p veritasor-attestation --target wasm32-unknown-unknown
 cargo build --release --target wasm32-unknown-unknown
 ```
 
-CI does this in two steps; local builds should do the same if building only the snapshot.
+CI builds the attestation WASM before Check, Test, and Build WASM so the snapshot compiles.
 
 ## Snapshot frequency
 
