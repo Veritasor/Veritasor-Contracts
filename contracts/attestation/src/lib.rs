@@ -5,11 +5,13 @@ pub mod access_control;
 pub mod dynamic_fees;
 pub mod events;
 pub mod multisig;
+pub mod rate_limit;
 
 pub use access_control::{ROLE_ADMIN, ROLE_ATTESTOR, ROLE_BUSINESS, ROLE_OPERATOR};
 pub use dynamic_fees::{compute_fee, DataKey, FeeConfig};
 pub use events::{AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
+pub use rate_limit::RateLimitConfig;
 
 #[cfg(test)]
 mod access_control_test;
@@ -19,6 +21,8 @@ mod dynamic_fees_test;
 mod events_test;
 #[cfg(test)]
 mod multisig_test;
+#[cfg(test)]
+mod rate_limit_test;
 #[cfg(test)]
 mod test;
 
@@ -129,6 +133,40 @@ impl AttestationContract {
         dynamic_fees::set_fee_config(&env, &config);
     }
 
+    // ── Admin: Rate-limit configuration ─────────────────────────────
+
+    /// Configure or update the attestation rate limit.
+    ///
+    /// * `max_submissions` – Maximum submissions per business in one
+    ///   sliding window. Must be ≥ 1.
+    /// * `window_seconds`  – Window duration in seconds. Must be ≥ 1.
+    /// * `enabled`         – Master switch for rate limiting.
+    ///
+    /// Only the contract admin may call this method.
+    pub fn configure_rate_limit(
+        env: Env,
+        max_submissions: u32,
+        window_seconds: u64,
+        enabled: bool,
+    ) {
+        let admin = dynamic_fees::require_admin(&env);
+        let config = RateLimitConfig {
+            max_submissions,
+            window_seconds,
+            enabled,
+        };
+        rate_limit::set_rate_limit_config(&env, &config);
+
+        // Emit event
+        events::emit_rate_limit_config_changed(
+            &env,
+            max_submissions,
+            window_seconds,
+            enabled,
+            &admin,
+        );
+    }
+
     // ── Role-Based Access Control ───────────────────────────────────
 
     /// Grant a role to an address.
@@ -216,6 +254,9 @@ impl AttestationContract {
         access_control::require_not_paused(&env);
         business.require_auth();
 
+        // Enforce rate limit before any fee collection or state mutation.
+        rate_limit::check_rate_limit(&env, &business);
+
         let key = DataKey::Attestation(business.clone(), period.clone());
         if env.storage().instance().has(&key) {
             panic!("attestation already exists for this business and period");
@@ -229,6 +270,9 @@ impl AttestationContract {
 
         let data = (merkle_root.clone(), timestamp, version, fee_paid);
         env.storage().instance().set(&key, &data);
+
+        // Record successful submission for rate-limit tracking.
+        rate_limit::record_submission(&env, &business);
 
         // Emit event
         events::emit_attestation_submitted(
@@ -483,5 +527,19 @@ impl AttestationContract {
     /// Return the contract admin address.
     pub fn get_admin(env: Env) -> Address {
         dynamic_fees::get_admin(&env)
+    }
+
+    // ── Rate-limit queries ──────────────────────────────────────────
+
+    /// Return the current rate limit configuration, or None if not set.
+    pub fn get_rate_limit_config(env: Env) -> Option<RateLimitConfig> {
+        rate_limit::get_rate_limit_config(&env)
+    }
+
+    /// Return how many submissions a business has in the current window.
+    ///
+    /// Returns 0 when rate limiting is not configured or disabled.
+    pub fn get_submission_window_count(env: Env, business: Address) -> u32 {
+        rate_limit::get_submission_count(&env, &business)
     }
 }
