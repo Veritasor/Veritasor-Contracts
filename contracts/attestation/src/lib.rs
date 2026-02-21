@@ -20,6 +20,8 @@ mod events_test;
 #[cfg(test)]
 mod multisig_test;
 #[cfg(test)]
+mod pause_test;
+#[cfg(test)]
 mod test;
 
 #[contract]
@@ -246,6 +248,7 @@ impl AttestationContract {
         reason: String,
     ) {
         access_control::require_admin(&env, &caller);
+        access_control::require_not_paused(&env);
 
         let key = DataKey::Attestation(business.clone(), period.clone());
         assert!(env.storage().instance().has(&key), "attestation not found");
@@ -270,6 +273,7 @@ impl AttestationContract {
         new_version: u32,
     ) {
         access_control::require_admin(&env, &caller);
+        access_control::require_not_paused(&env);
 
         let key = DataKey::Attestation(business.clone(), period.clone());
         let (old_merkle_root, timestamp, old_version, fee_paid): (BytesN<32>, u64, u32, i128) = env
