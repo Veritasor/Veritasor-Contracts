@@ -22,11 +22,17 @@
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, String, Vec};
 
-/// Cross-contract call to attestation; uses WASM import to avoid linking and duplicate symbols.
+/// Attestation contract client: WASM import for wasm32 (avoids duplicate symbols), crate for tests.
+#[cfg(target_arch = "wasm32")]
 mod attestation_import {
+    // Path relative to workspace root. From crate contracts/attestation-snapshot, ../../ is root.
     soroban_sdk::contractimport!(
-        file = "target/wasm32-unknown-unknown/release/veritasor_attestation.wasm"
+        file = "../../target/wasm32-unknown-unknown/release/veritasor_attestation.wasm"
     );
+}
+#[cfg(not(target_arch = "wasm32"))]
+mod attestation_import {
+    pub use veritasor_attestation::AttestationContractClient;
 }
 
 #[cfg(test)]
@@ -165,7 +171,8 @@ impl AttestationSnapshotContract {
             .instance()
             .get::<_, Address>(&DataKey::AttestationContract)
         {
-            let att_client = attestation_import::Client::new(&env, &attestation_contract);
+            let att_client =
+                attestation_import::AttestationContractClient::new(&env, &attestation_contract);
             let has_attestation = att_client.get_attestation(&business, &period).is_some();
             let revoked = att_client.is_revoked(&business, &period);
             assert!(

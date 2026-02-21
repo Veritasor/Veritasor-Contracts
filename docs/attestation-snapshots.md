@@ -40,6 +40,17 @@ The attestation snapshot contract stores periodic checkpoints of key attestation
 - The contract optionally stores an attestation contract address. When set, `record_snapshot` uses cross-contract calls to verify that an attestation exists and is not revoked for the given (business, period).
 - Snapshots are written by off-chain or on-chain triggers (e.g. indexers or cron jobs) that compute derived metrics from attestations and call `record_snapshot`. The contract does not pull attestation data on its own except for this validation.
 
+## Build (WASM)
+
+When building the snapshot contract for `wasm32-unknown-unknown`, the attestation contract WASM must exist first (the snapshot uses `contractimport!` and does not link the attestation crate to avoid duplicate symbols). From the workspace root, run:
+
+```bash
+cargo build --release -p veritasor-attestation --target wasm32-unknown-unknown
+cargo build --release --target wasm32-unknown-unknown
+```
+
+CI does this in two steps; local builds should do the same if building only the snapshot.
+
 ## Snapshot frequency
 
 Snapshot frequency is not enforced on-chain. Design notes: typical choices are daily, weekly, or per-attestation (each new attestation triggers a snapshot for that business/period). The writer role can be granted to an automated address that writes at the desired cadence.
