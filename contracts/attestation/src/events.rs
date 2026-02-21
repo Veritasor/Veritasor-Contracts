@@ -50,6 +50,16 @@ pub const TOPIC_UNPAUSED: Symbol = symbol_short!("unpaus");
 /// Topic for fee configuration events
 pub const TOPIC_FEE_CONFIG: Symbol = symbol_short!("fee_cfg");
 
+// Topic for business registered
+pub const TOPIC_BIZ_REGISTERED: Symbol = symbol_short!("biz_reg");
+// Topic for business approved
+pub const TOPIC_BIZ_APPROVED:   Symbol = symbol_short!("biz_apr");
+// Topic for business suspended
+pub const TOPIC_BIZ_SUSPENDED:  Symbol = symbol_short!("biz_sus");
+// Topic for business reacticate
+pub const TOPIC_BIZ_REACTIVATE: Symbol = symbol_short!("biz_rea");
+
+
 // ════════════════════════════════════════════════════════════════════
 //  Event Data Structures
 // ════════════════════════════════════════════════════════════════════
@@ -284,4 +294,25 @@ pub fn emit_fee_config_changed(
         changed_by: changed_by.clone(),
     };
     env.events().publish((TOPIC_FEE_CONFIG,), event);
+}
+
+
+pub fn emit_business_registered(env: &Env, business: &Address) {
+    env.events()
+        .publish((TOPIC_BIZ_REGISTERED, business.clone()), ());
+}
+
+pub fn emit_business_approved(env: &Env, business: &Address, approved_by: &Address) {
+    env.events()
+        .publish((TOPIC_BIZ_APPROVED, business.clone()), approved_by.clone());
+}
+
+pub fn emit_business_suspended(env: &Env, business: &Address, suspended_by: &Address, reason: Symbol) {
+    env.events()
+        .publish((TOPIC_BIZ_SUSPENDED, business.clone()), (suspended_by.clone(), reason));
+}
+
+pub fn emit_business_reactivated(env: &Env, business: &Address, reactivated_by: &Address) {
+    env.events()
+        .publish((TOPIC_BIZ_REACTIVATE, business.clone()), reactivated_by.clone());
 }
