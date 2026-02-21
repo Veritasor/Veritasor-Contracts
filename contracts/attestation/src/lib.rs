@@ -24,10 +24,10 @@ mod test;
 
 pub mod dispute;
 use dispute::{
-    Dispute, DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType,
-    generate_dispute_id, store_dispute, get_dispute, get_dispute_ids_by_attestation,
-    get_dispute_ids_by_challenger, add_dispute_to_attestation_index, add_dispute_to_challenger_index,
-    validate_dispute_eligibility, validate_dispute_resolution, validate_dispute_closure,
+    add_dispute_to_attestation_index, add_dispute_to_challenger_index, generate_dispute_id,
+    get_dispute, get_dispute_ids_by_attestation, get_dispute_ids_by_challenger, store_dispute,
+    validate_dispute_closure, validate_dispute_eligibility, validate_dispute_resolution, Dispute,
+    DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType,
 };
 
 #[contract]

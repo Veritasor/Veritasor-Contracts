@@ -1,6 +1,9 @@
 [workspace]
 members = [
     "contracts/attestation",
+    "contracts/attestation-snapshot",
+    "contracts/aggregated-attestations",
+    "contracts/common",
     "contracts/integration-registry",
 ]
 resolver = "2"
