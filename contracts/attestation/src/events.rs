@@ -70,6 +70,8 @@ pub struct AttestationSubmittedEvent {
     pub version: u32,
     /// Fee paid for this attestation
     pub fee_paid: i128,
+    /// Optional SHA-256 hash pointing to the off-chain proof bundle
+    pub proof_hash: Option<BytesN<32>>,
 }
 
 /// Event data for attestation revocation
@@ -150,6 +152,7 @@ pub struct FeeConfigChangedEvent {
 ///
 /// This event is emitted whenever a new attestation is successfully stored.
 /// Indexers can use this to track all attestations submitted to the contract.
+#[allow(clippy::too_many_arguments)]
 pub fn emit_attestation_submitted(
     env: &Env,
     business: &Address,
@@ -158,6 +161,7 @@ pub fn emit_attestation_submitted(
     timestamp: u64,
     version: u32,
     fee_paid: i128,
+    proof_hash: &Option<BytesN<32>>,
 ) {
     let event = AttestationSubmittedEvent {
         business: business.clone(),
@@ -166,6 +170,7 @@ pub fn emit_attestation_submitted(
         timestamp,
         version,
         fee_paid,
+        proof_hash: proof_hash.clone(),
     };
     env.events()
         .publish((TOPIC_ATTESTATION_SUBMITTED, business.clone()), event);

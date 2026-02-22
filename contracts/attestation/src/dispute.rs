@@ -1,4 +1,5 @@
 //! Dispute management module for attestation challenges
+use crate::dynamic_fees::DataKey;
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 /// Status of a dispute
@@ -38,8 +39,8 @@ pub enum DisputeOutcome {
 }
 
 /// Resolution details when a dispute is resolved
-#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DisputeResolution {
     /// Address of the party resolving the dispute
     pub resolver: Address,
@@ -60,8 +61,8 @@ pub enum OptionalResolution {
 }
 
 /// Dispute record for a challenged attestation
-#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Dispute {
     /// Unique identifier for this dispute
     pub id: u64,
@@ -185,7 +186,7 @@ pub fn validate_dispute_eligibility(
     period: &String,
 ) -> Result<(), &'static str> {
     // Check if attestation exists
-    let attestation_key = (business.clone(), period.clone());
+    let attestation_key = DataKey::Attestation(business.clone(), period.clone());
     if !env.storage().instance().has(&attestation_key) {
         return Err("no attestation exists for this business and period");
     }

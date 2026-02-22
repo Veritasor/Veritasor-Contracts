@@ -21,6 +21,8 @@ pub use multisig::{Proposal, ProposalAction, ProposalStatus};
 #[cfg(test)]
 mod access_control_test;
 #[cfg(test)]
+mod dispute_test;
+#[cfg(test)]
 mod dynamic_fees_test;
 #[cfg(test)]
 mod events_test;
@@ -29,10 +31,18 @@ mod extended_metadata_test;
 #[cfg(test)]
 mod multisig_test;
 #[cfg(test)]
+mod proof_hash_test;
+#[cfg(test)]
 mod test;
 // ─── End test modules ───
 
 pub mod dispute;
+use dispute::{
+    add_dispute_to_attestation_index, add_dispute_to_challenger_index, generate_dispute_id,
+    get_dispute_ids_by_attestation, get_dispute_ids_by_challenger, store_dispute,
+    validate_dispute_closure, validate_dispute_eligibility, validate_dispute_resolution, Dispute,
+    DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType, OptionalResolution,
+};
 
 #[contract]
 pub struct AttestationContract;
@@ -204,6 +214,11 @@ impl AttestationContract {
     /// calculated fee (base fee adjusted by tier and volume discounts)
     /// in the configured token.
     ///
+    /// An optional `proof_hash` (SHA-256, 32 bytes) may be provided to
+    /// link this attestation to a full off-chain revenue dataset or
+    /// proof bundle. The hash is content-addressable and must not reveal
+    /// sensitive information beyond acting as a pointer.
+    ///
     /// The business address must authorize the call, or the caller must
     /// have ATTESTOR role.
     ///
@@ -217,6 +232,7 @@ impl AttestationContract {
         merkle_root: BytesN<32>,
         timestamp: u64,
         version: u32,
+        proof_hash: Option<BytesN<32>>,
     ) {
         access_control::require_not_paused(&env);
         business.require_auth();
@@ -232,7 +248,13 @@ impl AttestationContract {
         // Track volume for future discount calculations.
         dynamic_fees::increment_business_count(&env, &business);
 
-        let data = (merkle_root.clone(), timestamp, version, fee_paid);
+        let data = (
+            merkle_root.clone(),
+            timestamp,
+            version,
+            fee_paid,
+            proof_hash.clone(),
+        );
         env.storage().instance().set(&key, &data);
 
         // Emit event
@@ -244,6 +266,7 @@ impl AttestationContract {
             timestamp,
             version,
             fee_paid,
+            &proof_hash,
         );
     }
 
@@ -274,7 +297,14 @@ impl AttestationContract {
         let fee_paid = dynamic_fees::collect_fee(&env, &business);
         dynamic_fees::increment_business_count(&env, &business);
 
-        let data = (merkle_root.clone(), timestamp, version, fee_paid);
+        let proof_hash: Option<BytesN<32>> = None;
+        let data = (
+            merkle_root.clone(),
+            timestamp,
+            version,
+            fee_paid,
+            proof_hash.clone(),
+        );
         env.storage().instance().set(&key, &data);
 
         let metadata = extended_metadata::validate_metadata(&env, &currency_code, is_net);
@@ -288,6 +318,7 @@ impl AttestationContract {
             timestamp,
             version,
             fee_paid,
+            &proof_hash,
         );
     }
 
@@ -317,7 +348,8 @@ impl AttestationContract {
     /// Migrate an attestation to a new version.
     ///
     /// Only ADMIN role can migrate attestations. This updates the merkle root
-    /// and version while preserving the audit trail.
+    /// and version while preserving the audit trail. The existing proof hash
+    /// is preserved — proof hashes cannot be modified without explicit migration.
     pub fn migrate_attestation(
         env: Env,
         caller: Address,
@@ -329,7 +361,13 @@ impl AttestationContract {
         access_control::require_admin(&env, &caller);
 
         let key = DataKey::Attestation(business.clone(), period.clone());
-        let (old_merkle_root, timestamp, old_version, fee_paid): (BytesN<32>, u64, u32, i128) = env
+        let (old_merkle_root, timestamp, old_version, fee_paid, proof_hash): (
+            BytesN<32>,
+            u64,
+            u32,
+            i128,
+            Option<BytesN<32>>,
+        ) = env
             .storage()
             .instance()
             .get(&key)
@@ -340,7 +378,13 @@ impl AttestationContract {
             "new version must be greater than old version"
         );
 
-        let data = (new_merkle_root.clone(), timestamp, new_version, fee_paid);
+        let data = (
+            new_merkle_root.clone(),
+            timestamp,
+            new_version,
+            fee_paid,
+            proof_hash,
+        );
         env.storage().instance().set(&key, &data);
 
         events::emit_attestation_migrated(
@@ -363,14 +407,29 @@ impl AttestationContract {
 
     /// Return stored attestation for (business, period), if any.
     ///
-    /// Returns `(merkle_root, timestamp, version, fee_paid)`.
+    /// Returns `(merkle_root, timestamp, version, fee_paid, proof_hash)`.
+    /// The `proof_hash` is an optional SHA-256 hash pointing to the full
+    /// off-chain revenue dataset or proof bundle.
     pub fn get_attestation(
         env: Env,
         business: Address,
         period: String,
-    ) -> Option<(BytesN<32>, u64, u32, i128)> {
+    ) -> Option<(BytesN<32>, u64, u32, i128, Option<BytesN<32>>)> {
         let key = DataKey::Attestation(business, period);
         env.storage().instance().get(&key)
+    }
+
+    /// Return the off-chain proof hash for an attestation, if set.
+    ///
+    /// The proof hash is a content-addressable SHA-256 hash (32 bytes)
+    /// that points to the full off-chain revenue dataset or proof bundle
+    /// associated with this attestation. Returns `None` if no attestation
+    /// exists or if no proof hash was provided at submission time.
+    pub fn get_proof_hash(env: Env, business: Address, period: String) -> Option<BytesN<32>> {
+        let key = DataKey::Attestation(business, period);
+        let record: Option<(BytesN<32>, u64, u32, i128, Option<BytesN<32>>)> =
+            env.storage().instance().get(&key);
+        record.and_then(|(_, _, _, _, ph)| ph)
     }
 
     /// Return extended metadata for (business, period), if any.
@@ -396,7 +455,7 @@ impl AttestationContract {
             return false;
         }
 
-        if let Some((stored_root, _ts, _ver, _fee)) =
+        if let Some((stored_root, _ts, _ver, _fee, _proof_hash)) =
             Self::get_attestation(env.clone(), business, period)
         {
             stored_root == merkle_root
@@ -546,4 +605,97 @@ impl AttestationContract {
     }
 
     // ─── New feature methods: add new sections below (e.g. `// ── MyFeature ───` then methods). Do not edit sections above. ───
+
+    // ── Dispute Operations ──────────────────────────────────────────
+
+    /// Open a new dispute for an existing attestation.
+    ///
+    /// The challenger must provide evidence and a dispute type.
+    /// Panics if no attestation exists or if the challenger already
+    /// has an open dispute for this attestation.
+    pub fn open_dispute(
+        env: Env,
+        challenger: Address,
+        business: Address,
+        period: String,
+        dispute_type: DisputeType,
+        evidence: String,
+    ) -> u64 {
+        challenger.require_auth();
+
+        validate_dispute_eligibility(&env, &challenger, &business, &period)
+            .unwrap_or_else(|e| panic!("{}", e));
+
+        let dispute_id = generate_dispute_id(&env);
+        let dispute = Dispute {
+            id: dispute_id,
+            challenger: challenger.clone(),
+            business: business.clone(),
+            period: period.clone(),
+            status: DisputeStatus::Open,
+            dispute_type,
+            evidence,
+            timestamp: env.ledger().timestamp(),
+            resolution: OptionalResolution::None,
+        };
+
+        store_dispute(&env, &dispute);
+        add_dispute_to_attestation_index(&env, &business, &period, dispute_id);
+        add_dispute_to_challenger_index(&env, &challenger, dispute_id);
+
+        dispute_id
+    }
+
+    /// Resolve an open dispute with an outcome.
+    ///
+    /// Panics if the dispute does not exist or is not in Open status.
+    pub fn resolve_dispute(
+        env: Env,
+        dispute_id: u64,
+        resolver: Address,
+        outcome: DisputeOutcome,
+        notes: String,
+    ) {
+        resolver.require_auth();
+
+        let mut dispute = validate_dispute_resolution(&env, dispute_id, &resolver)
+            .unwrap_or_else(|e| panic!("{}", e));
+
+        let resolution = DisputeResolution {
+            resolver,
+            outcome,
+            timestamp: env.ledger().timestamp(),
+            notes,
+        };
+
+        dispute.status = DisputeStatus::Resolved;
+        dispute.resolution = OptionalResolution::Some(resolution);
+        store_dispute(&env, &dispute);
+    }
+
+    /// Close a resolved dispute, making it final.
+    ///
+    /// Panics if the dispute does not exist or is not in Resolved status.
+    pub fn close_dispute(env: Env, dispute_id: u64) {
+        let mut dispute =
+            validate_dispute_closure(&env, dispute_id).unwrap_or_else(|e| panic!("{}", e));
+
+        dispute.status = DisputeStatus::Closed;
+        store_dispute(&env, &dispute);
+    }
+
+    /// Retrieve details of a specific dispute.
+    pub fn get_dispute(env: Env, dispute_id: u64) -> Option<Dispute> {
+        dispute::get_dispute(&env, dispute_id)
+    }
+
+    /// Get all dispute IDs for a specific attestation.
+    pub fn get_disputes_by_attestation(env: Env, business: Address, period: String) -> Vec<u64> {
+        get_dispute_ids_by_attestation(&env, &business, &period)
+    }
+
+    /// Get all dispute IDs opened by a specific challenger.
+    pub fn get_disputes_by_challenger(env: Env, challenger: Address) -> Vec<u64> {
+        get_dispute_ids_by_challenger(&env, &challenger)
+    }
 }

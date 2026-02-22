@@ -35,7 +35,7 @@ fn test_submit_attestation_emits_event() {
     let timestamp = 1_700_000_000u64;
     let version = 1u32;
 
-    client.submit_attestation(&business, &period, &root, &timestamp, &version);
+    client.submit_attestation(&business, &period, &root, &timestamp, &version, &None);
 
     // Verify event was emitted (events are logged in the environment)
     let events = env.events().all();
@@ -57,6 +57,7 @@ fn test_multiple_attestations_emit_multiple_events() {
             &root,
             &(1_700_000_000u64 + i as u64),
             &1u32,
+            &None,
         );
     }
 
@@ -77,7 +78,7 @@ fn test_revoke_attestation_emits_event() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None);
 
     let reason = String::from_str(&env, "fraudulent data detected");
     client.revoke_attestation(&admin, &business, &period, &reason);
@@ -95,7 +96,7 @@ fn test_revoked_attestation_fails_verification() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None);
 
     // Verify before revocation
     assert!(client.verify_attestation(&business, &period, &root));
@@ -132,7 +133,14 @@ fn test_migrate_attestation_emits_event() {
     let old_root = BytesN::from_array(&env, &[1u8; 32]);
     let new_root = BytesN::from_array(&env, &[2u8; 32]);
 
-    client.submit_attestation(&business, &period, &old_root, &1_700_000_000u64, &1u32);
+    client.submit_attestation(
+        &business,
+        &period,
+        &old_root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
+    );
 
     client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
 
@@ -150,7 +158,14 @@ fn test_migrate_attestation_updates_data() {
     let old_root = BytesN::from_array(&env, &[1u8; 32]);
     let new_root = BytesN::from_array(&env, &[2u8; 32]);
 
-    client.submit_attestation(&business, &period, &old_root, &1_700_000_000u64, &1u32);
+    client.submit_attestation(
+        &business,
+        &period,
+        &old_root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
+    );
 
     // Old root verifies
     assert!(client.verify_attestation(&business, &period, &old_root));
@@ -163,7 +178,7 @@ fn test_migrate_attestation_updates_data() {
     assert!(client.verify_attestation(&business, &period, &new_root));
 
     // Check version updated
-    let (stored_root, _ts, version, _fee) = client.get_attestation(&business, &period).unwrap();
+    let (stored_root, _ts, version, _fee, _) = client.get_attestation(&business, &period).unwrap();
     assert_eq!(stored_root, new_root);
     assert_eq!(version, 2);
 }
@@ -178,7 +193,14 @@ fn test_migrate_with_same_version_panics() {
     let old_root = BytesN::from_array(&env, &[1u8; 32]);
     let new_root = BytesN::from_array(&env, &[2u8; 32]);
 
-    client.submit_attestation(&business, &period, &old_root, &1_700_000_000u64, &1u32);
+    client.submit_attestation(
+        &business,
+        &period,
+        &old_root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
+    );
 
     // Same version should panic
     client.migrate_attestation(&admin, &business, &period, &new_root, &1u32);
@@ -194,7 +216,14 @@ fn test_migrate_with_lower_version_panics() {
     let old_root = BytesN::from_array(&env, &[1u8; 32]);
     let new_root = BytesN::from_array(&env, &[2u8; 32]);
 
-    client.submit_attestation(&business, &period, &old_root, &1_700_000_000u64, &5u32);
+    client.submit_attestation(
+        &business,
+        &period,
+        &old_root,
+        &1_700_000_000u64,
+        &5u32,
+        &None,
+    );
 
     // Lower version should panic
     client.migrate_attestation(&admin, &business, &period, &new_root, &3u32);
@@ -266,7 +295,7 @@ fn test_event_contains_business_address() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None);
 
     // Events are published with business address as topic for indexing
     let events = env.events().all();
@@ -295,7 +324,7 @@ fn test_is_revoked_after_revocation() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None);
 
     assert!(!client.is_revoked(&business, &period));
 
@@ -315,11 +344,18 @@ fn test_multiple_migrations() {
     let root_v2 = BytesN::from_array(&env, &[2u8; 32]);
     let root_v3 = BytesN::from_array(&env, &[3u8; 32]);
 
-    client.submit_attestation(&business, &period, &root_v1, &1_700_000_000u64, &1u32);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root_v1,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
+    );
     client.migrate_attestation(&admin, &business, &period, &root_v2, &2u32);
     client.migrate_attestation(&admin, &business, &period, &root_v3, &3u32);
 
-    let (stored_root, _ts, version, _fee) = client.get_attestation(&business, &period).unwrap();
+    let (stored_root, _ts, version, _fee, _) = client.get_attestation(&business, &period).unwrap();
     assert_eq!(stored_root, root_v3);
     assert_eq!(version, 3);
 }
