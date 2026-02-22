@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 //! Core attestation tests — verifies submit, get, verify, and duplicate
 //! prevention. These tests run without fee configuration (backward compat).
 

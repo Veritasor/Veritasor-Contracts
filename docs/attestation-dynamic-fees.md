@@ -99,6 +99,8 @@ One-time setup. Must be called before any admin method. The `admin` address must
 | `set_business_tier(business, tier)` | Assign a business to a tier |
 | `set_volume_brackets(thresholds, discounts)` | Set volume discount brackets (parallel vectors, ascending thresholds) |
 | `set_fee_enabled(enabled)` | Toggle fee collection without changing other config |
+| `pause(caller)` | Allows authorized admins and caller to pause submit_attestation, revoke_attestation & migrate_attestation functions  |
+| `unpause(caller)` | Allows authorized admins and caller to unpause submit_attestation, revoke_attestation & migrate_attestation functions |
 
 ### Core Methods
 
