@@ -4,11 +4,13 @@ use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Vec};
 pub mod access_control;
 pub mod dynamic_fees;
 pub mod events;
+pub mod fees;
 pub mod multisig;
 
 pub use access_control::{ROLE_ADMIN, ROLE_ATTESTOR, ROLE_BUSINESS, ROLE_OPERATOR};
 pub use dynamic_fees::{compute_fee, DataKey, FeeConfig};
 pub use events::{AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent};
+pub use fees::{FlatFeeConfig, collect_flat_fee};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
 
 #[cfg(test)]
@@ -17,6 +19,8 @@ mod access_control_test;
 mod dynamic_fees_test;
 #[cfg(test)]
 mod events_test;
+#[cfg(test)]
+mod fees_test;
 #[cfg(test)]
 mod multisig_test;
 #[cfg(test)]
@@ -129,6 +133,39 @@ impl AttestationContract {
         dynamic_fees::set_fee_config(&env, &config);
     }
 
+    /// Configure or update the flat fee mechanism.
+    ///
+    /// * `token`    – Token contract address for fee payment.
+    /// * `treasury` – Address that receives protocol fees.
+    /// * `amount`   – Flat fee amount in token smallest units.
+    /// * `enabled`  – Master switch — when `false`, flat fees are disabled.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The address of the token to be used for fees.
+    /// * `treasury` - The address that will receive the fees.
+    /// * `amount` - The flat fee amount.
+    /// * `enabled` - Whether the fee is enabled.
+    pub fn configure_flat_fee(
+        env: Env,
+        token: Address,
+        treasury: Address,
+        amount: i128,
+        enabled: bool,
+    ) {
+        dynamic_fees::require_admin(&env);
+        assert!(amount >= 0, "flat fee amount must be non-negative");
+        let config = FlatFeeConfig {
+            token,
+            treasury,
+            amount,
+            enabled,
+        };
+        fees::set_flat_fee_config(&env, &config);
+        
+        // We could emit a specific event, but the requirement is just to integrate and document.
+    }
+
     // ── Role-Based Access Control ───────────────────────────────────
 
     /// Grant a role to an address.
@@ -221,13 +258,15 @@ impl AttestationContract {
             panic!("attestation already exists for this business and period");
         }
 
-        // Collect fee (0 if fees disabled or not configured).
-        let fee_paid = dynamic_fees::collect_fee(&env, &business);
+        // Collect fees.
+        let dynamic_fee = dynamic_fees::collect_fee(&env, &business);
+        let flat_fee = fees::collect_flat_fee(&env, &business);
+        let total_fee = dynamic_fee + flat_fee;
 
         // Track volume for future discount calculations.
         dynamic_fees::increment_business_count(&env, &business);
 
-        let data = (merkle_root.clone(), timestamp, version, fee_paid);
+        let data = (merkle_root.clone(), timestamp, version, total_fee);
         env.storage().instance().set(&key, &data);
 
         // Emit event
@@ -238,7 +277,7 @@ impl AttestationContract {
             &merkle_root,
             timestamp,
             version,
-            fee_paid,
+            total_fee,
         );
     }
 
@@ -463,6 +502,15 @@ impl AttestationContract {
     /// Return the current fee configuration, or None if not configured.
     pub fn get_fee_config(env: Env) -> Option<FeeConfig> {
         dynamic_fees::get_fee_config(&env)
+    }
+
+    /// Return the current flat fee configuration, or None if not set.
+    ///
+    /// # Returns
+    ///
+    /// * `Option<FlatFeeConfig>` - The current flat fee configuration.
+    pub fn get_flat_fee_config(env: Env) -> Option<FlatFeeConfig> {
+        fees::get_flat_fee_config(&env)
     }
 
     /// Calculate the fee a business would pay for its next attestation.
