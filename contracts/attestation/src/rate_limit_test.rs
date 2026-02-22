@@ -1,4 +1,4 @@
-#![cfg(test)]
+// rate_limit_test.rs — included under `#[cfg(test)]` in lib.rs
 
 //! # Rate Limit Tests
 //!
