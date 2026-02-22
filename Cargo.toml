@@ -4,6 +4,7 @@ members = [
     "contracts/attestation",
     "contracts/audit-log",
     "contracts/integration-registry",
+    "contracts/protocol-dao",
     "contracts/revenue-stream",
 ]
 resolver = "2"

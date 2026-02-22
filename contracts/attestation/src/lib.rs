@@ -126,6 +126,11 @@ impl AttestationContract {
         dynamic_fees::set_volume_brackets(&env, &thresholds, &discounts);
     }
 
+    pub fn set_fee_dao(env: Env, dao: Address) {
+        dynamic_fees::require_admin(&env);
+        dynamic_fees::set_dao(&env, &dao);
+    }
+
     /// Toggle fee collection on or off without changing other config.
     pub fn set_fee_enabled(env: Env, enabled: bool) {
         dynamic_fees::require_admin(&env);
