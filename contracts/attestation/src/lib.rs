@@ -1,16 +1,23 @@
 #![no_std]
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Vec};
 
+// ─── Feature modules: add new `pub mod <name>;` here (one per feature) ───
 pub mod access_control;
 pub mod dynamic_fees;
 pub mod events;
+pub mod extended_metadata;
 pub mod multisig;
+// ─── End feature modules ───
 
+// ─── Re-exports: add new `pub use <module>::...` here if needed ───
 pub use access_control::{ROLE_ADMIN, ROLE_ATTESTOR, ROLE_BUSINESS, ROLE_OPERATOR};
 pub use dynamic_fees::{compute_fee, DataKey, FeeConfig};
 pub use events::{AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent};
+pub use extended_metadata::{AttestationMetadata, RevenueBasis};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
+// ─── End re-exports ───
 
+// ─── Test modules: add new `mod <name>_test;` here ───
 #[cfg(test)]
 mod access_control_test;
 #[cfg(test)]
@@ -18,16 +25,22 @@ mod dynamic_fees_test;
 #[cfg(test)]
 mod events_test;
 #[cfg(test)]
+mod extended_metadata_test;
+#[cfg(test)]
 mod multisig_test;
 #[cfg(test)]
 mod revocation_test;
 #[cfg(test)]
 mod test;
+// ─── End test modules ───
+
+pub mod dispute;
 
 #[contract]
 pub struct AttestationContract;
 
 #[contractimpl]
+#[allow(clippy::too_many_arguments)]
 impl AttestationContract {
     // ── Initialization ──────────────────────────────────────────────
 
@@ -236,6 +249,50 @@ impl AttestationContract {
         );
     }
 
+    /// Submit a revenue attestation with extended metadata (currency and net/gross).
+    ///
+    /// Same as `submit_attestation` but also stores currency code and revenue basis.
+    /// * `currency_code` – ISO 4217-style code, e.g. "USD", "EUR". Alphabetic, max 3 chars.
+    /// * `is_net` – `true` for net revenue, `false` for gross revenue.
+    #[allow(clippy::too_many_arguments)]
+    pub fn submit_attestation_with_metadata(
+        env: Env,
+        business: Address,
+        period: String,
+        merkle_root: BytesN<32>,
+        timestamp: u64,
+        version: u32,
+        currency_code: String,
+        is_net: bool,
+    ) {
+        access_control::require_not_paused(&env);
+        business.require_auth();
+
+        let key = DataKey::Attestation(business.clone(), period.clone());
+        if env.storage().instance().has(&key) {
+            panic!("attestation already exists for this business and period");
+        }
+
+        let fee_paid = dynamic_fees::collect_fee(&env, &business);
+        dynamic_fees::increment_business_count(&env, &business);
+
+        let data = (merkle_root.clone(), timestamp, version, fee_paid);
+        env.storage().instance().set(&key, &data);
+
+        let metadata = extended_metadata::validate_metadata(&env, &currency_code, is_net);
+        extended_metadata::set_metadata(&env, &business, &period, &metadata);
+
+        events::emit_attestation_submitted(
+            &env,
+            &business,
+            &period,
+            &merkle_root,
+            timestamp,
+            version,
+            fee_paid,
+        );
+    }
+
     /// Revoke an attestation.
     ///
     /// Only ADMIN role or the business owner can revoke attestations. 
@@ -393,6 +450,17 @@ impl AttestationContract {
     ) -> Option<(BytesN<32>, u64, u32, i128)> {
         let key = DataKey::Attestation(business, period);
         env.storage().instance().get(&key)
+    }
+
+    /// Return extended metadata for (business, period), if any.
+    ///
+    /// Returns `None` for attestations submitted without metadata (backward compatible).
+    pub fn get_attestation_metadata(
+        env: Env,
+        business: Address,
+        period: String,
+    ) -> Option<AttestationMetadata> {
+        extended_metadata::get_metadata(&env, &business, &period)
     }
 
     /// Verify that an attestation exists, is not revoked, and its merkle root matches.
@@ -600,4 +668,6 @@ impl AttestationContract {
     pub fn get_admin(env: Env) -> Address {
         dynamic_fees::get_admin(&env)
     }
+
+    // ─── New feature methods: add new sections below (e.g. `// ── MyFeature ───` then methods). Do not edit sections above. ───
 }

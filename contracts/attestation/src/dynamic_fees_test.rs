@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 //! Comprehensive tests for the dynamic fee schedule.
 //!
 //! Covers: pure arithmetic, tier discounts, volume brackets, combined

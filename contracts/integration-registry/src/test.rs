@@ -35,7 +35,7 @@ fn sample_metadata(env: &Env) -> ProviderMetadata {
 
 #[test]
 fn test_initialize() {
-    let (env, client, admin) = setup();
+    let (_env, client, admin) = setup();
     assert_eq!(client.get_admin(), admin);
     assert!(client.has_governance(&admin));
 }
@@ -43,7 +43,7 @@ fn test_initialize() {
 #[test]
 #[should_panic(expected = "already initialized")]
 fn test_initialize_twice_panics() {
-    let (env, client, admin) = setup();
+    let (env, client, _admin) = setup();
     let new_admin = Address::generate(&env);
     client.initialize(&new_admin);
 }
