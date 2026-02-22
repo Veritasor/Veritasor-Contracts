@@ -93,4 +93,6 @@ jobs:
             ${{ runner.os }}-cargo-
       
       - name: Build contracts (release)
-        run: cargo build --release --target wasm32-unknown-unknown
+        run: |
+          cargo build -p veritasor-attestation -p veritasor-audit-log -p veritasor-integration-registry --release --target wasm32-unknown-unknown
+          cargo build -p veritasor-revenue-stream --release
