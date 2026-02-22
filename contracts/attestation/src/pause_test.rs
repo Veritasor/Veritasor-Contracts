@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 //! PauCircuit Breaker (Pause/ Unpause) tests
 
 use super::*;
@@ -181,9 +179,8 @@ fn submit_and_migrate_attestation_paused() {
 
 #[test]
 #[should_panic(expected = "caller must have ADMIN or OPERATOR role")]
-
 fn unauthorized_pause_unpause() {
-    let (env, client, admin) = setup();
+    let (env, client, _) = setup();
     let unauthorized = Address::generate(&env);
 
     client.pause(&unauthorized);
@@ -191,13 +188,7 @@ fn unauthorized_pause_unpause() {
 
 #[test]
 fn repeated_pause() {
-    let (env, client, admin) = setup();
-
-    let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
-    let timestamp = 1_700_000_000u64;
-    let version = 1u32;
+    let (_, client, admin) = setup();
 
     client.pause(&admin);
     assert!(client.is_paused());
