@@ -25,6 +25,8 @@ mod dynamic_fees_test;
 #[cfg(test)]
 mod events_test;
 #[cfg(test)]
+mod expiry_test;
+#[cfg(test)]
 mod extended_metadata_test;
 #[cfg(test)]
 mod multisig_test;
@@ -207,6 +209,12 @@ impl AttestationContract {
     /// The business address must authorize the call, or the caller must
     /// have ATTESTOR role.
     ///
+    /// # Expiry Semantics
+    /// * `expiry_timestamp` – Optional Unix timestamp (seconds) after which
+    ///   the attestation is considered stale. Pass `None` for no expiry.
+    /// * Expired attestations remain queryable but `is_expired()` returns true.
+    /// * Lenders and counterparties should check expiry before trusting data.
+    ///
     /// Panics if:
     /// - The contract is paused
     /// - An attestation already exists for the same (business, period)
@@ -217,6 +225,7 @@ impl AttestationContract {
         merkle_root: BytesN<32>,
         timestamp: u64,
         version: u32,
+        expiry_timestamp: Option<u64>,
     ) {
         access_control::require_not_paused(&env);
         business.require_auth();
@@ -232,7 +241,13 @@ impl AttestationContract {
         // Track volume for future discount calculations.
         dynamic_fees::increment_business_count(&env, &business);
 
-        let data = (merkle_root.clone(), timestamp, version, fee_paid);
+        let data = (
+            merkle_root.clone(),
+            timestamp,
+            version,
+            fee_paid,
+            expiry_timestamp,
+        );
         env.storage().instance().set(&key, &data);
 
         // Emit event
@@ -274,7 +289,13 @@ impl AttestationContract {
         let fee_paid = dynamic_fees::collect_fee(&env, &business);
         dynamic_fees::increment_business_count(&env, &business);
 
-        let data = (merkle_root.clone(), timestamp, version, fee_paid);
+        let data = (
+            merkle_root.clone(),
+            timestamp,
+            version,
+            fee_paid,
+            None::<u64>,
+        );
         env.storage().instance().set(&key, &data);
 
         let metadata = extended_metadata::validate_metadata(&env, &currency_code, is_net);
@@ -329,7 +350,13 @@ impl AttestationContract {
         access_control::require_admin(&env, &caller);
 
         let key = DataKey::Attestation(business.clone(), period.clone());
-        let (old_merkle_root, timestamp, old_version, fee_paid): (BytesN<32>, u64, u32, i128) = env
+        let (old_merkle_root, timestamp, old_version, fee_paid, expiry_timestamp): (
+            BytesN<32>,
+            u64,
+            u32,
+            i128,
+            Option<u64>,
+        ) = env
             .storage()
             .instance()
             .get(&key)
@@ -340,7 +367,13 @@ impl AttestationContract {
             "new version must be greater than old version"
         );
 
-        let data = (new_merkle_root.clone(), timestamp, new_version, fee_paid);
+        let data = (
+            new_merkle_root.clone(),
+            timestamp,
+            new_version,
+            fee_paid,
+            expiry_timestamp,
+        );
         env.storage().instance().set(&key, &data);
 
         events::emit_attestation_migrated(
@@ -363,14 +396,33 @@ impl AttestationContract {
 
     /// Return stored attestation for (business, period), if any.
     ///
-    /// Returns `(merkle_root, timestamp, version, fee_paid)`.
+    /// Returns `(merkle_root, timestamp, version, fee_paid, expiry_timestamp)`.
+    /// The expiry_timestamp is `None` if no expiry was set.
     pub fn get_attestation(
         env: Env,
         business: Address,
         period: String,
-    ) -> Option<(BytesN<32>, u64, u32, i128)> {
+    ) -> Option<(BytesN<32>, u64, u32, i128, Option<u64>)> {
         let key = DataKey::Attestation(business, period);
         env.storage().instance().get(&key)
+    }
+
+    /// Check if an attestation has expired.
+    ///
+    /// Returns `true` if:
+    /// - The attestation exists
+    /// - It has an expiry timestamp set
+    /// - Current ledger time >= expiry timestamp
+    ///
+    /// Returns `false` if attestation doesn't exist or has no expiry.
+    pub fn is_expired(env: Env, business: Address, period: String) -> bool {
+        if let Some((_root, _ts, _ver, _fee, Some(expiry_ts))) =
+            Self::get_attestation(env.clone(), business, period)
+        {
+            env.ledger().timestamp() >= expiry_ts
+        } else {
+            false
+        }
     }
 
     /// Return extended metadata for (business, period), if any.
@@ -385,6 +437,8 @@ impl AttestationContract {
     }
 
     /// Verify that an attestation exists, is not revoked, and its merkle root matches.
+    ///
+    /// Note: This does NOT check expiry. Use `is_expired()` separately to validate freshness.
     pub fn verify_attestation(
         env: Env,
         business: Address,
@@ -396,7 +450,7 @@ impl AttestationContract {
             return false;
         }
 
-        if let Some((stored_root, _ts, _ver, _fee)) =
+        if let Some((stored_root, _ts, _ver, _fee, _expiry)) =
             Self::get_attestation(env.clone(), business, period)
         {
             stored_root == merkle_root
