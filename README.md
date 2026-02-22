@@ -20,6 +20,14 @@ See [docs/attestation-dynamic-fees.md](docs/attestation-dynamic-fees.md) for the
 
 | Method | Description |
 |--------|-------------|
+| `submit_attestation(business, period, merkle_root, timestamp, version)` | Store attestation. Panics if one already exists for this business and period. |
+| `get_attestation(business, period)` | Returns `Option<(BytesN<32>, u64, u32)>`. |
+| `verify_attestation(business, period, merkle_root)` | Returns `true` if an attestation exists and its root matches. |
+| `init(admin)` | One-time setup of admin for anomaly feature. |
+| `add_authorized_analytics(caller, analytics)` | Add an authorized analytics/oracle address (admin only). |
+| `remove_authorized_analytics(caller, analytics)` | Remove an authorized analytics address (admin only). |
+| `set_anomaly(updater, business, period, flags, score)` | Store anomaly flags and risk score (authorized updaters only; score 0–100). |
+| `get_anomaly(business, period)` | Returns `Option<(u32, u32)>` (flags, score) for lenders. |
 | `initialize(admin)` | One-time setup. Sets the admin address. |
 | `configure_fees(token, collector, base_fee, enabled)` | Admin: set fee token, collector, base fee, and toggle. |
 | `set_tier_discount(tier, discount_bps)` | Admin: set discount (0–10 000 bps) for a tier level. |
@@ -69,6 +77,9 @@ cargo test
 
 ```
 veritasor-contracts/
+├── Cargo.toml              # Workspace root
+├── docs/
+│   └── attestation-anomaly-flags.md   # Anomaly flags and risk scores
 ├── Cargo.toml                  # Workspace root
 ├── docs/
 │   └── attestation-dynamic-fees.md  # Fee schedule specification
@@ -76,6 +87,9 @@ veritasor-contracts/
     └── attestation/
         ├── Cargo.toml
         └── src/
+            ├── lib.rs         # Contract logic
+            ├── test.rs        # Unit tests
+            └── anomaly_test.rs  # Anomaly feature tests
             ├── lib.rs               # Contract entry points
             ├── dynamic_fees.rs      # Fee types, storage, calculation
             ├── test.rs              # Core attestation tests
