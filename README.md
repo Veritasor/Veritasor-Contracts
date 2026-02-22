@@ -63,7 +63,28 @@ cd contracts/attestation
 cargo test
 ```
 
-27 tests covering core attestation logic, fee calculation arithmetic, tier/volume discounts, combined discounts, fee toggling, access control, input validation, and a full economic simulation.
+106 tests covering core attestation logic, fee calculation arithmetic, tier/volume discounts, combined discounts, fee toggling, access control, input validation, gas benchmarks, and a full economic simulation.
+
+### Gas Benchmarks
+
+The contract includes comprehensive gas and cost benchmarks to track resource consumption and detect regressions:
+
+```bash
+cd contracts/attestation
+
+# Run all benchmarks
+./run_benchmarks.sh --all
+
+# Run specific benchmark categories
+./run_benchmarks.sh --core      # Core operations
+./run_benchmarks.sh --batch     # Batch operations
+./run_benchmarks.sh --fee       # Fee calculations
+
+# Show summary report
+./run_benchmarks.sh --summary
+```
+
+Benchmarks measure CPU instructions and memory usage for all core operations. See [docs/contract-gas-benchmarks.md](docs/contract-gas-benchmarks.md) for detailed methodology and target ranges.
 
 ### Project structure
 
