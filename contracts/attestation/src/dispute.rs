@@ -1,5 +1,5 @@
 //! Dispute management module for attestation challenges
-use soroban_sdk::{contracttype, Address, BytesN, Env, String, Vec};
+use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 /// Status of a dispute
 #[derive(Clone, Debug, PartialEq)]
@@ -51,6 +51,35 @@ pub struct DisputeResolution {
     pub notes: String,
 }
 
+/// Optional resolution (contracttype-compatible alternative to Option<DisputeResolution>).
+#[derive(Clone, Debug, PartialEq)]
+#[contracttype]
+pub enum MaybeResolution {
+    None,
+    Some(DisputeResolution),
+}
+
+impl MaybeResolution {
+    pub fn is_none(&self) -> bool {
+        matches!(self, MaybeResolution::None)
+    }
+    pub fn is_some(&self) -> bool {
+        matches!(self, MaybeResolution::Some(_))
+    }
+    pub fn unwrap(self) -> DisputeResolution {
+        match self {
+            MaybeResolution::Some(r) => r,
+            MaybeResolution::None => panic!("called unwrap on None"),
+        }
+    }
+    pub fn as_ref(&self) -> core::option::Option<&DisputeResolution> {
+        match self {
+            MaybeResolution::Some(r) => core::option::Option::Some(r),
+            MaybeResolution::None => core::option::Option::None,
+        }
+    }
+}
+
 /// Dispute record for a challenged attestation
 #[derive(Clone, Debug, PartialEq)]
 #[contracttype]
@@ -71,6 +100,8 @@ pub struct Dispute {
     pub evidence: String,
     /// Timestamp when dispute was opened
     pub timestamp: u64,
+    /// Resolution details (None if not yet resolved)
+    pub resolution: MaybeResolution,
 }
 
 /// Storage keys for dispute management

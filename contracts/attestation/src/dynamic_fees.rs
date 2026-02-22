@@ -37,6 +37,7 @@ use soroban_sdk::{contracttype, token, Address, Env, Vec};
 // ════════════════════════════════════════════════════════════════════
 
 /// Unified storage key enum for the entire contract.
+/// Add new variants only at the end of the appropriate section (or add a new section) to reduce merge conflicts.
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
@@ -45,6 +46,8 @@ pub enum DataKey {
     Attestation(Address, soroban_sdk::String),
     /// Revocation status keyed by (business, period).
     Revoked(Address, soroban_sdk::String),
+    /// Extended metadata (currency, net/gross) keyed by (business, period).
+    AttestationMetadata(Address, soroban_sdk::String),
 
     // ── Fee system ──────────────────────────────────────────────
     /// Contract administrator address.
