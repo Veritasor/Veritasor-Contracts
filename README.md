@@ -20,6 +20,12 @@ See [docs/attestation-dynamic-fees.md](docs/attestation-dynamic-fees.md) for the
 
 | Method | Description |
 |--------|-------------|
+| `submit_attestation(business, period, merkle_root, timestamp, version)` | Store attestation. Panics if one already exists for this business and period. |
+| `get_attestation(business, period)` | Returns `Option<(BytesN<32>, u64, u32)>`. |
+| `verify_attestation(business, period, merkle_root)` | Returns `true` if an attestation exists and its root matches. |
+| `init(admin)` | One-time setup of admin for revocation. |
+| `revoke_attestation(caller, business, period)` | Set attestation status to revoked (admin only). |
+| `get_attestations_page(business, periods, period_start, period_end, status_filter, version_filter, limit, cursor)` | Paginated query with filters. Returns (results, next_cursor). Limit capped at 30. See [docs/attestation-queries.md](docs/attestation-queries.md). |
 | `initialize(admin)` | One-time setup. Sets the admin address. |
 | `configure_fees(token, collector, base_fee, enabled)` | Admin: set fee token, collector, base fee, and toggle. |
 | `set_tier_discount(tier, discount_bps)` | Admin: set discount (0–10 000 bps) for a tier level. |
@@ -69,6 +75,9 @@ cargo test
 
 ```
 veritasor-contracts/
+├── Cargo.toml                 # Workspace root
+├── docs/
+│   └── attestation-queries.md # Pagination and filtering
 ├── Cargo.toml                  # Workspace root
 ├── docs/
 │   └── attestation-dynamic-fees.md  # Fee schedule specification
@@ -76,6 +85,9 @@ veritasor-contracts/
     └── attestation/
         ├── Cargo.toml
         └── src/
+            ├── lib.rs               # Contract logic
+            ├── test.rs              # Unit tests
+            └── query_pagination_test.rs  # Pagination tests
             ├── lib.rs               # Contract entry points
             ├── dynamic_fees.rs      # Fee types, storage, calculation
             ├── test.rs              # Core attestation tests
