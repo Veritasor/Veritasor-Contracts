@@ -1,4 +1,6 @@
 [workspace]
+attestation_registry
+members = ["contracts/attestation", "contracts/attestation-registry"]
 members = [
     "contracts/attestation",
     "contracts/integration-registry",
