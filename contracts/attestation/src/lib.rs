@@ -30,6 +30,8 @@ mod extended_metadata_test;
 mod multisig_test;
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod property_test;
 // ─── End test modules ───
 
 pub mod dispute;
