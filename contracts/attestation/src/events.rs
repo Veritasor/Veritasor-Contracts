@@ -196,6 +196,7 @@ pub fn emit_attestation_revoked(
 ///
 /// This event is emitted when an attestation is migrated to a new version.
 /// The event includes both old and new values for audit trail purposes.
+#[allow(clippy::too_many_arguments)]
 pub fn emit_attestation_migrated(
     env: &Env,
     business: &Address,

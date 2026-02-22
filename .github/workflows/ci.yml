@@ -17,11 +17,11 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
           components: rustfmt, clippy
-          targets: wasm32-unknown-unknown
+          target: wasm32-unknown-unknown
       
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -38,7 +38,7 @@ jobs:
         run: cargo fmt --all -- --check
       
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features
+        run: cargo clippy --all-targets --all-features -- -D warnings
       
       - name: Check compilation
         run: cargo check --all-targets
@@ -50,10 +50,10 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
-          targets: wasm32-unknown-unknown
+          target: wasm32-unknown-unknown
       
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -76,10 +76,13 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Install Rust toolchain
-        uses: dtolnay/rust-action@stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
-          targets: wasm32-unknown-unknown
+          target: wasm32-unknown-unknown
+      
+      - name: Ensure wasm32 target
+        run: rustup target add wasm32-unknown-unknown
       
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -93,4 +96,6 @@ jobs:
             ${{ runner.os }}-cargo-
       
       - name: Build contracts (release)
-        run: cargo build --release --target wasm32-unknown-unknown
+        run: |
+          cargo build -p veritasor-attestation -p veritasor-audit-log -p veritasor-integration-registry --release --target wasm32-unknown-unknown
+          cargo build -p veritasor-revenue-stream --release
