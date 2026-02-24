@@ -1,0 +1,14 @@
+/Users/jagadeesh/boss/Veritasor-Contracts/target2/release/deps/serde-768ddfe85e8afee1.d: /Users/jagadeesh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/jagadeesh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/jagadeesh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/jagadeesh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/jagadeesh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/jagadeesh/boss/Veritasor-Contracts/target2/release/build/serde-40b0e1380338d852/out/private.rs
+
+/Users/jagadeesh/boss/Veritasor-Contracts/target2/release/deps/libserde-768ddfe85e8afee1.rlib: /Users/jagadeesh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/jagadeesh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/jagadeesh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/jagadeesh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/jagadeesh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/jagadeesh/boss/Veritasor-Contracts/target2/release/build/serde-40b0e1380338d852/out/private.rs
+
+/Users/jagadeesh/boss/Veritasor-Contracts/target2/release/deps/libserde-768ddfe85e8afee1.rmeta: /Users/jagadeesh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/jagadeesh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/jagadeesh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/jagadeesh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/jagadeesh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/jagadeesh/boss/Veritasor-Contracts/target2/release/build/serde-40b0e1380338d852/out/private.rs
+
+/Users/jagadeesh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/Users/jagadeesh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/Users/jagadeesh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/Users/jagadeesh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/Users/jagadeesh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/Users/jagadeesh/boss/Veritasor-Contracts/target2/release/build/serde-40b0e1380338d852/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/jagadeesh/boss/Veritasor-Contracts/target2/release/build/serde-40b0e1380338d852/out

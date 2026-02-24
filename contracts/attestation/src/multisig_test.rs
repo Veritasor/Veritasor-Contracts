@@ -3,6 +3,8 @@
 //! Comprehensive tests for the multisignature admin system including proposal
 //! creation, approval, execution, and edge cases.
 
+#![allow(unused_variables)] // test helpers return (env, client, admin, owners); not all tests use all
+
 use super::*;
 use crate::access_control::ROLE_ADMIN;
 use crate::multisig::{ProposalAction, ProposalStatus};

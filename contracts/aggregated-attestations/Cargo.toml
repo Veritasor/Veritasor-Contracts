@@ -1,0 +1,30 @@
+[package]
+name = "veritasor-aggregated-attestations"
+version = "0.1.0"
+edition = "2021"
+publish = false
+rust-version = "1.75.0"
+
+[lib]
+crate-type = ["cdylib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = "22.0"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+veritasor-attestation-snapshot = { path = "../attestation-snapshot" }
+
+[dev-dependencies]
+soroban-sdk = { version = "22.0", features = ["testutils"] }
+veritasor-attestation-snapshot = { path = "../attestation-snapshot" }
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
