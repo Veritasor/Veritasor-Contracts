@@ -1,0 +1,20 @@
+=== submit_attestation (no fee) ===
+CPU instructions: 35750
+Memory bytes: 5648
+=== submit_attestation (with fee) ===
+CPU instructions: 150524
+Memory bytes: 21975
+=== verify_attestation ===
+CPU instructions: 0
+Memory bytes: 0
+Note: Cost tracking shows 0 in test environment (expected for simple operations)
+=== revoke_attestation ===
+CPU instructions: 9186
+Memory bytes: 3495
+=== migrate_attestation ===
+CPU instructions: 18909
+Memory bytes: 3870
+=== get_attestation ===
+CPU instructions: 0
+Memory bytes: 0
+Note: Cost tracking shows 0 in test environment (expected for simple operations)

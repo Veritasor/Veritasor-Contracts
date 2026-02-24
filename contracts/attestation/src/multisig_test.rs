@@ -3,6 +3,8 @@
 //! Comprehensive tests for the multisignature admin system including proposal
 //! creation, approval, execution, and edge cases.
 
+#![allow(unused_variables)] // test helpers return (env, client, admin, owners); not all tests use all
+
 use super::*;
 use crate::access_control::ROLE_ADMIN;
 use crate::multisig::{ProposalAction, ProposalStatus};
@@ -102,7 +104,7 @@ fn test_non_owner_cannot_create_proposal() {
 
 #[test]
 fn test_approve_proposal() {
-    let (_, client, admin, owners) = setup_with_multisig();
+    let (_env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
 
     let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause);
@@ -223,7 +225,7 @@ fn test_execute_grant_role_proposal() {
 
 #[test]
 fn test_execute_change_threshold_proposal() {
-    let (_, client, admin, owners) = setup_with_multisig();
+    let (_env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
 
     assert_eq!(client.get_multisig_threshold(), 2);
@@ -256,7 +258,7 @@ fn test_execute_add_owner_proposal() {
 
 #[test]
 fn test_execute_remove_owner_proposal() {
-    let (_, client, admin, owners) = setup_with_multisig();
+    let (_env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
     let owner3 = owners.get(2).unwrap();
 
@@ -320,7 +322,7 @@ fn test_proposal_ids_increment() {
 
 #[test]
 fn test_multiple_proposals_independent() {
-    let (_, client, admin, owners) = setup_with_multisig();
+    let (_env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
 
     let pause_id = client.create_proposal(&admin, &ProposalAction::Pause);
@@ -338,7 +340,7 @@ fn test_multiple_proposals_independent() {
 #[test]
 #[should_panic(expected = "proposal is not pending")]
 fn test_cannot_approve_rejected_proposal() {
-    let (_, client, admin, owners) = setup_with_multisig();
+    let (_env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
 
     let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause);
@@ -350,7 +352,7 @@ fn test_cannot_approve_rejected_proposal() {
 #[test]
 #[should_panic(expected = "proposal is not pending")]
 fn test_cannot_execute_rejected_proposal() {
-    let (_, client, admin, owners) = setup_with_multisig();
+    let (_env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
 
     let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause);
@@ -386,7 +388,7 @@ fn test_threshold_of_one() {
 
 #[test]
 fn test_full_threshold_approval() {
-    let (_, client, admin, owners) = setup_with_multisig();
+    let (_env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
     let owner3 = owners.get(2).unwrap();
 
