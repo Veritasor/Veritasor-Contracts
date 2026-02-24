@@ -258,7 +258,7 @@ fn test_execute_add_owner_proposal() {
 
 #[test]
 fn test_execute_remove_owner_proposal() {
-    let (env, client, admin, owners) = setup_with_multisig();
+    let (_env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
     let owner3 = owners.get(2).unwrap();
 
@@ -340,7 +340,7 @@ fn test_multiple_proposals_independent() {
 #[test]
 #[should_panic(expected = "proposal is not pending")]
 fn test_cannot_approve_rejected_proposal() {
-    let (env, client, admin, owners) = setup_with_multisig();
+    let (_env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
 
     let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause);
@@ -352,7 +352,7 @@ fn test_cannot_approve_rejected_proposal() {
 #[test]
 #[should_panic(expected = "proposal is not pending")]
 fn test_cannot_execute_rejected_proposal() {
-    let (env, client, admin, owners) = setup_with_multisig();
+    let (_env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
 
     let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause);
@@ -388,7 +388,7 @@ fn test_threshold_of_one() {
 
 #[test]
 fn test_full_threshold_approval() {
-    let (env, client, admin, owners) = setup_with_multisig();
+    let (_env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
     let owner3 = owners.get(2).unwrap();
 

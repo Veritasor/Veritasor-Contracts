@@ -35,7 +35,7 @@
 //! - Trust only in the governance/admin for upgrade decisions
 //! - Callers verify implementation addresses before use
 
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, Env};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, Env, String};
 
 #[cfg(test)]
 mod test;
@@ -103,7 +103,12 @@ impl AttestationRegistry {
     /// # Safety
     ///
     /// This is a one-time setup. The admin must be a trusted governance address.
-    pub fn initialize(env: Env, admin: Address, initial_impl: Address, initial_version: u32) {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        initial_impl: Address,
+        initial_version: u32,
+    ) {
         if env.storage().instance().has(&DataKey::Initialized) {
             panic!("registry already initialized");
         }
@@ -143,7 +148,12 @@ impl AttestationRegistry {
     ///
     /// Only the admin (governance) can perform upgrades. The new implementation
     /// should be thoroughly tested before upgrade.
-    pub fn upgrade(env: Env, new_impl: Address, new_version: u32, _migration_data: Option<Bytes>) {
+    pub fn upgrade(
+        env: Env,
+        new_impl: Address,
+        new_version: u32,
+        _migration_data: Option<Bytes>,
+    ) {
         Self::require_initialized(&env);
         let _admin = Self::require_admin(&env);
 
@@ -216,7 +226,10 @@ impl AttestationRegistry {
             .storage()
             .instance()
             .get(&DataKey::PreviousImplementation);
-        let prev_version: Option<u32> = env.storage().instance().get(&DataKey::PreviousVersion);
+        let prev_version: Option<u32> = env
+            .storage()
+            .instance()
+            .get(&DataKey::PreviousVersion);
 
         if prev_impl.is_none() || prev_version.is_none() {
             panic!("no previous implementation to rollback to");
@@ -261,9 +274,7 @@ impl AttestationRegistry {
         if !env.storage().instance().has(&DataKey::Initialized) {
             return None;
         }
-        env.storage()
-            .instance()
-            .get(&DataKey::CurrentImplementation)
+        env.storage().instance().get(&DataKey::CurrentImplementation)
     }
 
     /// Get the current version number.
@@ -287,9 +298,7 @@ impl AttestationRegistry {
         if !env.storage().instance().has(&DataKey::Initialized) {
             return None;
         }
-        env.storage()
-            .instance()
-            .get(&DataKey::PreviousImplementation)
+        env.storage().instance().get(&DataKey::PreviousImplementation)
     }
 
     /// Get the previous version number.

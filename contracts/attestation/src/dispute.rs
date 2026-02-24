@@ -112,6 +112,8 @@ enum DisputeKey {
     DisputeIdCounter,
     /// Individual dispute record: (dispute_id) -> Dispute
     Dispute(u64),
+    /// Resolution for a dispute: (dispute_id) -> DisputeResolution
+    DisputeResolution(u64),
     /// Disputes by attestation: (business, period) -> Vec<dispute_id>
     DisputesByAttestation(Address, String),
     /// Disputes by challenger: (challenger) -> Vec<dispute_id>
@@ -136,6 +138,18 @@ pub fn store_dispute(env: &Env, dispute: &Dispute) {
 /// Retrieve a dispute by ID
 pub fn get_dispute(env: &Env, dispute_id: u64) -> Option<Dispute> {
     let key = DisputeKey::Dispute(dispute_id);
+    env.storage().instance().get(&key)
+}
+
+/// Store a dispute resolution
+pub fn store_dispute_resolution(env: &Env, dispute_id: u64, resolution: &DisputeResolution) {
+    let key = DisputeKey::DisputeResolution(dispute_id);
+    env.storage().instance().set(&key, resolution);
+}
+
+/// Retrieve a dispute resolution by dispute ID
+pub fn get_dispute_resolution(env: &Env, dispute_id: u64) -> Option<DisputeResolution> {
+    let key = DisputeKey::DisputeResolution(dispute_id);
     env.storage().instance().get(&key)
 }
 

@@ -7,6 +7,7 @@ members = [
     "contracts/audit-log",
     "contracts/common",
     "contracts/integration-registry",
+    "contracts/revenue-curve",
     "contracts/revenue-stream",
 ]
 resolver = "2"

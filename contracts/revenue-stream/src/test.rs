@@ -4,6 +4,8 @@ use super::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::token::StellarAssetClient;
 use soroban_sdk::{Address, Env, String};
+
+#[cfg(test)]
 use veritasor_attestation::{AttestationContract, AttestationContractClient};
 
 fn setup(
@@ -49,7 +51,14 @@ fn test_create_and_release_stream() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = soroban_sdk::BytesN::from_array(&env, &[1u8; 32]);
-    attestation_client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    attestation_client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
+    );
     let amount = 1000i128;
     StellarAssetClient::new(&env, &token).mint(&admin, &amount);
     let stream_id = stream_client.create_stream(
@@ -104,7 +113,14 @@ fn test_release_when_revoked_fails() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = soroban_sdk::BytesN::from_array(&env, &[1u8; 32]);
-    attestation_client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    attestation_client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
+    );
     let reason = String::from_str(&env, "test revoke");
     attestation_client.revoke_attestation(&admin, &business, &period, &reason);
     let amount = 1000i128;
@@ -132,7 +148,14 @@ fn test_double_release_fails() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = soroban_sdk::BytesN::from_array(&env, &[1u8; 32]);
-    attestation_client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    attestation_client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
+    );
     let amount = 1000i128;
     StellarAssetClient::new(&env, &token).mint(&admin, &amount);
     let stream_id = stream_client.create_stream(
@@ -210,6 +233,7 @@ fn test_multiple_streams() {
         &soroban_sdk::BytesN::from_array(&env, &[1u8; 32]),
         &1u64,
         &1u32,
+        &None,
     );
     stream_client.release(&id0);
     assert!(stream_client.get_stream(&id0).unwrap().released);

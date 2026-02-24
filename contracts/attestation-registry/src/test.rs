@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 //! Comprehensive test suite for the Attestation Registry contract.
 //!
 //! Tests cover:
@@ -41,13 +43,14 @@ fn setup_uninitialized() -> (Env, AttestationRegistryClient<'static>) {
     (env, client)
 }
 
+
 // ════════════════════════════════════════════════════════════════════
 //  Initialization tests
 // ════════════════════════════════════════════════════════════════════
 
 #[test]
 fn initialize_success() {
-    let (_env, client, admin, initial_impl) = setup();
+    let (env, client, admin, initial_impl) = setup();
 
     assert!(client.is_initialized());
     assert_eq!(client.get_admin(), Some(admin));
@@ -60,7 +63,7 @@ fn initialize_success() {
 #[test]
 #[should_panic(expected = "already initialized")]
 fn double_initialize_panics() {
-    let (_env, client, admin, initial_impl) = setup();
+    let (env, client, admin, initial_impl) = setup();
     client.initialize(&admin, &initial_impl, &1u32);
 }
 
@@ -74,13 +77,13 @@ fn operations_before_initialization_panic() {
 
 #[test]
 fn is_initialized_returns_false_when_uninitialized() {
-    let (_env, client) = setup_uninitialized();
+    let (env, client) = setup_uninitialized();
     assert!(!client.is_initialized());
 }
 
 #[test]
 fn query_functions_return_none_when_uninitialized() {
-    let (_env, client) = setup_uninitialized();
+    let (env, client) = setup_uninitialized();
     assert_eq!(client.get_admin(), None);
     assert_eq!(client.get_current_implementation(), None);
     assert_eq!(client.get_current_version(), None);
@@ -209,10 +212,7 @@ fn rollback_success() {
     let impl_v2_clone = impl_v2.clone();
 
     client.upgrade(&impl_v2, &2u32, &None);
-    assert_eq!(
-        client.get_current_implementation(),
-        Some(impl_v2_clone.clone())
-    );
+    assert_eq!(client.get_current_implementation(), Some(impl_v2_clone.clone()));
     assert_eq!(client.get_current_version(), Some(2u32));
 
     client.rollback();
@@ -298,11 +298,11 @@ fn admin_transfer_changes_admin() {
     let new_admin = Address::generate(&env);
 
     client.transfer_admin(&new_admin);
-
+    
     // Verify admin changed
     assert_eq!(client.get_admin(), Some(new_admin));
     assert_ne!(client.get_admin(), Some(admin));
-
+    
     // New admin should be able to upgrade
     let new_impl = Address::generate(&env);
     client.upgrade(&new_impl, &2u32, &None);
@@ -350,10 +350,7 @@ fn query_functions_work_after_multiple_upgrades() {
     let impl_v3_clone = impl_v3.clone();
 
     client.upgrade(&impl_v2, &2u32, &None);
-    assert_eq!(
-        client.get_current_implementation(),
-        Some(impl_v2_clone.clone())
-    );
+    assert_eq!(client.get_current_implementation(), Some(impl_v2_clone.clone()));
     assert_eq!(client.get_current_version(), Some(2u32));
     assert_eq!(client.get_previous_implementation(), Some(impl_v1));
     assert_eq!(client.get_previous_version(), Some(1u32));
