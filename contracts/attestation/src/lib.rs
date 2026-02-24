@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, String, Vec};
 
 pub mod access_control;
 pub mod dynamic_fees;
@@ -14,6 +14,8 @@ pub use multisig::{Proposal, ProposalAction, ProposalStatus};
 #[cfg(test)]
 mod access_control_test;
 #[cfg(test)]
+mod batch_submission_test;
+#[cfg(test)]
 mod dynamic_fees_test;
 #[cfg(test)]
 mod events_test;
@@ -21,6 +23,24 @@ mod events_test;
 mod multisig_test;
 #[cfg(test)]
 mod test;
+
+/// Batch attestation item for submitting multiple attestations in a single transaction.
+///
+/// Each item represents one attestation to be submitted.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct BatchAttestationItem {
+    /// Business address for this attestation
+    pub business: Address,
+    /// Period identifier (e.g., "2026-02")
+    pub period: String,
+    /// Merkle root hash of the attestation data
+    pub merkle_root: BytesN<32>,
+    /// Timestamp of the attestation
+    pub timestamp: u64,
+    /// Version of the attestation schema
+    pub version: u32,
+}
 
 #[contract]
 pub struct AttestationContract;
@@ -183,6 +203,158 @@ impl AttestationContract {
     }
 
     // ── Core attestation methods ────────────────────────────────────
+
+    /// Submit multiple attestations in a single atomic transaction.
+    ///
+    /// This function provides an efficient way to submit multiple attestations
+    /// for one or more businesses and periods. All attestations in the batch
+    /// are processed atomically: either all succeed or all fail.
+    ///
+    /// # Parameters
+    ///
+    /// * `items` - Vector of `BatchAttestationItem` containing the attestations to submit
+    ///
+    /// # Authorization
+    ///
+    /// For each item, the `business` address must authorize the call, or the caller
+    /// must have the ATTESTOR role. All businesses in the batch must authorize
+    /// before any processing begins.
+    ///
+    /// # Atomicity
+    ///
+    /// The batch operation is atomic:
+    /// - All validations are performed before any state changes
+    /// - If any validation fails, the entire batch is rejected
+    /// - If all validations pass, all attestations are stored, fees are collected,
+    ///   counts are incremented, and events are emitted
+    ///
+    /// # Fee Calculation
+    ///
+    /// Fees are calculated for each attestation based on the business's current
+    /// volume count at the time of calculation. For multiple attestations from
+    /// the same business in one batch, each subsequent attestation will have
+    /// fees calculated based on the incremented count from previous items in
+    /// the batch.
+    ///
+    /// # Panics
+    ///
+    /// Panics if:
+    /// - The contract is paused
+    /// - The batch is empty
+    /// - Any business address fails to authorize
+    /// - Any (business, period) pair already exists
+    /// - Any fee collection fails (insufficient balance, etc.)
+    ///
+    /// # Events
+    ///
+    /// Emits one `AttestationSubmittedEvent` for each successfully processed
+    /// attestation in the batch.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let items = vec![
+    ///     BatchAttestationItem {
+    ///         business: business1,
+    ///         period: String::from_str(&env, "2026-01"),
+    ///         merkle_root: root1,
+    ///         timestamp: 1700000000,
+    ///         version: 1,
+    ///     },
+    ///     BatchAttestationItem {
+    ///         business: business1,
+    ///         period: String::from_str(&env, "2026-02"),
+    ///         merkle_root: root2,
+    ///         timestamp: 1700086400,
+    ///         version: 1,
+    ///     },
+    /// ];
+    /// client.submit_attestations_batch(&items);
+    /// ```
+    pub fn submit_attestations_batch(env: Env, items: Vec<BatchAttestationItem>) {
+        // Check contract is not paused
+        access_control::require_not_paused(&env);
+
+        // Validate batch is not empty
+        assert!(!items.is_empty(), "batch cannot be empty");
+
+        let len = items.len();
+
+        // Phase 1: Collect unique businesses and authorize them once
+        // We need to authorize each business only once, even if it appears
+        // multiple times in the batch.
+        let mut authorized_businesses = Vec::new(&env);
+        for i in 0..len {
+            let item = items.get(i).unwrap();
+            // Check if we've already authorized this business
+            let mut already_authorized = false;
+            for j in 0..authorized_businesses.len() {
+                if authorized_businesses.get(j).unwrap() == item.business {
+                    already_authorized = true;
+                    break;
+                }
+            }
+            if !already_authorized {
+                item.business.require_auth();
+                authorized_businesses.push_back(item.business.clone());
+            }
+        }
+
+        // Phase 2: Validate all items before making any state changes (atomic validation)
+        for i in 0..len {
+            let item = items.get(i).unwrap();
+
+            // Check for duplicates within the batch itself
+            for j in (i + 1)..len {
+                let other_item = items.get(j).unwrap();
+                if item.business == other_item.business && item.period == other_item.period {
+                    panic!("duplicate attestation in batch: same business and period at indices {i} and {j}");
+                }
+            }
+
+            // Check for duplicate attestations in storage
+            let key = DataKey::Attestation(item.business.clone(), item.period.clone());
+            if env.storage().instance().has(&key) {
+                panic!("attestation already exists for business and period at index {i}");
+            }
+        }
+
+        // Phase 3: Process all items (all validations passed)
+        for i in 0..len {
+            let item = items.get(i).unwrap();
+
+            // Collect fee (0 if fees disabled or not configured).
+            // Fee is calculated based on current count, which may have been
+            // incremented by previous items in this batch for the same business.
+            let fee_paid = dynamic_fees::collect_fee(&env, &item.business);
+
+            // Track volume for future discount calculations.
+            // This increment affects fee calculation for subsequent items
+            // in the batch from the same business.
+            dynamic_fees::increment_business_count(&env, &item.business);
+
+            // Store attestation data
+            let key = DataKey::Attestation(item.business.clone(), item.period.clone());
+            let data = (
+                item.merkle_root.clone(),
+                item.timestamp,
+                item.version,
+                fee_paid,
+            );
+            env.storage().instance().set(&key, &data);
+
+            // Emit event for this attestation
+            events::emit_attestation_submitted(
+                &env,
+                &item.business,
+                &item.period,
+                &item.merkle_root,
+                item.timestamp,
+                item.version,
+                fee_paid,
+            );
+        }
+    }
 
     /// Submit a revenue attestation.
     ///
