@@ -64,6 +64,13 @@ pub enum DataKey {
     VolumeThresholds,
     /// Ordered `Vec<u32>` of volume bracket discounts (parallel to thresholds).
     VolumeDiscounts,
+
+    // ── Rate limiting ──────────────────────────────────────────
+    /// Global rate limit configuration (`RateLimitConfig`).
+    RateLimitConfig,
+    /// Per-business submission timestamps within the current window.
+    /// Stores a `Vec<u64>` of ledger timestamps.
+    SubmissionTimestamps(Address),
 }
 
 /// On-chain fee configuration.

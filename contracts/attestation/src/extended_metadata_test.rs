@@ -21,7 +21,7 @@ fn test_submit_without_metadata_backward_compat() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None);
 
     let att = client.get_attestation(&business, &period).unwrap();
     assert_eq!(att.0, root);
@@ -166,7 +166,7 @@ fn test_metadata_missing_for_old_attestation() {
     let period = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None);
 
     assert!(client.get_attestation(&business, &period).is_some());
     assert!(client

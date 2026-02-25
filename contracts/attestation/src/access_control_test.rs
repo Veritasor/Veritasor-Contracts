@@ -188,7 +188,7 @@ fn test_submit_attestation_when_paused() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None);
 }
 
 // ════════════════════════════════════════════════════════════════════

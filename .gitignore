@@ -1,8 +1,12 @@
+# Cargo build output (do not commit – regenerate with cargo build)
 /target
+/target2
+**/target/
 **/*.rs.bk
 Cargo.lock
 .env
 .DS_Store
+**/test_snapshots
 
 # Test snapshots
 **/test_snapshots/
