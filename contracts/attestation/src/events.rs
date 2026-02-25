@@ -339,6 +339,7 @@ pub fn emit_business_reactivated(env: &Env, business: &Address, reactivated_by: 
         (TOPIC_BIZ_REACTIVATE, business.clone()),
         reactivated_by.clone(),
     );
+}
 /// Emit a rate limit configuration changed event.
 ///
 /// This event is emitted when the rate limit configuration is created or
