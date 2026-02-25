@@ -46,7 +46,8 @@ fn test_revocation_by_admin() {
     // Verify attestation data is still preserved
     let attestation = test.get_attestation(business.clone(), period.clone());
     assert!(attestation.is_some());
-    let (stored_root, stored_timestamp, stored_version, _stored_fee) = attestation.unwrap();
+    let (stored_root, stored_timestamp, stored_version, _stored_fee, _stored_expiry) =
+        attestation.unwrap();
     assert_eq!(stored_root, merkle_root);
     assert_eq!(stored_timestamp, 1234567890);
     assert_eq!(stored_version, 1);
@@ -174,7 +175,7 @@ fn test_revocation_preserves_data() {
     let with_status_before = test.get_attestation_with_status(business.clone(), period.clone());
     assert!(with_status_before.is_some());
     let (attestation_data, revocation_info_before) = with_status_before.unwrap();
-    assert_eq!(attestation_data, (merkle_root, timestamp, version, 0)); // fee = 0 in test
+    assert_eq!(attestation_data, (merkle_root, timestamp, version, 0, None)); // fee = 0 in test
     assert!(revocation_info_before.is_none());
 
     // Revoke
