@@ -20,7 +20,15 @@ fn test_open_dispute_success() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+    );
 
     let challenger = Address::generate(&env);
     let dispute_type = DisputeType::RevenueMismatch;
@@ -60,7 +68,15 @@ fn test_duplicate_dispute_prevention() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+    );
 
     let challenger = Address::generate(&env);
     let dispute_type = DisputeType::RevenueMismatch;
@@ -84,7 +100,15 @@ fn test_dispute_resolution() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+    );
 
     let challenger = Address::generate(&env);
     let dispute_id = client.open_dispute(
@@ -131,7 +155,15 @@ fn test_resolve_closed_dispute() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+    );
 
     let challenger = Address::generate(&env);
     let dispute_id = client.open_dispute(
@@ -166,7 +198,15 @@ fn test_close_dispute() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+    );
 
     let challenger = Address::generate(&env);
     let dispute_id = client.open_dispute(
@@ -198,7 +238,15 @@ fn test_close_unresolved_dispute() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+    );
 
     let challenger = Address::generate(&env);
     let dispute_id = client.open_dispute(
@@ -220,7 +268,15 @@ fn test_get_disputes_by_attestation() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+    );
 
     // Open multiple disputes for same attestation
     let challenger1 = Address::generate(&env);
@@ -263,8 +319,24 @@ fn test_get_disputes_by_challenger() {
     let period2 = String::from_str(&env, "2026-03");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.submit_attestation(&business1, &period1, &root, &1700000000u64, &1u32, &None);
-    client.submit_attestation(&business2, &period2, &root, &1700000000u64, &1u32, &None);
+    client.submit_attestation(
+        &business1,
+        &period1,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+    );
+    client.submit_attestation(
+        &business2,
+        &period2,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+    );
 
     // Open disputes from same challenger
     let dispute_id1 = client.open_dispute(
@@ -298,7 +370,15 @@ fn test_business_vs_lender_dispute_scenario() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-Q1");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+    );
 
     // Lender challenges the attestation (business vs lender scenario)
     let lender = Address::generate(&env);
@@ -353,7 +433,9 @@ fn test_dispute_lifecycle_complete_flow() {
     let root = BytesN::from_array(&env, &[1u8; 32]);
     let timestamp = 1700000000u64;
     let version = 1u32;
-    client.submit_attestation(&business, &period, &root, &timestamp, &version, &None);
+    client.submit_attestation(
+        &business, &period, &root, &timestamp, &version, &None, &None,
+    );
 
     // Phase 2: Open dispute
     let challenger = Address::generate(&env);

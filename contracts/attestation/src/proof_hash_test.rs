@@ -47,9 +47,10 @@ fn submit_with_proof_hash_and_retrieve() {
         &1_700_000_000u64,
         &1u32,
         &Some(proof.clone()),
+        &None,
     );
 
-    let (stored_root, stored_ts, stored_ver, stored_fee, stored_proof) =
+    let (stored_root, stored_ts, stored_ver, stored_fee, stored_proof, _stored_expiry) =
         client.get_attestation(&business, &period).unwrap();
     assert_eq!(stored_root, root);
     assert_eq!(stored_ts, 1_700_000_000u64);
@@ -70,9 +71,17 @@ fn submit_without_proof_hash() {
     let period = String::from_str(&env, "2026-03");
     let root = BytesN::from_array(&env, &[2u8; 32]);
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
+        &None,
+    );
 
-    let (_, _, _, _, stored_proof) = client.get_attestation(&business, &period).unwrap();
+    let (_, _, _, _, stored_proof, _) = client.get_attestation(&business, &period).unwrap();
     assert_eq!(stored_proof, None);
 }
 
@@ -96,6 +105,7 @@ fn get_proof_hash_returns_hash_when_set() {
         &1_700_000_000u64,
         &1u32,
         &Some(proof.clone()),
+        &None,
     );
 
     let result = client.get_proof_hash(&business, &period);
@@ -110,7 +120,15 @@ fn get_proof_hash_returns_none_when_not_set() {
     let period = String::from_str(&env, "2026-04");
     let root = BytesN::from_array(&env, &[4u8; 32]);
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
+        &None,
+    );
 
     let result = client.get_proof_hash(&business, &period);
     assert_eq!(result, None);
@@ -148,12 +166,13 @@ fn proof_hash_preserved_after_migration() {
         &1_700_000_000u64,
         &1u32,
         &Some(proof.clone()),
+        &None,
     );
 
     // Migrate to new version — proof hash must be preserved.
     client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
 
-    let (stored_root, _, stored_ver, _, stored_proof) =
+    let (stored_root, _, stored_ver, _, stored_proof, _) =
         client.get_attestation(&business, &period).unwrap();
     assert_eq!(stored_root, new_root);
     assert_eq!(stored_ver, 2u32);
@@ -179,11 +198,12 @@ fn none_proof_hash_preserved_after_migration() {
         &1_700_000_000u64,
         &1u32,
         &None,
+        &None,
     );
 
     client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
 
-    let (_, _, _, _, stored_proof) = client.get_attestation(&business, &period).unwrap();
+    let (_, _, _, _, stored_proof, _) = client.get_attestation(&business, &period).unwrap();
     assert_eq!(stored_proof, None);
     assert_eq!(client.get_proof_hash(&business, &period), None);
 }
@@ -217,6 +237,7 @@ fn simulate_offchain_proof_retrieval() {
         &1_700_000_000u64,
         &1u32,
         &Some(offchain_hash.clone()),
+        &None,
     );
 
     // An off-chain indexer would:
@@ -227,7 +248,7 @@ fn simulate_offchain_proof_retrieval() {
     assert_eq!(stored_hash, offchain_hash);
 
     // The full attestation also includes the hash.
-    let (_, _, _, _, proof) = client.get_attestation(&business, &period).unwrap();
+    let (_, _, _, _, proof, _) = client.get_attestation(&business, &period).unwrap();
     assert_eq!(proof, Some(offchain_hash));
 }
 
@@ -251,6 +272,7 @@ fn verify_attestation_with_proof_hash() {
         &1_700_000_000u64,
         &1u32,
         &Some(proof),
+        &None,
     );
 
     // verify_attestation checks merkle root, not proof hash.

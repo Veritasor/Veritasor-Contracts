@@ -25,9 +25,11 @@ fn submit_and_get_attestation() {
     let timestamp = 1_700_000_000u64;
     let version = 1u32;
 
-    client.submit_attestation(&business, &period, &root, &timestamp, &version, &None);
+    client.submit_attestation(
+        &business, &period, &root, &timestamp, &version, &None, &None,
+    );
 
-    let (stored_root, stored_ts, stored_ver, stored_fee, stored_proof) =
+    let (stored_root, stored_ts, stored_ver, stored_fee, stored_proof, stored_expiry) =
         client.get_attestation(&business, &period).unwrap();
     assert_eq!(stored_root, root);
     assert_eq!(stored_ts, timestamp);
@@ -35,6 +37,7 @@ fn submit_and_get_attestation() {
     // No fees configured — fee_paid should be 0.
     assert_eq!(stored_fee, 0i128);
     assert_eq!(stored_proof, None);
+    assert_eq!(stored_expiry, None);
 }
 
 #[test]
@@ -44,7 +47,15 @@ fn verify_attestation() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[2u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
+        &None,
+    );
 
     assert!(client.verify_attestation(&business, &period, &root));
     let other_root = BytesN::from_array(&env, &[3u8; 32]);
@@ -60,9 +71,25 @@ fn duplicate_attestation_panics() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[0u8; 32]);
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
+        &None,
+    );
     // Second submission for the same (business, period) must panic.
-    client.submit_attestation(&business, &period, &root, &1_700_000_001u64, &1u32, &None);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_001u64,
+        &1u32,
+        &None,
+        &None,
+    );
 }
 
 #[test]
@@ -80,6 +107,7 @@ fn attestation_count_increments() {
         &1u64,
         &1u32,
         &None,
+        &None,
     );
     assert_eq!(client.get_business_count(&business), 1);
 
@@ -90,6 +118,7 @@ fn attestation_count_increments() {
         &root2,
         &2u64,
         &1u32,
+        &None,
         &None,
     );
     assert_eq!(client.get_business_count(&business), 2);

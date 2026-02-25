@@ -49,6 +49,8 @@ pub const TOPIC_PAUSED: Symbol = symbol_short!("paused");
 pub const TOPIC_UNPAUSED: Symbol = symbol_short!("unpaus");
 /// Topic for fee configuration events
 pub const TOPIC_FEE_CONFIG: Symbol = symbol_short!("fee_cfg");
+/// Topic for rate limit configuration events
+pub const TOPIC_RATE_LIMIT: Symbol = symbol_short!("rate_lm");
 
 // ════════════════════════════════════════════════════════════════════
 //  Event Data Structures
@@ -72,6 +74,8 @@ pub struct AttestationSubmittedEvent {
     pub fee_paid: i128,
     /// Optional SHA-256 hash pointing to the off-chain proof bundle
     pub proof_hash: Option<BytesN<32>>,
+    /// Optional expiry timestamp for the attestation
+    pub expiry_timestamp: Option<u64>,
 }
 
 /// Event data for attestation revocation
@@ -144,6 +148,20 @@ pub struct FeeConfigChangedEvent {
     pub changed_by: Address,
 }
 
+/// Event data for rate limit configuration changes
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RateLimitConfigChangedEvent {
+    /// Maximum submissions per business in one window
+    pub max_submissions: u32,
+    /// Sliding-window duration in seconds
+    pub window_seconds: u64,
+    /// Whether rate limiting is enabled
+    pub enabled: bool,
+    /// Address that made the change
+    pub changed_by: Address,
+}
+
 // ════════════════════════════════════════════════════════════════════
 //  Event Emission Functions
 // ════════════════════════════════════════════════════════════════════
@@ -162,6 +180,7 @@ pub fn emit_attestation_submitted(
     version: u32,
     fee_paid: i128,
     proof_hash: &Option<BytesN<32>>,
+    expiry_timestamp: Option<u64>,
 ) {
     let event = AttestationSubmittedEvent {
         business: business.clone(),
@@ -171,6 +190,7 @@ pub fn emit_attestation_submitted(
         version,
         fee_paid,
         proof_hash: proof_hash.clone(),
+        expiry_timestamp,
     };
     env.events()
         .publish((TOPIC_ATTESTATION_SUBMITTED, business.clone()), event);
@@ -290,4 +310,24 @@ pub fn emit_fee_config_changed(
         changed_by: changed_by.clone(),
     };
     env.events().publish((TOPIC_FEE_CONFIG,), event);
+}
+
+/// Emit a rate limit configuration changed event.
+///
+/// This event is emitted when the rate limit configuration is created or
+/// updated by the admin.
+pub fn emit_rate_limit_config_changed(
+    env: &Env,
+    max_submissions: u32,
+    window_seconds: u64,
+    enabled: bool,
+    changed_by: &Address,
+) {
+    let event = RateLimitConfigChangedEvent {
+        max_submissions,
+        window_seconds,
+        enabled,
+        changed_by: changed_by.clone(),
+    };
+    env.events().publish((TOPIC_RATE_LIMIT,), event);
 }
