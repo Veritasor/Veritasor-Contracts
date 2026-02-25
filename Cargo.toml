@@ -1,15 +1,5 @@
 [workspace]
-# Keep members in alphabetical order so new PRs add in the same place (reduces merge conflicts).
-members = [
-    "contracts/attestation",
-    "contracts/attestation-snapshot",
-    "contracts/aggregated-attestations",
-    "contracts/audit-log",
-    "contracts/common",
-    "contracts/integration-registry",
-    "contracts/revenue-curve",
-    "contracts/revenue-stream",
-]
+members = ["contracts/attestation", "contracts/lender-consumer"]
 resolver = "2"
 
 [profile.release]
