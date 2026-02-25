@@ -11,10 +11,18 @@ pub struct LenderConsumerContract;
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
+    Admin,
     CoreAddress,
+    AccessList,
     VerifiedRevenue(Address, String), // (Business, Period) -> i128
     DisputeStatus(Address, String),   // (Business, Period) -> bool
     Anomaly(Address, String),         // (Business, Period) -> bool
+}
+
+// Interface for the lender access list contract
+#[soroban_sdk::contractclient(name = "LenderAccessListClient")]
+pub trait LenderAccessListContractTrait {
+    fn is_allowed(env: Env, lender: Address, min_tier: u32) -> bool;
 }
 
 // Interface for the core attestation contract
@@ -27,11 +35,51 @@ pub trait AttestationContractTrait {
 #[contractimpl]
 impl LenderConsumerContract {
     /// Initialize the contract with the core attestation contract address.
-    pub fn initialize(env: Env, core_address: Address) {
+    pub fn initialize(env: Env, admin: Address, core_address: Address, access_list: Address) {
         if env.storage().instance().has(&DataKey::CoreAddress) {
             panic!("already initialized");
         }
+        admin.require_auth();
+
+        env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::CoreAddress, &core_address);
+        env.storage().instance().set(&DataKey::AccessList, &access_list);
+    }
+
+    fn require_admin(env: &Env, admin: &Address) {
+        admin.require_auth();
+        let stored: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("not initialized");
+        assert!(*admin == stored, "caller is not admin");
+    }
+
+    fn get_access_list(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::AccessList)
+            .expect("not initialized")
+    }
+
+    fn require_lender_tier(env: &Env, lender: &Address, min_tier: u32) {
+        lender.require_auth();
+        let access_list = Self::get_access_list(env.clone());
+        let client = LenderAccessListClient::new(env, &access_list);
+        let ok = client.is_allowed(lender, &min_tier);
+        assert!(ok, "lender not allowed");
+    }
+
+    /// Update access list contract address. Admin only.
+    pub fn set_access_list(env: Env, admin: Address, access_list: Address) {
+        Self::require_admin(&env, &admin);
+        env.storage().instance().set(&DataKey::AccessList, &access_list);
+    }
+
+    /// Get the configured access list contract address.
+    pub fn get_access_list_address(env: Env) -> Address {
+        Self::get_access_list(env)
     }
 
     /// Get the core attestation contract address.
@@ -44,7 +92,9 @@ impl LenderConsumerContract {
     /// This function verifies that the submitted revenue matches the attestation 
     /// stored in the core contract. It assumes the merkle_root in the core 
     /// contract is the SHA256 hash of the revenue (i128, big-endian).
-    pub fn submit_revenue(env: Env, business: Address, period: String, revenue: i128) {
+    pub fn submit_revenue(env: Env, lender: Address, business: Address, period: String, revenue: i128) {
+        Self::require_lender_tier(&env, &lender, 1);
+
         // 1. Calculate the expected root (Hash of revenue)
         let mut buf = [0u8; 16];
         buf.copy_from_slice(&revenue.to_be_bytes());
@@ -102,9 +152,8 @@ impl LenderConsumerContract {
     /// Set a dispute status for a business and period.
     /// 
     /// In a real system, this would be restricted to an admin or arbitrator.
-    pub fn set_dispute(env: Env, business: Address, period: String, is_disputed: bool) {
-        // ideally require auth from admin/arbitrator
-        // business.require_auth(); // or admin
+    pub fn set_dispute(env: Env, lender: Address, business: Address, period: String, is_disputed: bool) {
+        Self::require_lender_tier(&env, &lender, 2);
         env.storage().instance().set(&DataKey::DisputeStatus(business, period), &is_disputed);
     }
 

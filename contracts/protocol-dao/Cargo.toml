@@ -1,8 +1,9 @@
 [package]
-name = "lender-consumer"
+name = "veritasor-protocol-dao"
 version = "0.1.0"
 edition = "2021"
 publish = false
+rust-version = "1.75.0"
 
 [lib]
 crate-type = ["cdylib"]
@@ -13,8 +14,6 @@ soroban-sdk = "22.0"
 
 [dev-dependencies]
 soroban-sdk = { version = "22.0", features = ["testutils"] }
-veritasor-attestation = { path = "../attestation" }
-veritasor-lender-access-list = { path = "../lender-access-list" }
 
 [profile.release]
 opt-level = "z"
@@ -25,3 +24,4 @@ debug-assertions = false
 panic = "abort"
 codegen-units = 1
 lto = true
+

@@ -2,6 +2,7 @@
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod governance_gating;
 pub mod key_rotation;
 
 #[cfg(test)]

@@ -1,8 +1,19 @@
 #![no_std]
+use core::cmp::Ordering;
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Vec};
+
+const STATUS_KEY_TAG: u32 = 1;
+const ADMIN_KEY_TAG: (u32,) = (2,);
+const QUERY_LIMIT_MAX: u32 = 30;
+
+pub const STATUS_ACTIVE: u32 = 0;
+pub const STATUS_REVOKED: u32 = 1;
+pub const STATUS_FILTER_ALL: u32 = 2;
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Vec};
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Symbol, Vec};
 
 // Type aliases to reduce complexity - exported for other contracts
-pub type AttestationData = (BytesN<32>, u64, u32, i128);
+pub type AttestationData = (BytesN<32>, u64, u32, i128, Option<u64>);
 pub type RevocationData = (Address, u64, String);
 pub type AttestationWithRevocation = (AttestationData, Option<RevocationData>);
 #[allow(dead_code)]
@@ -34,6 +45,8 @@ mod access_control_test;
 #[cfg(test)]
 mod anomaly_test;
 #[cfg(test)]
+mod batch_submission_test;
+#[cfg(test)]
 mod dynamic_fees_test;
 #[cfg(test)]
 mod events_test;
@@ -47,6 +60,8 @@ mod key_rotation_test;
 mod multisig_test;
 #[cfg(test)]
 mod revocation_test;
+#[cfg(test)]
+mod pause_test;
 #[cfg(test)]
 mod test;
 // ─── End test modules ───
@@ -66,6 +81,9 @@ pub struct AttestationContract;
 #[contractimpl]
 #[allow(clippy::too_many_arguments)]
 impl AttestationContract {
+    /// Submit a revenue attestation: store merkle root and metadata for (business, period).
+    /// Prevents overwriting existing attestation for the same period (idempotency).
+    /// New attestations are stored with status active (0).
     // ── Initialization ──────────────────────────────────────────────
 
     /// One-time contract initialization. Sets the admin address and grants
@@ -150,6 +168,11 @@ impl AttestationContract {
     pub fn set_volume_brackets(env: Env, thresholds: Vec<u64>, discounts: Vec<u32>) {
         dynamic_fees::require_admin(&env);
         dynamic_fees::set_volume_brackets(&env, &thresholds, &discounts);
+    }
+
+    pub fn set_fee_dao(env: Env, dao: Address) {
+        dynamic_fees::require_admin(&env);
+        dynamic_fees::set_dao(&env, &dao);
     }
 
     /// Toggle fee collection on or off without changing other config.
@@ -324,6 +347,158 @@ impl AttestationContract {
 
     // ── Core attestation methods ────────────────────────────────────
 
+    /// Submit multiple attestations in a single atomic transaction.
+    ///
+    /// This function provides an efficient way to submit multiple attestations
+    /// for one or more businesses and periods. All attestations in the batch
+    /// are processed atomically: either all succeed or all fail.
+    ///
+    /// # Parameters
+    ///
+    /// * `items` - Vector of `BatchAttestationItem` containing the attestations to submit
+    ///
+    /// # Authorization
+    ///
+    /// For each item, the `business` address must authorize the call, or the caller
+    /// must have the ATTESTOR role. All businesses in the batch must authorize
+    /// before any processing begins.
+    ///
+    /// # Atomicity
+    ///
+    /// The batch operation is atomic:
+    /// - All validations are performed before any state changes
+    /// - If any validation fails, the entire batch is rejected
+    /// - If all validations pass, all attestations are stored, fees are collected,
+    ///   counts are incremented, and events are emitted
+    ///
+    /// # Fee Calculation
+    ///
+    /// Fees are calculated for each attestation based on the business's current
+    /// volume count at the time of calculation. For multiple attestations from
+    /// the same business in one batch, each subsequent attestation will have
+    /// fees calculated based on the incremented count from previous items in
+    /// the batch.
+    ///
+    /// # Panics
+    ///
+    /// Panics if:
+    /// - The contract is paused
+    /// - The batch is empty
+    /// - Any business address fails to authorize
+    /// - Any (business, period) pair already exists
+    /// - Any fee collection fails (insufficient balance, etc.)
+    ///
+    /// # Events
+    ///
+    /// Emits one `AttestationSubmittedEvent` for each successfully processed
+    /// attestation in the batch.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let items = vec![
+    ///     BatchAttestationItem {
+    ///         business: business1,
+    ///         period: String::from_str(&env, "2026-01"),
+    ///         merkle_root: root1,
+    ///         timestamp: 1700000000,
+    ///         version: 1,
+    ///     },
+    ///     BatchAttestationItem {
+    ///         business: business1,
+    ///         period: String::from_str(&env, "2026-02"),
+    ///         merkle_root: root2,
+    ///         timestamp: 1700086400,
+    ///         version: 1,
+    ///     },
+    /// ];
+    /// client.submit_attestations_batch(&items);
+    /// ```
+    pub fn submit_attestations_batch(env: Env, items: Vec<BatchAttestationItem>) {
+        // Check contract is not paused
+        access_control::require_not_paused(&env);
+
+        // Validate batch is not empty
+        assert!(!items.is_empty(), "batch cannot be empty");
+
+        let len = items.len();
+
+        // Phase 1: Collect unique businesses and authorize them once
+        // We need to authorize each business only once, even if it appears
+        // multiple times in the batch.
+        let mut authorized_businesses = Vec::new(&env);
+        for i in 0..len {
+            let item = items.get(i).unwrap();
+            // Check if we've already authorized this business
+            let mut already_authorized = false;
+            for j in 0..authorized_businesses.len() {
+                if authorized_businesses.get(j).unwrap() == item.business {
+                    already_authorized = true;
+                    break;
+                }
+            }
+            if !already_authorized {
+                item.business.require_auth();
+                authorized_businesses.push_back(item.business.clone());
+            }
+        }
+
+        // Phase 2: Validate all items before making any state changes (atomic validation)
+        for i in 0..len {
+            let item = items.get(i).unwrap();
+
+            // Check for duplicates within the batch itself
+            for j in (i + 1)..len {
+                let other_item = items.get(j).unwrap();
+                if item.business == other_item.business && item.period == other_item.period {
+                    panic!("duplicate attestation in batch: same business and period at indices {i} and {j}");
+                }
+            }
+
+            // Check for duplicate attestations in storage
+            let key = DataKey::Attestation(item.business.clone(), item.period.clone());
+            if env.storage().instance().has(&key) {
+                panic!("attestation already exists for business and period at index {i}");
+            }
+        }
+
+        // Phase 3: Process all items (all validations passed)
+        for i in 0..len {
+            let item = items.get(i).unwrap();
+
+            // Collect fee (0 if fees disabled or not configured).
+            // Fee is calculated based on current count, which may have been
+            // incremented by previous items in this batch for the same business.
+            let fee_paid = dynamic_fees::collect_fee(&env, &item.business);
+
+            // Track volume for future discount calculations.
+            // This increment affects fee calculation for subsequent items
+            // in the batch from the same business.
+            dynamic_fees::increment_business_count(&env, &item.business);
+
+            // Store attestation data
+            let key = DataKey::Attestation(item.business.clone(), item.period.clone());
+            let data = (
+                item.merkle_root.clone(),
+                item.timestamp,
+                item.version,
+                fee_paid,
+            );
+            env.storage().instance().set(&key, &data);
+
+            // Emit event for this attestation
+            events::emit_attestation_submitted(
+                &env,
+                &item.business,
+                &item.period,
+                &item.merkle_root,
+                item.timestamp,
+                item.version,
+                fee_paid,
+            );
+        }
+    }
+
     /// Submit a revenue attestation.
     ///
     /// Stores the Merkle root, timestamp, and version for the given
@@ -352,6 +527,7 @@ impl AttestationContract {
         version: u32,
         expiry_timestamp: Option<u64>,
     ) {
+        let key = (business.clone(), period.clone());
         access_control::require_not_paused(&env);
         business.require_auth();
 
@@ -382,6 +558,8 @@ impl AttestationContract {
             expiry_timestamp,
         );
         env.storage().instance().set(&key, &data);
+        let status_key = (STATUS_KEY_TAG, business, period);
+        env.storage().instance().set(&status_key, &STATUS_ACTIVE);
 
         // Record successful submission for rate-limit tracking.
         rate_limit::record_submission(&env, &business);
@@ -513,6 +691,7 @@ impl AttestationContract {
         new_version: u32,
     ) {
         access_control::require_admin(&env, &caller);
+        access_control::require_not_paused(&env);
 
         let key = DataKey::Attestation(business.clone(), period.clone());
         let (old_merkle_root, timestamp, old_version, fee_paid, expiry_timestamp): (
@@ -682,6 +861,104 @@ impl AttestationContract {
         }
     }
 
+    /// One-time setup of admin. Admin is the only address that may revoke attestations.
+    pub fn init(env: Env, admin: Address) {
+        admin.require_auth();
+        if env.storage().instance().has(&ADMIN_KEY_TAG) {
+            panic!("admin already set");
+        }
+        env.storage().instance().set(&ADMIN_KEY_TAG, &admin);
+    }
+
+    /// Revoke an attestation. Caller must be admin. Status is set to revoked (1).
+    pub fn revoke_attestation(env: Env, caller: Address, business: Address, period: String) {
+        caller.require_auth();
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&ADMIN_KEY_TAG)
+            .expect("admin not set");
+        if caller != admin {
+            panic!("caller is not admin");
+        }
+        let attest_key = (business.clone(), period.clone());
+        if !env.storage().instance().has(&attest_key) {
+            panic!("attestation does not exist");
+        }
+        let status_key = (STATUS_KEY_TAG, business, period);
+        env.storage().instance().set(&status_key, &STATUS_REVOKED);
+    }
+
+    /// Returns status for (business, period): 0 active, 1 revoked. Defaults to active if not set.
+    fn get_status(env: &Env, business: &Address, period: &String) -> u32 {
+        let key = (STATUS_KEY_TAG, business.clone(), period.clone());
+        env.storage()
+            .instance()
+            .get(&key)
+            .unwrap_or(STATUS_ACTIVE)
+    }
+
+    /// Paginated query: returns attestations for the given business and period list, with optional filters.
+    /// periods: list of period strings to consider (e.g. from an indexer). Cursor indexes into this list.
+    /// period_start: include only period >= this (None = no lower bound). period_end: include only period <= this (None = no upper bound).
+    /// status_filter: 0 active only, 1 revoked only, 2 all. version_filter: None = any version.
+    /// limit: max results (capped at QUERY_LIMIT_MAX). cursor: index into periods to start from.
+    /// Returns (results as Vec of (period, merkle_root, timestamp, version, status), next_cursor).
+    /// Next_cursor is cursor + number of periods scanned (not result count). DoS-limited by cap on limit and bounded reads.
+    pub fn get_attestations_page(
+        env: Env,
+        business: Address,
+        periods: Vec<String>,
+        period_start: Option<String>,
+        period_end: Option<String>,
+        status_filter: u32,
+        version_filter: Option<u32>,
+        limit: u32,
+        cursor: u32,
+    ) -> (Vec<(String, BytesN<32>, u64, u32, u32)>, u32) {
+        let limit = core::cmp::min(limit, QUERY_LIMIT_MAX);
+        let len = periods.len();
+        if cursor >= len {
+            return (Vec::new(&env), cursor);
+        }
+        let mut out = Vec::new(&env);
+        let mut scanned: u32 = 0;
+        let mut i = cursor;
+        while i < len && (out.len() as u32) < limit {
+            let period = periods.get(i).unwrap();
+            let in_range = period_start
+                .as_ref()
+                .map_or(true, |s| period.cmp(s) != Ordering::Less)
+                && period_end
+                    .as_ref()
+                    .map_or(true, |s| period.cmp(s) != Ordering::Greater);
+            if !in_range {
+                i += 1;
+                scanned += 1;
+                continue;
+            }
+            let key = (business.clone(), period.clone());
+            if let Some((root, ts, ver)) = env.storage().instance().get::<_, (BytesN<32>, u64, u32)>(&key) {
+                let status = Self::get_status(&env, &business, &period);
+                let status_ok = status_filter == STATUS_FILTER_ALL
+                    || (status_filter == STATUS_ACTIVE && status == STATUS_ACTIVE)
+                    || (status_filter == STATUS_REVOKED && status == STATUS_REVOKED);
+                let version_ok =
+                    version_filter.map_or(true, |v| v == ver);
+                if status_ok && version_ok {
+                    out.push_back((period.clone(), root, ts, ver, status));
+                }
+            }
+            i += 1;
+            scanned += 1;
+        }
+        (out, cursor + scanned)
+    }
+}
+
+mod test;
+#[cfg(test)]
+mod query_pagination_test;
     /// Get all attestations for a business with their revocation status.
     ///
     /// This method is useful for audit and reporting purposes.
@@ -712,6 +989,10 @@ impl AttestationContract {
             results.push_back((period.clone(), attestation_data, revocation_info));
         }
 
+    /// Returns anomaly flags and risk score for (business, period) if set. For use by lenders.
+    pub fn get_anomaly(env: Env, business: Address, period: String) -> Option<(u32, u32)> {
+        let key = (ANOMALY_KEY_TAG, business, period);
+        env.storage().instance().get(&key)
         results
     }
 
@@ -1003,3 +1284,8 @@ impl AttestationContract {
 
     // ─── New feature methods: add new sections below (e.g. `// ── MyFeature ───` then methods). Do not edit sections above. ───
 }
+
+#[cfg(test)]
+mod anomaly_test;
+#[cfg(test)]
+mod test;

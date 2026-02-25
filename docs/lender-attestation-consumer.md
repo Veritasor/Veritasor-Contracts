@@ -24,18 +24,22 @@ This separation ensures that the Core Contract remains lightweight (storing only
 
 ### Initialization
 ```rust
-fn initialize(env: Env, core_address: Address)
+fn initialize(env: Env, admin: Address, core_address: Address, access_list: Address)
 ```
 Initializes the contract with the address of the Core Attestation Contract.
 
+The contract also stores a `LenderAccessListContract` address which is used to enforce tiered access control for lender-facing operations.
+
 ### Data Submission
 ```rust
-fn submit_revenue(env: Env, business: Address, period: String, revenue: i128)
+fn submit_revenue(env: Env, lender: Address, business: Address, period: String, revenue: i128)
 ```
 Submits revenue data for a business and period.
 *   **Verification**: The contract calculates `SHA256(revenue)` and calls `core.verify_attestation()` to ensure it matches the stored Merkle root.
 *   **Storage**: If verified, the revenue is stored in the Lender Contract.
 *   **Anomalies**: Automatically checks for anomalies (e.g., negative revenue) and flags them.
+
+**Access control**: `lender` must authorize and must be allowed by the configured access list with `tier >= 1`.
 
 ### Lender Views
 

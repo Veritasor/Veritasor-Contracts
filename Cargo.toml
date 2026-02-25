@@ -1,5 +1,13 @@
 [workspace]
-members = ["contracts/attestation", "contracts/lender-consumer"]
+members = ["contracts/attestation", "contracts/lender-consumer", "contracts/lender-access-list"]
+# Keep members in alphabetical order so new PRs add in the same place (reduces merge conflicts).
+members = [
+    "contracts/attestation",
+    "contracts/audit-log",
+    "contracts/integration-registry",
+    "contracts/protocol-dao",
+    "contracts/revenue-stream",
+]
 resolver = "2"
 
 [profile.release]

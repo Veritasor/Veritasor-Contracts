@@ -3,7 +3,6 @@
 
 use super::*;
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{Address, BytesN, Env, String, Vec};
 
 /// Helper: register the contract and return a client.
 fn setup() -> (Env, AttestationContractClient<'static>) {
@@ -44,7 +43,7 @@ impl TestEnv {
         version: u32,
     ) {
         self.client
-            .submit_attestation(&business, &period, &merkle_root, &timestamp, &version);
+            .submit_attestation(&business, &period, &merkle_root, &timestamp, &version, &None);
     }
 
     pub fn revoke_attestation(
@@ -91,7 +90,7 @@ impl TestEnv {
         &self,
         business: Address,
         period: String,
-    ) -> Option<(BytesN<32>, u64, u32, i128)> {
+    ) -> Option<(BytesN<32>, u64, u32, i128, Option<u64>)> {
         self.client.get_attestation(&business, &period)
     }
 

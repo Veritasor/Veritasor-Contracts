@@ -2,8 +2,8 @@
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 /// Status of a dispute
-#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DisputeStatus {
     /// Dispute is open and awaiting resolution
     Open,
@@ -14,8 +14,8 @@ pub enum DisputeStatus {
 }
 
 /// Type of dispute being raised
-#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DisputeType {
     /// Disputed revenue amount differs from claimed amount
     RevenueMismatch,
@@ -26,8 +26,8 @@ pub enum DisputeType {
 }
 
 /// Resolution outcome of a dispute
-#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DisputeOutcome {
     /// Dispute upheld - challenger wins
     Upheld,
@@ -38,8 +38,8 @@ pub enum DisputeOutcome {
 }
 
 /// Resolution details when a dispute is resolved
-#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DisputeResolution {
     /// Address of the party resolving the dispute
     pub resolver: Address,
@@ -81,8 +81,8 @@ impl MaybeResolution {
 }
 
 /// Dispute record for a challenged attestation
-#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Dispute {
     /// Unique identifier for this dispute
     pub id: u64,
@@ -105,8 +105,8 @@ pub struct Dispute {
 }
 
 /// Storage keys for dispute management
-#[derive(Clone)]
 #[contracttype]
+#[derive(Clone)]
 enum DisputeKey {
     /// Counter for generating unique dispute IDs
     DisputeIdCounter,

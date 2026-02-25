@@ -23,6 +23,9 @@ See [docs/attestation-dynamic-fees.md](docs/attestation-dynamic-fees.md) for the
 | `submit_attestation(business, period, merkle_root, timestamp, version)` | Store attestation. Panics if one already exists for this business and period. |
 | `get_attestation(business, period)` | Returns `Option<(BytesN<32>, u64, u32)>`. |
 | `verify_attestation(business, period, merkle_root)` | Returns `true` if an attestation exists and its root matches. |
+| `init(admin)` | One-time setup of admin for revocation. |
+| `revoke_attestation(caller, business, period)` | Set attestation status to revoked (admin only). |
+| `get_attestations_page(business, periods, period_start, period_end, status_filter, version_filter, limit, cursor)` | Paginated query with filters. Returns (results, next_cursor). Limit capped at 30. See [docs/attestation-queries.md](docs/attestation-queries.md). |
 | `init(admin)` | One-time setup of admin for anomaly feature. |
 | `add_authorized_analytics(caller, analytics)` | Add an authorized analytics/oracle address (admin only). |
 | `remove_authorized_analytics(caller, analytics)` | Remove an authorized analytics address (admin only). |
@@ -98,6 +101,9 @@ Benchmarks measure CPU instructions and memory usage for all core operations. Se
 
 ```
 veritasor-contracts/
+├── Cargo.toml                 # Workspace root
+├── docs/
+│   └── attestation-queries.md # Pagination and filtering
 ├── Cargo.toml              # Workspace root
 ├── docs/
 │   └── attestation-anomaly-flags.md   # Anomaly flags and risk scores
@@ -108,6 +114,9 @@ veritasor-contracts/
     └── attestation/
         ├── Cargo.toml
         └── src/
+            ├── lib.rs               # Contract logic
+            ├── test.rs              # Unit tests
+            └── query_pagination_test.rs  # Pagination tests
             ├── lib.rs         # Contract logic
             ├── test.rs        # Unit tests
             └── anomaly_test.rs  # Anomaly feature tests
