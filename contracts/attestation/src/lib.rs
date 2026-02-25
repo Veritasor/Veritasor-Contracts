@@ -72,6 +72,18 @@ const ANOMALY_KEY_TAG: u32 = 1;
 const AUTHORIZED_KEY_TAG: u32 = 3;
 const ANOMALY_SCORE_MAX: u32 = 100;
 
+/// Batch attestation item for submit_attestations_batch
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct BatchAttestationItem {
+    pub business: Address,
+    pub period: String,
+    pub merkle_root: BytesN<32>,
+    pub timestamp: u64,
+    pub version: u32,
+    pub expiry_timestamp: Option<u64>,
+}
+
 #[contract]
 pub struct AttestationContract;
 
@@ -524,7 +536,6 @@ impl AttestationContract {
         version: u32,
         expiry_timestamp: Option<u64>,
     ) {
-        let key = (business.clone(), period.clone());
         access_control::require_not_paused(&env);
         business.require_auth();
 
@@ -555,7 +566,7 @@ impl AttestationContract {
             expiry_timestamp,
         );
         env.storage().instance().set(&key, &data);
-        let status_key = (STATUS_KEY_TAG, business, period);
+        let status_key = (STATUS_KEY_TAG, business.clone(), period.clone());
         env.storage().instance().set(&status_key, &STATUS_ACTIVE);
 
         // Record successful submission for rate-limit tracking.
@@ -867,25 +878,6 @@ impl AttestationContract {
         env.storage().instance().set(&ADMIN_KEY_TAG, &admin);
     }
 
-    /// Revoke an attestation. Caller must be admin. Status is set to revoked (1).
-    pub fn revoke_attestation(env: Env, caller: Address, business: Address, period: String) {
-        caller.require_auth();
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&ADMIN_KEY_TAG)
-            .expect("admin not set");
-        if caller != admin {
-            panic!("caller is not admin");
-        }
-        let attest_key = (business.clone(), period.clone());
-        if !env.storage().instance().has(&attest_key) {
-            panic!("attestation does not exist");
-        }
-        let status_key = (STATUS_KEY_TAG, business, period);
-        env.storage().instance().set(&status_key, &STATUS_REVOKED);
-    }
-
     /// Returns status for (business, period): 0 active, 1 revoked. Defaults to active if not set.
     fn get_status(env: &Env, business: &Address, period: &String) -> u32 {
         let key = (STATUS_KEY_TAG, business.clone(), period.clone());
@@ -951,40 +943,44 @@ impl AttestationContract {
         }
         (out, cursor + scanned)
     }
+
+    /// Get all attestations for a business with their revocation status.
+    ///
+    /// This method is useful for audit and reporting purposes.
+    /// Note: This requires the business to maintain a list of their periods
+    /// as the contract does not store a global index of attestations.
+    ///
+    /// # Arguments
+    /// * `business` - Business address to query attestations for
+    /// * `periods` - List of period identifiers to retrieve
+    ///
+    /// # Returns
+    /// Vector of tuples containing (period, attestation_data, revocation_info)
+    pub fn get_business_attestations(
+        env: Env,
+        business: Address,
+        periods: Vec<String>,
+    ) -> AttestationStatusResult {
+        let mut results = Vec::new(&env);
+
+        for i in 0..periods.len() {
+            let period = periods.get(i).unwrap();
+            let attestation_key = DataKey::Attestation(business.clone(), period.clone());
+            let revoked_key = DataKey::Revoked(business.clone(), period.clone());
+
+            let attestation_data = env.storage().instance().get(&attestation_key);
+            let revocation_info = env.storage().instance().get(&revoked_key);
+
+            results.push_back((period.clone(), attestation_data, revocation_info));
+        }
+
+        results
+    }
 }
 
 #[cfg(test)]
 mod query_pagination_test;
 mod test;
-/// Get all attestations for a business with their revocation status.
-///
-/// This method is useful for audit and reporting purposes.
-/// Note: This requires the business to maintain a list of their periods
-/// as the contract does not store a global index of attestations.
-///
-/// # Arguments
-/// * `business` - Business address to query attestations for
-/// * `periods` - List of period identifiers to retrieve
-///
-/// # Returns
-/// Vector of tuples containing (period, attestation_data, revocation_info)
-pub fn get_business_attestations(
-    env: Env,
-    business: Address,
-    periods: Vec<String>,
-) -> AttestationStatusResult {
-    let mut results = Vec::new(&env);
-
-    for i in 0..periods.len() {
-        let period = periods.get(i).unwrap();
-        let attestation_key = DataKey::Attestation(business.clone(), period.clone());
-        let revoked_key = DataKey::Revoked(business.clone(), period.clone());
-
-        let attestation_data = env.storage().instance().get(&attestation_key);
-        let revocation_info = env.storage().instance().get(&revoked_key);
-
-        results.push_back((period.clone(), attestation_data, revocation_info));
-    }
 
     /// Returns anomaly flags and risk score for (business, period) if set. For use by lenders.
     pub fn get_anomaly(env: Env, business: Address, period: String) -> Option<(u32, u32)> {
