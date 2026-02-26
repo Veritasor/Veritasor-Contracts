@@ -1,6 +1,8 @@
 //! Dispute management module for attestation challenges
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
+use super::DataKey;
+
 /// Status of a dispute
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -220,7 +222,7 @@ pub fn validate_dispute_eligibility(
     period: &String,
 ) -> Result<(), &'static str> {
     // Check if attestation exists
-    let attestation_key = (business.clone(), period.clone());
+    let attestation_key = DataKey::Attestation(business.clone(), period.clone());
     if !env.storage().instance().has(&attestation_key) {
         return Err("no attestation exists for this business and period");
     }
