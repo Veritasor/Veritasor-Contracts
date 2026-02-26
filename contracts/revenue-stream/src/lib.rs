@@ -9,6 +9,7 @@
 use soroban_sdk::{
     contract, contractimpl, contracttype, token, Address, BytesN, Env, IntoVal, String,
 };
+use veritasor_attestation::AttestationContractClient;
 use veritasor_common::replay_protection;
 
 /// Nonce channels for replay protection
@@ -28,44 +29,6 @@ mod attestation_import {
     #[allow(dead_code)]
     pub type AttestationStatusResult =
         Vec<(String, Option<AttestationData>, Option<RevocationData>)>;
-
-    // Path from crate dir (contracts/revenue-stream): ../../ = workspace root.
-    soroban_sdk::contractimport!(
-        file = "../../target/wasm32-unknown-unknown/release/veritasor_attestation.wasm"
-    );
-    pub use Client as AttestationContractClient;
-}
-
-impl<'a> AttestationContractClient<'a> {
-    pub fn new(env: &'a Env, address: &'a Address) -> Self {
-        AttestationContractClient { env, address }
-    }
-
-    pub fn get_attestation(
-        &self,
-        business: &Address,
-        period: &String,
-    ) -> Option<(BytesN<32>, u64, u32, i128, Option<u64>)> {
-        let mut args = soroban_sdk::Vec::new(self.env);
-        args.push_back(business.into_val(self.env));
-        args.push_back(period.into_val(self.env));
-        self.env.invoke_contract(
-            self.address,
-            &soroban_sdk::Symbol::new(self.env, "get_attestation"),
-            args,
-        )
-    }
-
-    pub fn is_revoked(&self, business: &Address, period: &String) -> bool {
-        let mut args = soroban_sdk::Vec::new(self.env);
-        args.push_back(business.into_val(self.env));
-        args.push_back(period.into_val(self.env));
-        self.env.invoke_contract(
-            self.address,
-            &soroban_sdk::Symbol::new(self.env, "is_revoked"),
-            args,
-        )
-    }
 }
 
 #[cfg(test)]

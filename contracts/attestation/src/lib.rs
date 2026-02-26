@@ -733,6 +733,11 @@ impl AttestationContract {
                     &env, token, collector, base_fee, enabled, &executor,
                 );
             }
+            ProposalAction::EmergencyRotateAdmin(ref new_admin) => {
+                let old_admin = dynamic_fees::get_admin(&env);
+                dynamic_fees::set_admin(&env, new_admin);
+                events::emit_key_rotation_confirmed(&env, &old_admin, new_admin, true);
+            }
         }
 
         multisig::mark_executed(&env, proposal_id);
