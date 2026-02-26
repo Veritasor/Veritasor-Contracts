@@ -6,8 +6,11 @@ use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String, Vec};
 #[test]
 fn test_open_dispute_success() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
 
     // First submit an attestation
     let business = Address::generate(&env);
@@ -37,8 +40,11 @@ fn test_open_dispute_success() {
 #[test]
 fn test_open_dispute_no_attestation() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
 
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
@@ -55,8 +61,11 @@ fn test_open_dispute_no_attestation() {
 #[test]
 fn test_duplicate_dispute_prevention() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
 
     // Submit attestation
     let business = Address::generate(&env);
@@ -85,8 +94,11 @@ fn test_duplicate_dispute_prevention() {
 #[test]
 fn test_dispute_resolution() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
 
     // Setup: submit attestation and open dispute
     let business = Address::generate(&env);
@@ -104,7 +116,7 @@ fn test_dispute_resolution() {
     );
 
     // Resolve dispute
-    let resolver = Address::generate(&env);
+    let resolver = admin.clone();
     let outcome = DisputeOutcome::Upheld;
     let notes = String::from_str(&env, "Challenger provided sufficient evidence");
     
@@ -124,10 +136,13 @@ fn test_dispute_resolution() {
 #[test]
 fn test_resolve_nonexistent_dispute() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
 
-    let resolver = Address::generate(&env);
+    let resolver = admin.clone();
     let outcome = DisputeOutcome::Rejected;
     let notes = String::from_str(&env, "Test notes");
 
@@ -140,8 +155,11 @@ fn test_resolve_nonexistent_dispute() {
 #[test]
 fn test_resolve_closed_dispute() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
 
     // Setup: submit attestation, open and resolve dispute
     let business = Address::generate(&env);
@@ -158,7 +176,7 @@ fn test_resolve_closed_dispute() {
         &String::from_str(&env, "Dispute evidence")
     );
 
-    let resolver = Address::generate(&env);
+    let resolver = admin.clone();
     client.resolve_dispute(&dispute_id, &resolver, &DisputeOutcome::Upheld, &String::from_str(&env, "Notes"));
 
     // Try to resolve already resolved dispute
@@ -170,8 +188,11 @@ fn test_resolve_closed_dispute() {
 #[test]
 fn test_close_dispute() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
 
     // Setup: submit attestation, open and resolve dispute
     let business = Address::generate(&env);
@@ -188,7 +209,7 @@ fn test_close_dispute() {
         &String::from_str(&env, "Dispute evidence")
     );
 
-    let resolver = Address::generate(&env);
+    let resolver = admin.clone();
     client.resolve_dispute(&dispute_id, &resolver, &DisputeOutcome::Upheld, &String::from_str(&env, "Notes"));
 
     // Close dispute
@@ -202,8 +223,11 @@ fn test_close_dispute() {
 #[test]
 fn test_close_unresolved_dispute() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
 
     // Setup: submit attestation and open dispute
     let business = Address::generate(&env);
@@ -229,8 +253,11 @@ fn test_close_unresolved_dispute() {
 #[test]
 fn test_get_disputes_by_attestation() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
 
     // Submit attestation
     let business = Address::generate(&env);
@@ -269,8 +296,11 @@ fn test_get_disputes_by_attestation() {
 #[test]
 fn test_get_disputes_by_challenger() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
 
     let challenger = Address::generate(&env);
     
@@ -312,8 +342,11 @@ fn test_get_disputes_by_challenger() {
 #[test]
 fn test_business_vs_lender_dispute_scenario() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
 
     // Business submits attestation
     let business = Address::generate(&env);
@@ -338,10 +371,10 @@ fn test_business_vs_lender_dispute_scenario() {
     assert_eq!(dispute.period, period);
     assert_eq!(dispute.dispute_type, DisputeType::RevenueMismatch);
 
-    // Business (as authorized resolver) resolves dispute in their favor
+    // Admin resolves dispute in their favor
     let outcome = DisputeOutcome::Rejected; // Business wins, attestation stands
     let notes = String::from_str(&env, "Audited financial records confirm reported revenue of $100k");
-    client.resolve_dispute(&dispute_id, &business, &outcome, &notes);
+    client.resolve_dispute(&dispute_id, &admin, &outcome, &notes);
 
     // Verify resolution
     let dispute = client.get_dispute(&dispute_id).unwrap();
@@ -349,7 +382,7 @@ fn test_business_vs_lender_dispute_scenario() {
     {
         let resolution = dispute.resolution.unwrap();
         assert_eq!(resolution.outcome, DisputeOutcome::Rejected);
-        assert_eq!(resolution.resolver, business);
+        assert_eq!(resolution.resolver, admin);
     }
 
     // Close dispute
@@ -361,8 +394,11 @@ fn test_business_vs_lender_dispute_scenario() {
 #[test]
 fn test_dispute_lifecycle_complete_flow() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
 
     // Phase 1: Submit attestation
     let business = Address::generate(&env);
@@ -384,7 +420,7 @@ fn test_dispute_lifecycle_complete_flow() {
     assert_eq!(dispute.business, business);
 
     // Phase 3: Resolve dispute
-    let resolver = Address::generate(&env);
+    let resolver = admin.clone();
     let outcome = DisputeOutcome::Upheld;
     let resolution_notes = String::from_str(&env, "Independent audit confirmed data inconsistency");
     client.resolve_dispute(&dispute_id, &resolver, &outcome, &resolution_notes);
