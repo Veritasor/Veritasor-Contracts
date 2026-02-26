@@ -313,6 +313,28 @@ pub fn hash_leaf(env: &Env, data: &Bytes) -> BytesN<32> {
     BytesN::from_array(env, &result)
 }
 
+pub fn verify_merkle_proof(
+    env: &Env,
+    root: &BytesN<32>,
+    leaf: &BytesN<32>,
+    proof: &SorobanVec<BytesN<32>>,
+) -> bool {
+    let mut computed = leaf.clone();
+    for i in 0..proof.len() {
+        let sibling = proof.get(i).unwrap();
+        let mut combined = Bytes::new(env);
+        if computed < sibling {
+            combined.append(&computed.clone().into());
+            combined.append(&sibling.clone().into());
+        } else {
+            combined.append(&sibling.clone().into());
+            combined.append(&computed.clone().into());
+        }
+        computed = env.crypto().sha256(&combined).into();
+    }
+    computed == *root
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
