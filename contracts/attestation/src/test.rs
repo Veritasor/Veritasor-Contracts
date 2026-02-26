@@ -2,7 +2,7 @@
 //! prevention. These tests run without fee configuration (backward compat).
 
 use super::*;
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String};
 
 /// Helper: register the contract and return a client.
 fn setup() -> (Env, AttestationContractClient<'static>) {
@@ -235,7 +235,7 @@ fn verify_revenue_entry() {
     }
     let root: BytesN<32> = env.crypto().sha256(&combined).into();
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None);
 
     let mut proof = Vec::new(&env);
     proof.push_back(l2);

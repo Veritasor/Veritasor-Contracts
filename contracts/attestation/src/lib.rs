@@ -1,6 +1,6 @@
 #![no_std]
 use core::cmp::Ordering;
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, BytesN, Env, String, Symbol, Vec};
 
 const STATUS_KEY_TAG: u32 = 1;
 const ADMIN_KEY_TAG: (u32,) = (2,);
@@ -35,6 +35,7 @@ pub use extended_metadata::{AttestationMetadata, RevenueBasis};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
 pub use rate_limit::RateLimitConfig;
 pub use registry::{BusinessRecord, BusinessStatus};
+pub use dispute::{Dispute, DisputeOutcome, DisputeStatus, DisputeType};
 // ─── End re-exports ───
 
 // ─── Test modules: add new `mod <name>_test;` here ───
@@ -45,6 +46,8 @@ mod anomaly_test;
 #[cfg(test)]
 mod batch_submission_test;
 #[cfg(test)]
+mod dispute_test;
+#[cfg(test)]
 mod dynamic_fees_test;
 #[cfg(test)]
 mod events_test;
@@ -53,11 +56,21 @@ mod expiry_test;
 #[cfg(test)]
 mod extended_metadata_test;
 #[cfg(test)]
+mod gas_benchmark_test;
+#[cfg(test)]
 mod key_rotation_test;
 #[cfg(test)]
 mod multisig_test;
 #[cfg(test)]
 mod pause_test;
+#[cfg(test)]
+mod property_test;
+#[cfg(test)]
+mod query_pagination_test;
+#[cfg(test)]
+mod rate_limit_test;
+#[cfg(test)]
+mod registry_test;
 #[cfg(test)]
 mod revocation_test;
 #[cfg(test)]
@@ -65,11 +78,9 @@ mod test;
 // ─── End test modules ───
 
 pub mod dispute;
-#[cfg(test)]
-mod registry_test;
 
-const ANOMALY_KEY_TAG: u32 = 1;
-const AUTHORIZED_KEY_TAG: u32 = 3;
+const ANOMALY_KEY_TAG: u32 = 10;
+const AUTHORIZED_KEY_TAG: u32 = 11;
 const ANOMALY_SCORE_MAX: u32 = 100;
 
 /// Batch attestation item for submit_attestations_batch
@@ -492,6 +503,7 @@ impl AttestationContract {
                 item.timestamp,
                 item.version,
                 fee_paid,
+                item.expiry_timestamp,
             );
             env.storage().instance().set(&key, &data);
 
@@ -869,6 +881,39 @@ impl AttestationContract {
         }
     }
 
+    /// Verify that a revenue entry (leaf data) is included in the stored Merkle root for (business, period).
+    /// proof: ordered list of sibling hashes from leaf to root. Returns false if attestation missing/revoked.
+    pub fn verify_revenue_entry(
+        env: Env,
+        business: Address,
+        period: String,
+        leaf_data: Bytes,
+        proof: Vec<BytesN<32>>,
+    ) -> bool {
+        if Self::is_revoked(env.clone(), business.clone(), period.clone()) {
+            return false;
+        }
+        let Some((stored_root, _ts, _ver, _fee, _expiry)) =
+            Self::get_attestation(env.clone(), business, period)
+        else {
+            return false;
+        };
+        let leaf_hash = veritasor_common::merkle::hash_leaf(&env, &leaf_data);
+        let mut current = leaf_hash;
+        for sibling in proof.iter() {
+            let mut combined = soroban_sdk::Bytes::new(&env);
+            if current <= sibling {
+                combined.append(&current.clone().into());
+                combined.append(&sibling.clone().into());
+            } else {
+                combined.append(&sibling.clone().into());
+                combined.append(&current.clone().into());
+            }
+            current = env.crypto().sha256(&combined).into();
+        }
+        current == stored_root
+    }
+
     /// One-time setup of admin. Admin is the only address that may revoke attestations.
     pub fn init(env: Env, admin: Address) {
         admin.require_auth();
@@ -923,11 +968,11 @@ impl AttestationContract {
                 scanned += 1;
                 continue;
             }
-            let key = (business.clone(), period.clone());
-            if let Some((root, ts, ver)) = env
+            let key = DataKey::Attestation(business.clone(), period.clone());
+            if let Some((root, ts, ver, _fee, _expiry)) = env
                 .storage()
                 .instance()
-                .get::<_, (BytesN<32>, u64, u32)>(&key)
+                .get::<_, (BytesN<32>, u64, u32, i128, Option<u64>)>(&key)
             {
                 let status = Self::get_status(&env, &business, &period);
                 let status_ok = status_filter == STATUS_FILTER_ALL
@@ -976,16 +1021,66 @@ impl AttestationContract {
 
         results
     }
-}
-
-#[cfg(test)]
-mod query_pagination_test;
-mod test;
 
     /// Returns anomaly flags and risk score for (business, period) if set. For use by lenders.
     pub fn get_anomaly(env: Env, business: Address, period: String) -> Option<(u32, u32)> {
         let key = (ANOMALY_KEY_TAG, business, period);
         env.storage().instance().get(&key)
+    }
+
+    /// Adds an address to the set of authorized analytics updaters. Caller must be the anomaly admin.
+    pub fn add_authorized_analytics(env: Env, caller: Address, analytics: Address) {
+        caller.require_auth();
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&ADMIN_KEY_TAG)
+            .expect("admin not set");
+        if caller != admin {
+            panic!("caller is not admin");
+        }
+        let key = (AUTHORIZED_KEY_TAG, analytics);
+        env.storage().instance().set(&key, &());
+    }
+
+    /// Removes an address from the set of authorized analytics updaters. Caller must be the anomaly admin.
+    pub fn remove_authorized_analytics(env: Env, caller: Address, analytics: Address) {
+        caller.require_auth();
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&ADMIN_KEY_TAG)
+            .expect("admin not set");
+        if caller != admin {
+            panic!("caller is not admin");
+        }
+        let key = (AUTHORIZED_KEY_TAG, analytics);
+        env.storage().instance().remove(&key);
+    }
+
+    /// Stores anomaly flags and risk score for an existing attestation.
+    pub fn set_anomaly(
+        env: Env,
+        updater: Address,
+        business: Address,
+        period: String,
+        flags: u32,
+        score: u32,
+    ) {
+        updater.require_auth();
+        let key_auth = (AUTHORIZED_KEY_TAG, updater.clone());
+        if !env.storage().instance().has(&key_auth) {
+            panic!("updater not authorized");
+        }
+        let attest_key = DataKey::Attestation(business.clone(), period.clone());
+        if !env.storage().instance().has(&attest_key) {
+            panic!("attestation does not exist for this business and period");
+        }
+        if score > ANOMALY_SCORE_MAX {
+            panic!("score out of range");
+        }
+        let anomaly_key = (ANOMALY_KEY_TAG, business, period);
+        env.storage().instance().set(&anomaly_key, &(flags, score));
     }
 
     // ── Multisig Operations ─────────────────────────────────────────
@@ -1263,10 +1358,88 @@ mod test;
         veritasor_common::key_rotation::get_rotation_config(&env)
     }
 
+    // ── Dispute Methods ─────────────────────────────────────────────
+
+    /// Open a dispute against an attestation. Challenger must authorize.
+    pub fn open_dispute(
+        env: Env,
+        challenger: Address,
+        business: Address,
+        period: String,
+        dispute_type: DisputeType,
+        evidence: String,
+    ) -> u64 {
+        challenger.require_auth();
+        dispute::validate_dispute_eligibility(&env, &challenger, &business, &period);
+        let dispute_id = dispute::generate_dispute_id(&env);
+        let d = Dispute {
+            id: dispute_id,
+            challenger: challenger.clone(),
+            business: business.clone(),
+            period: period.clone(),
+            status: DisputeStatus::Open,
+            dispute_type,
+            evidence,
+            timestamp: env.ledger().timestamp(),
+            resolution: dispute::MaybeResolution::None,
+        };
+        dispute::store_dispute(&env, &d);
+        dispute::add_dispute_to_attestation_index(&env, &business, &period, dispute_id);
+        dispute::add_dispute_to_challenger_index(&env, &challenger, dispute_id);
+        dispute_id
+    }
+
+    /// Resolve an open dispute. Caller must be admin.
+    pub fn resolve_dispute(
+        env: Env,
+        dispute_id: u64,
+        resolver: Address,
+        outcome: DisputeOutcome,
+        notes: String,
+    ) {
+        resolver.require_auth();
+        dispute::validate_dispute_resolution(&env, dispute_id, &resolver).ok();
+        let resolution = dispute::DisputeResolution {
+            resolver,
+            outcome,
+            timestamp: env.ledger().timestamp(),
+            notes,
+        };
+        dispute::store_dispute_resolution(&env, dispute_id, &resolution);
+        if let Some(mut d) = dispute::get_dispute(&env, dispute_id) {
+            d.status = DisputeStatus::Resolved;
+            d.resolution = dispute::MaybeResolution::Some(resolution);
+            dispute::store_dispute(&env, &d);
+        }
+    }
+
+    /// Close a resolved dispute.
+    pub fn close_dispute(env: Env, dispute_id: u64) {
+        let d = dispute::validate_dispute_closure(&env, dispute_id)
+            .expect("dispute not found or not resolved");
+        let mut updated = d;
+        updated.status = DisputeStatus::Closed;
+        dispute::store_dispute(&env, &updated);
+    }
+
+    /// Get a dispute by ID.
+    pub fn get_dispute(env: Env, dispute_id: u64) -> Option<Dispute> {
+        dispute::get_dispute(&env, dispute_id)
+    }
+
+    /// Get dispute IDs for an attestation.
+    pub fn get_disputes_by_attestation(
+        env: Env,
+        business: Address,
+        period: String,
+    ) -> Vec<u64> {
+        dispute::get_dispute_ids_by_attestation(&env, &business, &period)
+    }
+
+    /// Get dispute IDs opened by a challenger.
+    pub fn get_disputes_by_challenger(env: Env, challenger: Address) -> Vec<u64> {
+        dispute::get_dispute_ids_by_challenger(&env, &challenger)
+    }
+
     // ─── New feature methods: add new sections below (e.g. `// ── MyFeature ───` then methods). Do not edit sections above. ───
 }
-
-#[cfg(test)]
-mod anomaly_test;
-#[cfg(test)]
-mod test;

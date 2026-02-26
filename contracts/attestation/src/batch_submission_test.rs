@@ -84,6 +84,7 @@ fn create_batch_item(
         merkle_root: BytesN::from_array(env, root_bytes),
         timestamp,
         version,
+        expiry_timestamp: None,
     }
 }
 
@@ -108,7 +109,7 @@ fn test_batch_submit_single_item() {
 
     client.submit_attestations_batch(&items);
 
-    let (root, ts, ver, fee) = client
+    let (root, ts, ver, fee, _) = client
         .get_attestation(&business, &String::from_str(&env, "2026-01"))
         .unwrap();
     assert_eq!(root, BytesN::from_array(&env, &[1u8; 32]));
@@ -269,6 +270,7 @@ fn test_batch_submit_duplicate_with_existing() {
         &BytesN::from_array(&env, &[1u8; 32]),
         &1_700_000_000,
         &1,
+        &None,
     );
 
     // Try to batch submit including the same period
@@ -368,6 +370,7 @@ fn test_batch_atomicity_duplicate_prevents_all() {
         &BytesN::from_array(&env, &[1u8; 32]),
         &1_700_000_000,
         &1,
+        &None,
     );
 
     let mut items = Vec::new(&env);
@@ -465,15 +468,15 @@ fn test_batch_fees_calculated_correctly() {
     assert_eq!(initial_balance - final_balance, 3_000_000);
 
     // Verify each attestation recorded the correct fee
-    let (_, _, _, fee1) = t
+    let (_, _, _, fee1, _) = t
         .client
         .get_attestation(&business, &String::from_str(&t.env, "2026-01"))
         .unwrap();
-    let (_, _, _, fee2) = t
+    let (_, _, _, fee2, _) = t
         .client
         .get_attestation(&business, &String::from_str(&t.env, "2026-02"))
         .unwrap();
-    let (_, _, _, fee3) = t
+    let (_, _, _, fee3, _) = t
         .client
         .get_attestation(&business, &String::from_str(&t.env, "2026-03"))
         .unwrap();
@@ -503,7 +506,7 @@ fn test_batch_fees_with_volume_discounts() {
         let period = String::from_str(&t.env, &std::format!("P-{:04}", i));
         let root = BytesN::from_array(&t.env, &[i as u8; 32]);
         t.client
-            .submit_attestation(&business, &period, &root, &1_700_000_000, &1);
+            .submit_attestation(&business, &period, &root, &1_700_000_000, &1, &None);
     }
 
     // Now batch submit 3 more
@@ -647,6 +650,7 @@ fn test_batch_vs_single_cost_comparison() {
             &root,
             &1_700_000_000,
             &1,
+            &None,
         );
     }
 
