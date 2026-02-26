@@ -49,6 +49,10 @@ pub enum DataKey {
     /// Extended metadata (currency, net/gross) keyed by (business, period).
     AttestationMetadata(Address, soroban_sdk::String),
 
+    // ── Attestor staking integration ───────────────────────────
+    /// Address of the attestor staking contract used to enforce minimum stake.
+    AttestorStakingContract,
+
     // ── Fee system ──────────────────────────────────────────────
     /// Contract administrator address.
     Admin,
@@ -308,11 +312,19 @@ pub fn compute_fee(base_fee: i128, tier_discount_bps: u32, volume_discount_bps: 
 ///
 /// Returns the fee amount collected (0 if fees are disabled).
 pub fn collect_fee(env: &Env, business: &Address) -> i128 {
+    collect_fee_from(env, business, business)
+}
+
+/// Collect the fee from `payer`, while computing the fee based on the `business`.
+///
+/// This is used for delegated submission flows (e.g. attestors) where the business
+/// does not authorize the invocation but fees should still be collectible.
+pub fn collect_fee_from(env: &Env, payer: &Address, business: &Address) -> i128 {
     let fee = calculate_fee(env, business);
     if fee > 0 {
         let config = get_effective_fee_config(env).unwrap();
         let client = token::Client::new(env, &config.token);
-        client.transfer(business, &config.collector, &fee);
+        client.transfer(payer, &config.collector, &fee);
     }
     fee
 }
