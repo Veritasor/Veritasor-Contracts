@@ -11,9 +11,12 @@ doctest = false
 
 [dependencies]
 soroban-sdk = "22.0"
+veritasor-common = { path = "../common" }
 
 [dev-dependencies]
 soroban-sdk = { version = "22.0", features = ["testutils"] }
+proptest    = { version = "=1.8.0", default-features = false, features = ["std"] }
+veritasor-common = { path = "../common" }
 
 [profile.release]
 opt-level = "z"

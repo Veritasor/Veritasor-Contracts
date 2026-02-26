@@ -30,7 +30,7 @@
 //! If no `FeeConfig` has been stored, or if `FeeConfig.enabled == false`,
 //! attestations are free — identical to pre-fee behavior.
 
-use soroban_sdk::{contracttype, token, Address, Env, Vec};
+use soroban_sdk::{contracttype, token, Address, Env, Symbol, Val, Vec};
 
 // ════════════════════════════════════════════════════════════════════
 //  Storage types
@@ -64,6 +64,15 @@ pub enum DataKey {
     VolumeThresholds,
     /// Ordered `Vec<u32>` of volume bracket discounts (parallel to thresholds).
     VolumeDiscounts,
+    /// Protocol DAO contract address controlling fee configuration.
+    Dao,
+
+    // ── Rate limiting ──────────────────────────────────────────
+    /// Global rate limit configuration (`RateLimitConfig`).
+    RateLimitConfig,
+    /// Per-business submission timestamps within the current window.
+    /// Stores a `Vec<u64>` of ledger timestamps.
+    SubmissionTimestamps(Address),
 }
 
 /// On-chain fee configuration.
@@ -119,6 +128,14 @@ pub fn get_fee_config(env: &Env) -> Option<FeeConfig> {
 
 pub fn set_fee_config(env: &Env, config: &FeeConfig) {
     env.storage().instance().set(&DataKey::FeeConfig, config);
+}
+
+pub fn set_dao(env: &Env, dao: &Address) {
+    env.storage().instance().set(&DataKey::Dao, dao);
+}
+
+pub fn get_dao(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::Dao)
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -245,7 +262,7 @@ pub fn volume_discount_for_count(env: &Env, count: u64) -> u32 {
 ///
 /// Returns 0 when fees are disabled or no `FeeConfig` exists.
 pub fn calculate_fee(env: &Env, business: &Address) -> i128 {
-    let config = match get_fee_config(env) {
+    let config = match get_effective_fee_config(env) {
         Some(c) if c.enabled => c,
         _ => return 0,
     };
@@ -254,6 +271,26 @@ pub fn calculate_fee(env: &Env, business: &Address) -> i128 {
     let count = get_business_count(env, business);
     let vol_disc = volume_discount_for_count(env, count);
     compute_fee(config.base_fee, tier_disc, vol_disc)
+}
+
+fn get_fee_config_from_dao(env: &Env) -> Option<FeeConfig> {
+    let dao = get_dao(env)?;
+    let func = Symbol::new(env, "get_attestation_fee_config");
+    let args = Vec::<Val>::new(env);
+    let opt: Option<(Address, Address, i128, bool)> = env.invoke_contract(&dao, &func, args);
+    opt.map(|(token, collector, base_fee, enabled)| FeeConfig {
+        token,
+        collector,
+        base_fee,
+        enabled,
+    })
+}
+
+fn get_effective_fee_config(env: &Env) -> Option<FeeConfig> {
+    if let Some(config) = get_fee_config_from_dao(env) {
+        return Some(config);
+    }
+    get_fee_config(env)
 }
 
 /// Pure-arithmetic fee computation (no storage access).
@@ -273,7 +310,7 @@ pub fn compute_fee(base_fee: i128, tier_discount_bps: u32, volume_discount_bps: 
 pub fn collect_fee(env: &Env, business: &Address) -> i128 {
     let fee = calculate_fee(env, business);
     if fee > 0 {
-        let config = get_fee_config(env).unwrap();
+        let config = get_effective_fee_config(env).unwrap();
         let client = token::Client::new(env, &config.token);
         client.transfer(business, &config.collector, &fee);
     }

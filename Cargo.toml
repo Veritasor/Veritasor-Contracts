@@ -2,11 +2,16 @@
 # Keep members in alphabetical order so new PRs add in the same place (reduces merge conflicts).
 members = [
     "contracts/attestation",
+    "contracts/attestor-staking",
     "contracts/audit-log",
+    "contracts/business-config",
     "contracts/integration-registry",
+    "contracts/protocol-dao",
+    "contracts/protocol-simulation",
     "contracts/revenue-stream",
 ]
 resolver = "2"
+
 
 [profile.release]
 opt-level = "z"

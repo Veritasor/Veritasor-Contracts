@@ -10,7 +10,7 @@ fn setup() -> (Env, AttestationContractClient<'static>, Address) {
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    client.initialize(&admin, &0u64);
     (env, client, admin)
 }
 
@@ -21,7 +21,15 @@ fn test_submit_without_metadata_backward_compat() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
+        &0u64,
+    );
 
     let att = client.get_attestation(&business, &period).unwrap();
     assert_eq!(att.0, root);
@@ -46,6 +54,7 @@ fn test_submit_with_metadata() {
         &1u32,
         &currency,
         &true,
+        &0u64,
     );
 
     let meta = client.get_attestation_metadata(&business, &period).unwrap();
@@ -69,6 +78,7 @@ fn test_get_attestation_metadata_gross() {
         &1u32,
         &currency,
         &false,
+        &0u64,
     );
 
     let meta = client.get_attestation_metadata(&business, &period).unwrap();
@@ -92,6 +102,7 @@ fn test_currency_code_validation_three_chars() {
         &1u32,
         &currency,
         &true,
+        &0u64,
     );
 
     let meta = client.get_attestation_metadata(&business, &period).unwrap();
@@ -115,6 +126,7 @@ fn test_currency_code_empty_panics() {
         &1u32,
         &currency,
         &true,
+        &0u64,
     );
 }
 
@@ -135,6 +147,7 @@ fn test_currency_code_too_long_panics() {
         &1u32,
         &currency,
         &true,
+        &0u64,
     );
 }
 
@@ -154,6 +167,7 @@ fn test_currency_code_three_chars_allowed() {
         &1u32,
         &currency,
         &true,
+        &0u64,
     );
     let meta = client.get_attestation_metadata(&business, &period).unwrap();
     assert_eq!(meta.currency_code, String::from_str(&env, "USD"));
@@ -166,7 +180,15 @@ fn test_metadata_missing_for_old_attestation() {
     let period = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
+        &0u64,
+    );
 
     assert!(client.get_attestation(&business, &period).is_some());
     assert!(client
@@ -188,6 +210,7 @@ fn test_multiple_attestations_different_metadata() {
         &1u32,
         &String::from_str(&env, "USD"),
         &true,
+        &0u64,
     );
     client.submit_attestation_with_metadata(
         &business,
@@ -197,6 +220,7 @@ fn test_multiple_attestations_different_metadata() {
         &1u32,
         &String::from_str(&env, "EUR"),
         &false,
+        &1u64,
     );
 
     let m1 = client
@@ -226,6 +250,7 @@ fn test_verify_attestation_unchanged_with_metadata() {
         &1u32,
         &String::from_str(&env, "USD"),
         &true,
+        &0u64,
     );
 
     assert!(client.verify_attestation(&business, &period, &root));

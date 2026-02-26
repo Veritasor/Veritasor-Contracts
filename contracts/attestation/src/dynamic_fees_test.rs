@@ -42,10 +42,10 @@ fn setup_with_fees(base_fee: i128) -> TestSetup<'static> {
     // Register and initialize the attestation contract.
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
-    client.initialize(&admin);
+    client.initialize(&admin, &0u64);
 
     // Configure fees.
-    client.configure_fees(&token_addr, &collector, &base_fee, &true);
+    client.configure_fees(&token_addr, &collector, &base_fee, &true, &1u64);
 
     TestSetup {
         env,
@@ -72,7 +72,16 @@ fn balance(env: &Env, token_addr: &Address, who: &Address) -> i128 {
 fn submit(client: &AttestationContractClient, env: &Env, business: &Address, index: u32) {
     let period = String::from_str(env, &std::format!("P-{index:04}"));
     let root = BytesN::from_array(env, &[index as u8; 32]);
-    client.submit_attestation(business, &period, &root, &1_700_000_000u64, &1u32);
+    let nonce = client.get_replay_nonce(business, &crate::NONCE_CHANNEL_BUSINESS);
+    client.submit_attestation(
+        business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
+        &nonce,
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -142,7 +151,7 @@ fn test_flat_fee_no_discounts() {
 
     // Attestation records the fee paid.
     let period = String::from_str(&t.env, "P-0001");
-    let (_, _, _, fee_paid) = t.client.get_attestation(&business, &period).unwrap();
+    let (_, _, _, fee_paid, _) = t.client.get_attestation(&business, &period).unwrap();
     assert_eq!(fee_paid, 1_000_000);
 }
 
@@ -154,15 +163,15 @@ fn test_flat_fee_no_discounts() {
 fn test_tier_discounts() {
     let t = setup_with_fees(1_000_000);
     // Tier 0 = 0 % (default), Tier 1 = 20 %, Tier 2 = 40 %.
-    t.client.set_tier_discount(&1, &2_000);
-    t.client.set_tier_discount(&2, &4_000);
+    t.client.set_tier_discount(&1, &2_000, &2u64);
+    t.client.set_tier_discount(&2, &4_000, &3u64);
 
     let biz_standard = Address::generate(&t.env);
     let biz_pro = Address::generate(&t.env);
     let biz_ent = Address::generate(&t.env);
 
-    t.client.set_business_tier(&biz_pro, &1);
-    t.client.set_business_tier(&biz_ent, &2);
+    t.client.set_business_tier(&biz_pro, &1, &4u64);
+    t.client.set_business_tier(&biz_ent, &2, &5u64);
 
     assert_eq!(t.client.get_fee_quote(&biz_standard), 1_000_000); // full
     assert_eq!(t.client.get_fee_quote(&biz_pro), 800_000); // 20 % off
@@ -185,7 +194,7 @@ fn test_volume_brackets() {
     // Brackets: >=5 → 500 bps (5 %), >=10 → 1500 bps (15 %).
     let thresholds = vec![&t.env, 5u64, 10u64];
     let discounts = vec![&t.env, 500u32, 1_500u32];
-    t.client.set_volume_brackets(&thresholds, &discounts);
+    t.client.set_volume_brackets(&thresholds, &discounts, &2u64);
 
     let business = Address::generate(&t.env);
     mint(&t.env, &t.token_addr, &business, 100_000_000);
@@ -215,15 +224,15 @@ fn test_combined_tier_and_volume_discounts() {
     let t = setup_with_fees(1_000_000);
 
     // Tier 1 = 20 % discount.
-    t.client.set_tier_discount(&1, &2_000);
+    t.client.set_tier_discount(&1, &2_000, &2u64);
 
     // Volume: >=3 → 10 % discount.
     let thresholds = vec![&t.env, 3u64];
     let discounts = vec![&t.env, 1_000u32];
-    t.client.set_volume_brackets(&thresholds, &discounts);
+    t.client.set_volume_brackets(&thresholds, &discounts, &3u64);
 
     let business = Address::generate(&t.env);
-    t.client.set_business_tier(&business, &1);
+    t.client.set_business_tier(&business, &1, &4u64);
     mint(&t.env, &t.token_addr, &business, 100_000_000);
 
     // Before volume discount kicks in (count < 3): tier only.
@@ -247,8 +256,8 @@ fn test_combined_tier_and_volume_discounts() {
 #[test]
 fn test_tier_upgrade() {
     let t = setup_with_fees(1_000_000);
-    t.client.set_tier_discount(&1, &2_000);
-    t.client.set_tier_discount(&2, &5_000);
+    t.client.set_tier_discount(&1, &2_000, &2u64);
+    t.client.set_tier_discount(&2, &5_000, &3u64);
 
     let business = Address::generate(&t.env);
     mint(&t.env, &t.token_addr, &business, 100_000_000);
@@ -258,12 +267,12 @@ fn test_tier_upgrade() {
     submit(&t.client, &t.env, &business, 1);
 
     // Upgrade to tier 1 → 20 % off.
-    t.client.set_business_tier(&business, &1);
+    t.client.set_business_tier(&business, &1, &4u64);
     assert_eq!(t.client.get_fee_quote(&business), 800_000);
     submit(&t.client, &t.env, &business, 2);
 
     // Upgrade to tier 2 → 50 % off.
-    t.client.set_business_tier(&business, &2);
+    t.client.set_business_tier(&business, &2, &5u64);
     assert_eq!(t.client.get_fee_quote(&business), 500_000);
     submit(&t.client, &t.env, &business, 3);
 
@@ -277,7 +286,7 @@ fn test_tier_upgrade() {
 #[test]
 fn test_fees_disabled() {
     let t = setup_with_fees(1_000_000);
-    t.client.set_fee_enabled(&false);
+    t.client.set_fee_enabled(&false, &2u64);
 
     let business = Address::generate(&t.env);
     // No need to mint — fees are off.
@@ -285,7 +294,7 @@ fn test_fees_disabled() {
     submit(&t.client, &t.env, &business, 1);
 
     let period = String::from_str(&t.env, "P-0001");
-    let (_, _, _, fee_paid) = t.client.get_attestation(&business, &period).unwrap();
+    let (_, _, _, fee_paid, _) = t.client.get_attestation(&business, &period).unwrap();
     assert_eq!(fee_paid, 0);
 }
 
@@ -301,12 +310,12 @@ fn test_fees_toggled_on_off() {
     assert_eq!(balance(&t.env, &t.token_addr, &business), 9_000_000);
 
     // Disable → free.
-    t.client.set_fee_enabled(&false);
+    t.client.set_fee_enabled(&false, &2u64);
     submit(&t.client, &t.env, &business, 2);
     assert_eq!(balance(&t.env, &t.token_addr, &business), 9_000_000);
 
     // Re-enable → pays again.
-    t.client.set_fee_enabled(&true);
+    t.client.set_fee_enabled(&true, &3u64);
     submit(&t.client, &t.env, &business, 3);
     assert_eq!(balance(&t.env, &t.token_addr, &business), 8_000_000);
 }
@@ -322,7 +331,7 @@ fn test_no_fee_config_free() {
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    client.initialize(&admin, &0u64);
 
     // Never called configure_fees → attestation is free.
     let business = Address::generate(&env);
@@ -330,9 +339,9 @@ fn test_no_fee_config_free() {
 
     let period = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1u64, &1u32);
+    client.submit_attestation(&business, &period, &root, &1u64, &1u32, &None, &0u64);
 
-    let (_, _, _, fee_paid) = client.get_attestation(&business, &period).unwrap();
+    let (_, _, _, fee_paid, _) = client.get_attestation(&business, &period).unwrap();
     assert_eq!(fee_paid, 0);
 }
 
@@ -348,8 +357,8 @@ fn test_double_initialize_panics() {
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
-    client.initialize(&admin); // second call panics
+    client.initialize(&admin, &0u64);
+    client.initialize(&admin, &1u64); // second call panics
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -359,14 +368,14 @@ fn test_double_initialize_panics() {
 #[test]
 fn test_fee_quote_matches_actual_charge() {
     let t = setup_with_fees(500_000);
-    t.client.set_tier_discount(&1, &1_000); // 10 %
+    t.client.set_tier_discount(&1, &1_000, &2u64); // 10 %
 
     let thresholds = vec![&t.env, 2u64];
     let discounts = vec![&t.env, 500u32]; // 5 % after 2
-    t.client.set_volume_brackets(&thresholds, &discounts);
+    t.client.set_volume_brackets(&thresholds, &discounts, &3u64);
 
     let business = Address::generate(&t.env);
-    t.client.set_business_tier(&business, &1);
+    t.client.set_business_tier(&business, &1, &4u64);
     mint(&t.env, &t.token_addr, &business, 100_000_000);
 
     // Submit twice to cross volume threshold.
@@ -398,7 +407,7 @@ fn test_mismatched_brackets_panics() {
     let t = setup_with_fees(1_000_000);
     let thresholds = vec![&t.env, 5u64, 10u64];
     let discounts = vec![&t.env, 500u32]; // length mismatch
-    t.client.set_volume_brackets(&thresholds, &discounts);
+    t.client.set_volume_brackets(&thresholds, &discounts, &2u64);
 }
 
 #[test]
@@ -407,14 +416,14 @@ fn test_unordered_thresholds_panics() {
     let t = setup_with_fees(1_000_000);
     let thresholds = vec![&t.env, 10u64, 5u64]; // not ascending
     let discounts = vec![&t.env, 500u32, 1_000u32];
-    t.client.set_volume_brackets(&thresholds, &discounts);
+    t.client.set_volume_brackets(&thresholds, &discounts, &2u64);
 }
 
 #[test]
 #[should_panic(expected = "discount cannot exceed 10 000 bps")]
 fn test_tier_discount_over_100_pct_panics() {
     let t = setup_with_fees(1_000_000);
-    t.client.set_tier_discount(&0, &10_001); // > 100 %
+    t.client.set_tier_discount(&0, &10_001, &2u64); // > 100 %
 }
 
 #[test]
@@ -423,7 +432,7 @@ fn test_volume_discount_over_100_pct_panics() {
     let t = setup_with_fees(1_000_000);
     let thresholds = vec![&t.env, 1u64];
     let discounts = vec![&t.env, 10_001u32];
-    t.client.set_volume_brackets(&thresholds, &discounts);
+    t.client.set_volume_brackets(&thresholds, &discounts, &2u64);
 }
 
 #[test]
@@ -431,7 +440,7 @@ fn test_volume_discount_over_100_pct_panics() {
 fn test_negative_base_fee_panics() {
     let t = setup_with_fees(1_000_000);
     t.client
-        .configure_fees(&t.token_addr, &t.collector, &-1i128, &true);
+        .configure_fees(&t.token_addr, &t.collector, &-1i128, &true, &2u64);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -454,21 +463,21 @@ fn test_economic_simulation() {
     let t = setup_with_fees(100_000); // 0.1 token per attestation base
 
     // Tier setup: Standard 0 %, Professional 15 %, Enterprise 30 %.
-    t.client.set_tier_discount(&0, &0);
-    t.client.set_tier_discount(&1, &1_500);
-    t.client.set_tier_discount(&2, &3_000);
+    t.client.set_tier_discount(&0, &0, &2u64);
+    t.client.set_tier_discount(&1, &1_500, &3u64);
+    t.client.set_tier_discount(&2, &3_000, &4u64);
 
     // Volume brackets: >=5 → 5 %, >=10 → 12 %.
     let thresholds = vec![&t.env, 5u64, 10u64];
     let discounts = vec![&t.env, 500u32, 1_200u32];
-    t.client.set_volume_brackets(&thresholds, &discounts);
+    t.client.set_volume_brackets(&thresholds, &discounts, &5u64);
 
     // Three businesses.
     let biz_s = Address::generate(&t.env); // Standard
     let biz_p = Address::generate(&t.env); // Professional
     let biz_e = Address::generate(&t.env); // Enterprise
-    t.client.set_business_tier(&biz_p, &1);
-    t.client.set_business_tier(&biz_e, &2);
+    t.client.set_business_tier(&biz_p, &1, &6u64);
+    t.client.set_business_tier(&biz_e, &2, &7u64);
 
     // Fund them generously.
     for biz in [&biz_s, &biz_p, &biz_e] {

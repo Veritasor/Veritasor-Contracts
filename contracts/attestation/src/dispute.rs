@@ -2,8 +2,8 @@
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 /// Status of a dispute
-#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DisputeStatus {
     /// Dispute is open and awaiting resolution
     Open,
@@ -14,8 +14,8 @@ pub enum DisputeStatus {
 }
 
 /// Type of dispute being raised
-#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DisputeType {
     /// Disputed revenue amount differs from claimed amount
     RevenueMismatch,
@@ -26,8 +26,8 @@ pub enum DisputeType {
 }
 
 /// Resolution outcome of a dispute
-#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DisputeOutcome {
     /// Dispute upheld - challenger wins
     Upheld,
@@ -38,8 +38,8 @@ pub enum DisputeOutcome {
 }
 
 /// Resolution details when a dispute is resolved
-#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DisputeResolution {
     /// Address of the party resolving the dispute
     pub resolver: Address,
@@ -51,17 +51,38 @@ pub struct DisputeResolution {
     pub notes: String,
 }
 
-/// Optional resolution for contracttype compatibility
+/// Optional resolution (contracttype-compatible alternative to Option<DisputeResolution>).
 #[derive(Clone, Debug, PartialEq)]
 #[contracttype]
-pub enum OptionalResolution {
+pub enum MaybeResolution {
     None,
     Some(DisputeResolution),
 }
 
+impl MaybeResolution {
+    pub fn is_none(&self) -> bool {
+        matches!(self, MaybeResolution::None)
+    }
+    pub fn is_some(&self) -> bool {
+        matches!(self, MaybeResolution::Some(_))
+    }
+    pub fn unwrap(self) -> DisputeResolution {
+        match self {
+            MaybeResolution::Some(r) => r,
+            MaybeResolution::None => panic!("called unwrap on None"),
+        }
+    }
+    pub fn as_ref(&self) -> core::option::Option<&DisputeResolution> {
+        match self {
+            MaybeResolution::Some(r) => core::option::Option::Some(r),
+            MaybeResolution::None => core::option::Option::None,
+        }
+    }
+}
+
 /// Dispute record for a challenged attestation
-#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Dispute {
     /// Unique identifier for this dispute
     pub id: u64,
@@ -80,17 +101,19 @@ pub struct Dispute {
     /// Timestamp when dispute was opened
     pub timestamp: u64,
     /// Resolution details (None if not yet resolved)
-    pub resolution: OptionalResolution,
+    pub resolution: MaybeResolution,
 }
 
 /// Storage keys for dispute management
-#[derive(Clone)]
 #[contracttype]
+#[derive(Clone)]
 enum DisputeKey {
     /// Counter for generating unique dispute IDs
     DisputeIdCounter,
     /// Individual dispute record: (dispute_id) -> Dispute
     Dispute(u64),
+    /// Resolution for a dispute: (dispute_id) -> DisputeResolution
+    DisputeResolution(u64),
     /// Disputes by attestation: (business, period) -> Vec<dispute_id>
     DisputesByAttestation(Address, String),
     /// Disputes by challenger: (challenger) -> Vec<dispute_id>
@@ -115,6 +138,18 @@ pub fn store_dispute(env: &Env, dispute: &Dispute) {
 /// Retrieve a dispute by ID
 pub fn get_dispute(env: &Env, dispute_id: u64) -> Option<Dispute> {
     let key = DisputeKey::Dispute(dispute_id);
+    env.storage().instance().get(&key)
+}
+
+/// Store a dispute resolution
+pub fn store_dispute_resolution(env: &Env, dispute_id: u64, resolution: &DisputeResolution) {
+    let key = DisputeKey::DisputeResolution(dispute_id);
+    env.storage().instance().set(&key, resolution);
+}
+
+/// Retrieve a dispute resolution by dispute ID
+pub fn get_dispute_resolution(env: &Env, dispute_id: u64) -> Option<DisputeResolution> {
+    let key = DisputeKey::DisputeResolution(dispute_id);
     env.storage().instance().get(&key)
 }
 
