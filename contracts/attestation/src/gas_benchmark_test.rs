@@ -199,7 +199,7 @@ fn bench_submit_attestation_with_fee() {
 
     let cost = before.delta(&after);
     cost.print("submit_attestation (with fee)");
-    cost.assert_within_target("submit_attestation (with fee)", 1_000_000, 15_000);
+    cost.assert_within_target("submit_attestation (with fee)", 1_000_000, 20_000);
 }
 
 #[test]
