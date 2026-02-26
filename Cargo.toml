@@ -4,11 +4,14 @@ members = [
     "contracts/attestation",
     "contracts/attestor-staking",
     "contracts/audit-log",
+    "contracts/business-config",
     "contracts/integration-registry",
     "contracts/protocol-dao",
+    "contracts/protocol-simulation",
     "contracts/revenue-stream",
 ]
 resolver = "2"
+
 
 [profile.release]
 opt-level = "z"

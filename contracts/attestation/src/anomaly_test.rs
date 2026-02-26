@@ -169,8 +169,11 @@ fn get_anomaly_none_when_not_set() {
 #[test]
 fn attestation_without_anomaly_data_unchanged() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[5u8; 32]);

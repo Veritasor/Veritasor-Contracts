@@ -25,15 +25,17 @@ fn setup_with_attestations(
     env: &Env,
     n: u32,
 ) -> (Address, AttestationContractClient<'_>, Vec<String>) {
+    env.mock_all_auths();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(env, &contract_id);
+    client.initialize(&Address::generate(env));
     let business = Address::generate(env);
     let mut periods = Vec::new(env);
     for i in 1..=n {
         let period = period_str(env, i);
         periods.push_back(period.clone());
         let root = BytesN::from_array(env, &[(i as u8) & 0xff; 32]);
-        client.submit_attestation(&business, &period, &root, &1700000000u64, &i);
+        client.submit_attestation(&business, &period, &root, &1700000000u64, &i, &None);
     }
     (business, client, periods)
 }
@@ -223,10 +225,10 @@ fn get_attestations_page_filter_active_after_revoke() {
         let period = period_str(&env, i);
         periods.push_back(period.clone());
         let root = BytesN::from_array(&env, &[(i as u8) & 0xff; 32]);
-        client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32);
+        client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None);
     }
     let revoke_period = String::from_str(&env, "2026-02");
-    client.revoke_attestation(&admin, &business, &revoke_period);
+    client.revoke_attestation(&admin, &business, &revoke_period, &soroban_sdk::String::from_str(&env, "test reason"));
     let (active_only, _) = client.get_attestations_page(
         &business,
         &periods,
@@ -304,8 +306,8 @@ fn init_and_revoke_attestation() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32);
-    client.revoke_attestation(&admin, &business, &period);
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None);
+    client.revoke_attestation(&admin, &business, &period, &soroban_sdk::String::from_str(&env, "test reason"));
     let mut periods = Vec::new(&env);
     periods.push_back(period.clone());
     let (out, _) = client.get_attestations_page(
@@ -335,8 +337,8 @@ fn revoke_attestation_non_admin_panics() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32);
-    client.revoke_attestation(&other, &business, &period);
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None);
+    client.revoke_attestation(&other, &business, &period, &soroban_sdk::String::from_str(&env, "test reason"));
 }
 
 #[test]
@@ -354,6 +356,7 @@ fn periods_list_includes_missing_attestations_skipped() {
         &BytesN::from_array(&env, &[1u8; 32]),
         &1700000000u64,
         &1u32,
+        &None,
     );
     client.submit_attestation(
         &business,
@@ -361,6 +364,7 @@ fn periods_list_includes_missing_attestations_skipped() {
         &BytesN::from_array(&env, &[3u8; 32]),
         &1700000000u64,
         &1u32,
+        &None,
     );
     let mut periods = Vec::new(&env);
     periods.push_back(p1.clone());
