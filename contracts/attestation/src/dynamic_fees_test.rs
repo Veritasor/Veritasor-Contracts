@@ -80,6 +80,7 @@ fn submit(client: &AttestationContractClient, env: &Env, business: &Address, ind
         &1_700_000_000u64,
         &1u32,
         &None,
+        &None,
         &nonce,
     );
 }
@@ -151,7 +152,7 @@ fn test_flat_fee_no_discounts() {
 
     // Attestation records the fee paid.
     let period = String::from_str(&t.env, "P-0001");
-    let (_, _, _, fee_paid, _) = t.client.get_attestation(&business, &period).unwrap();
+    let (_, _, _, fee_paid, _, _) = t.client.get_attestation(&business, &period).unwrap();
     assert_eq!(fee_paid, 1_000_000);
 }
 
@@ -294,7 +295,7 @@ fn test_fees_disabled() {
     submit(&t.client, &t.env, &business, 1);
 
     let period = String::from_str(&t.env, "P-0001");
-    let (_, _, _, fee_paid, _) = t.client.get_attestation(&business, &period).unwrap();
+    let (_, _, _, fee_paid, _, _) = t.client.get_attestation(&business, &period).unwrap();
     assert_eq!(fee_paid, 0);
 }
 
@@ -339,9 +340,10 @@ fn test_no_fee_config_free() {
 
     let period = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[1u8; 32]);
+    client.submit_attestation(&business, &period, &root, &1u64, &1u32, &None, &None);
     client.submit_attestation(&business, &period, &root, &1u64, &1u32, &None, &0u64);
 
-    let (_, _, _, fee_paid, _) = client.get_attestation(&business, &period).unwrap();
+    let (_, _, _, fee_paid, _, _) = client.get_attestation(&business, &period).unwrap();
     assert_eq!(fee_paid, 0);
 }
 

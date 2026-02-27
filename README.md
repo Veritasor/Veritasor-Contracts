@@ -4,7 +4,7 @@ Soroban smart contracts for the Veritasor revenue attestation protocol on Stella
 
 ## Contract: `attestation`
 
-Stores one attestation per (business address, period). Each attestation is a Merkle root (32 bytes), timestamp, version, and the fee paid. Duplicate (business, period) submissions are rejected.
+Stores one attestation per (business address, period). Each attestation is a Merkle root (32 bytes), timestamp, version, fee paid, and an optional off-chain proof hash (SHA-256). Duplicate (business, period) submissions are rejected.
 
 ### Dynamic Fee Schedule
 
@@ -16,8 +16,37 @@ The contract supports a tiered, volume-based fee system. Fees are denominated in
 
 See [docs/attestation-dynamic-fees.md](docs/attestation-dynamic-fees.md) for the full specification, economic rationale, and configuration guide.
 
+### Off-Chain Proof Hash
+
+Attestations can optionally include a SHA-256 hash pointing to a full off-chain revenue dataset or proof bundle. This links on-chain records to off-chain data without storing sensitive information on-chain.
+
+See [docs/offchain-proof-hash.md](docs/offchain-proof-hash.md) for the full specification, security assumptions, and usage guide.
+
 ### Methods
 
+| Method                                                                                                | Description                                                                                                                    |
+| ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `initialize(admin)`                                                                                   | One-time setup. Sets the admin address.                                                                                        |
+| `configure_fees(token, collector, base_fee, enabled)`                                                 | Admin: set fee token, collector, base fee, and toggle.                                                                         |
+| `set_tier_discount(tier, discount_bps)`                                                               | Admin: set discount (0–10 000 bps) for a tier level.                                                                           |
+| `set_business_tier(business, tier)`                                                                   | Admin: assign a business to a tier.                                                                                            |
+| `set_volume_brackets(thresholds, discounts)`                                                          | Admin: set volume discount brackets.                                                                                           |
+| `set_fee_enabled(enabled)`                                                                            | Admin: toggle fee collection on/off.                                                                                           |
+| `submit_attestation(business, period, merkle_root, timestamp, version, proof_hash, expiry_timestamp)` | Store attestation with optional proof hash and expiry; collects fee if enabled.                                                |
+| `get_attestation(business, period)`                                                                   | Returns `Option<(BytesN<32>, u64, u32, i128, Option<BytesN<32>>, Option<u64>)>` (root, ts, ver, fee_paid, proof_hash, expiry). |
+| `verify_attestation(business, period, merkle_root)`                                                   | Returns `true` if attestation exists and root matches.                                                                         |
+| `get_proof_hash(business, period)`                                                                    | Returns the off-chain proof hash for an attestation, if set.                                                                   |
+| `is_expired(business, period)`                                                                        | Returns `true` if attestation has expired.                                                                                     |
+| `get_fee_config()`                                                                                    | Current fee configuration or None.                                                                                             |
+| `get_fee_quote(business)`                                                                             | Fee the business would pay for its next attestation.                                                                           |
+| `get_business_tier(business)`                                                                         | Tier assigned to a business (0 if unset).                                                                                      |
+| `get_business_count(business)`                                                                        | Cumulative attestation count.                                                                                                  |
+| `get_admin()`                                                                                         | Contract admin address.                                                                                                        |
+| `init(admin)`                                                                                         | One-time setup of admin for anomaly feature.                                                                                   |
+| `add_authorized_analytics(caller, analytics)`                                                         | Add an authorized analytics/oracle address (admin only).                                                                       |
+| `remove_authorized_analytics(caller, analytics)`                                                      | Remove an authorized analytics address (admin only).                                                                           |
+| `set_anomaly(updater, business, period, flags, score)`                                                | Store anomaly flags and risk score (authorized updaters only; score 0–100).                                                    |
+| `get_anomaly(business, period)`                                                                       | Returns `Option<(u32, u32)>` (flags, score) for lenders.                                                                       |
 | Method | Description |
 |--------|-------------|
 | `submit_attestation(business, period, merkle_root, timestamp, version)` | Store attestation. Panics if one already exists for this business and period. |
@@ -74,7 +103,7 @@ cd contracts/attestation
 cargo test
 ```
 
-106 tests covering core attestation logic, fee calculation arithmetic, tier/volume discounts, combined discounts, fee toggling, access control, input validation, gas benchmarks, and a full economic simulation.
+130+ tests covering core attestation logic, fee calculation arithmetic, tier/volume discounts, combined discounts, fee toggling, access control, input validation, off-chain proof hash correlation, expiry handling, rate limiting, gas benchmarks, and a full economic simulation.
 
 ### Gas Benchmarks
 
@@ -109,7 +138,8 @@ veritasor-contracts/
 │   └── attestation-anomaly-flags.md   # Anomaly flags and risk scores
 ├── Cargo.toml                  # Workspace root
 ├── docs/
-│   └── attestation-dynamic-fees.md  # Fee schedule specification
+│   ├── attestation-dynamic-fees.md  # Fee schedule specification
+│   └── offchain-proof-hash.md       # Off-chain proof hash specification
 └── contracts/
     └── attestation/
         ├── Cargo.toml
@@ -123,7 +153,8 @@ veritasor-contracts/
             ├── lib.rs               # Contract entry points
             ├── dynamic_fees.rs      # Fee types, storage, calculation
             ├── test.rs              # Core attestation tests
-            └── dynamic_fees_test.rs # Fee schedule tests
+            ├── dynamic_fees_test.rs # Fee schedule tests
+            └── proof_hash_test.rs   # Off-chain proof hash tests
 ```
 
 ### Deploying (Stellar / Soroban CLI)

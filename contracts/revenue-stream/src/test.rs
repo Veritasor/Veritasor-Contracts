@@ -58,6 +58,7 @@ fn test_create_and_release_stream() {
         &1_700_000_000u64,
         &1u32,
         &None,
+        &None,
         &0u64,
     );
     let amount = 1000i128;
@@ -123,6 +124,7 @@ fn test_release_when_revoked_fails() {
         &1_700_000_000u64,
         &1u32,
         &None,
+        &None,
         &0u64,
     );
     let reason = String::from_str(&env, "test revoke");
@@ -159,6 +161,7 @@ fn test_double_release_fails() {
         &root,
         &1_700_000_000u64,
         &1u32,
+        &None,
         &None,
         &0u64,
     );
@@ -243,6 +246,7 @@ fn test_multiple_streams() {
         &soroban_sdk::BytesN::from_array(&env, &[1u8; 32]),
         &1u64,
         &1u32,
+        &None,
         &None,
         &0u64,
     );

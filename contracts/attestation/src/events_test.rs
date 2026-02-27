@@ -36,6 +36,7 @@ fn test_submit_attestation_emits_event() {
     let version = 1u32;
 
     client.submit_attestation(
+        &business, &period, &root, &timestamp, &version, &None, &None,
         &business, &period, &root, &timestamp, &version, &None, &0u64,
     );
 
@@ -60,6 +61,7 @@ fn test_multiple_attestations_emit_multiple_events() {
             &root,
             &(1_700_000_000u64 + i as u64),
             &1u32,
+            &None,
             &None,
             &nonce,
         );
@@ -89,6 +91,7 @@ fn test_revoke_attestation_emits_event() {
         &1_700_000_000u64,
         &1u32,
         &None,
+        &None,
         &0u64,
     );
 
@@ -114,6 +117,7 @@ fn test_revoked_attestation_fails_verification() {
         &root,
         &1_700_000_000u64,
         &1u32,
+        &None,
         &None,
         &0u64,
     );
@@ -160,6 +164,7 @@ fn test_migrate_attestation_emits_event() {
         &1_700_000_000u64,
         &1u32,
         &None,
+        &None,
         &0u64,
     );
 
@@ -186,6 +191,7 @@ fn test_migrate_attestation_updates_data() {
         &1_700_000_000u64,
         &1u32,
         &None,
+        &None,
         &0u64,
     );
 
@@ -200,7 +206,8 @@ fn test_migrate_attestation_updates_data() {
     assert!(client.verify_attestation(&business, &period, &new_root));
 
     // Check version updated
-    let (stored_root, _ts, version, _fee, _) = client.get_attestation(&business, &period).unwrap();
+    let (stored_root, _ts, version, _fee, _, _) =
+        client.get_attestation(&business, &period).unwrap();
     assert_eq!(stored_root, new_root);
     assert_eq!(version, 2);
 }
@@ -221,6 +228,7 @@ fn test_migrate_with_same_version_panics() {
         &old_root,
         &1_700_000_000u64,
         &1u32,
+        &None,
         &None,
         &0u64,
     );
@@ -245,6 +253,7 @@ fn test_migrate_with_lower_version_panics() {
         &old_root,
         &1_700_000_000u64,
         &5u32,
+        &None,
         &None,
         &0u64,
     );
@@ -326,6 +335,7 @@ fn test_event_contains_business_address() {
         &1_700_000_000u64,
         &1u32,
         &None,
+        &None,
         &0u64,
     );
 
@@ -363,6 +373,7 @@ fn test_is_revoked_after_revocation() {
         &1_700_000_000u64,
         &1u32,
         &None,
+        &None,
         &0u64,
     );
 
@@ -391,12 +402,14 @@ fn test_multiple_migrations() {
         &1_700_000_000u64,
         &1u32,
         &None,
+        &None,
         &0u64,
     );
     client.migrate_attestation(&admin, &business, &period, &root_v2, &2u32, &1u64);
     client.migrate_attestation(&admin, &business, &period, &root_v3, &3u32, &2u64);
 
-    let (stored_root, _ts, version, _fee, _) = client.get_attestation(&business, &period).unwrap();
+    let (stored_root, _ts, version, _fee, _, _) =
+        client.get_attestation(&business, &period).unwrap();
     assert_eq!(stored_root, root_v3);
     assert_eq!(version, 3);
 }

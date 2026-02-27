@@ -28,6 +28,7 @@ fn test_submit_without_metadata_backward_compat() {
         &1_700_000_000u64,
         &1u32,
         &None,
+        &None,
         &0u64,
     );
 
@@ -186,6 +187,7 @@ fn test_metadata_missing_for_old_attestation() {
         &root,
         &1_700_000_000u64,
         &1u32,
+        &None,
         &None,
         &0u64,
     );

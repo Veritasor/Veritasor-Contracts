@@ -34,7 +34,7 @@ jobs:
         with:
           components: rustfmt, clippy
           target: wasm32-unknown-unknown
-      
+
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -62,7 +62,7 @@ jobs:
       
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
-      
+
       - name: Check compilation
         run: cargo check --all-targets
 
@@ -82,7 +82,7 @@ jobs:
         with:
           toolchain: stable
           target: wasm32-unknown-unknown
-      
+
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -120,10 +120,10 @@ jobs:
         with:
           toolchain: stable
           target: wasm32-unknown-unknown
-      
+
       - name: Ensure wasm32 target
         run: rustup target add wasm32-unknown-unknown
-      
+
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:

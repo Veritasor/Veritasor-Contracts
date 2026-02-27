@@ -89,6 +89,10 @@ pub struct AttestationSubmittedEvent {
     pub version: u32,
     /// Fee paid for this attestation
     pub fee_paid: i128,
+    /// Optional SHA-256 hash pointing to the off-chain proof bundle
+    pub proof_hash: Option<BytesN<32>>,
+    /// Optional expiry timestamp for the attestation
+    pub expiry_timestamp: Option<u64>,
 }
 
 /// Event data for attestation revocation
@@ -219,6 +223,7 @@ pub struct KeyRotationCancelledEvent {
 ///
 /// This event is emitted whenever a new attestation is successfully stored.
 /// Indexers can use this to track all attestations submitted to the contract.
+#[allow(clippy::too_many_arguments)]
 pub fn emit_attestation_submitted(
     env: &Env,
     business: &Address,
@@ -227,6 +232,8 @@ pub fn emit_attestation_submitted(
     timestamp: u64,
     version: u32,
     fee_paid: i128,
+    proof_hash: &Option<BytesN<32>>,
+    expiry_timestamp: Option<u64>,
 ) {
     let event = AttestationSubmittedEvent {
         business: business.clone(),
@@ -235,6 +242,8 @@ pub fn emit_attestation_submitted(
         timestamp,
         version,
         fee_paid,
+        proof_hash: proof_hash.clone(),
+        expiry_timestamp,
     };
     env.events()
         .publish((TOPIC_ATTESTATION_SUBMITTED, business.clone()), event);
@@ -384,6 +393,7 @@ pub fn emit_business_reactivated(env: &Env, business: &Address, reactivated_by: 
         reactivated_by.clone(),
     );
 }
+
 /// Emit a rate limit configuration changed event.
 ///
 /// This event is emitted when the rate limit configuration is created or

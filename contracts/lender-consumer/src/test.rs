@@ -3,7 +3,7 @@
 extern crate std;
 
 use super::*;
-use soroban_sdk::{Env, Address, BytesN, String, Bytes, testutils::Address as _};
+use soroban_sdk::{testutils::Address as _, Address, Bytes, BytesN, Env, String};
 
 // We need to import the attestation contract to test integration
 // Since we are in the same workspace, we can use the path dependency
@@ -43,6 +43,9 @@ fn test_submit_and_verify_revenue() {
     // 3. Deploy Lender Consumer Contract
     let lender_id = env.register(LenderConsumerContract, ());
     let lender_client = LenderConsumerContractClient::new(&env, &lender_id);
+
+    // Initialize Lender Contract with Core Address
+    lender_client.initialize(&core_id);
     
     // Initialize Lender Contract
     lender_client.initialize(&admin, &core_id, &access_list_id);
@@ -50,8 +53,8 @@ fn test_submit_and_verify_revenue() {
     // 4. Prepare Data
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-03");
-    let revenue: i128 = 50_000_00; // $50,000.00
-    
+    let revenue: i128 = 5_000_000; // $50,000.00
+
     // Calculate root (SHA256 of revenue bytes)
     let mut buf = [0u8; 16];
     buf.copy_from_slice(&revenue.to_be_bytes());
@@ -63,6 +66,9 @@ fn test_submit_and_verify_revenue() {
 
     // 5. Submit Attestation to Core (Business does this)
     // 4. Submit Attestation to Core (Business does this)
+    core_client.submit_attestation(
+        &business, &period, &root, &timestamp, &version, &None, &None,
+    );
     core_client.submit_attestation(&business, &period, &root, &timestamp, &version, &None);
 
     // 6. Submit Revenue to Lender (Lender does this)
@@ -132,7 +138,7 @@ fn test_submit_invalid_revenue_panics() {
 
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-03");
-    let revenue: i128 = 50_000_00;
+    let revenue: i128 = 5_000_000;
 
     // Calculate root for 50,000
     let mut buf = [0u8; 16];
@@ -141,6 +147,11 @@ fn test_submit_invalid_revenue_panics() {
     let root: BytesN<32> = env.crypto().sha256(&payload).into();
 
     // Submit valid attestation
+    core_client.submit_attestation(&business, &period, &root, &1772000000, &1, &None, &None);
+
+    // Try to submit DIFFERENT revenue (60,000)
+    let fake_revenue: i128 = 6_000_000;
+    lender_client.submit_revenue(&business, &period, &fake_revenue);
     core_client.submit_attestation(&business, &period, &root, &1772000000, &1, &None);
 
     // Try to submit DIFFERENT revenue (60,000)
@@ -178,6 +189,8 @@ fn test_trailing_revenue_and_anomalies() {
         buf.copy_from_slice(&rev.to_be_bytes());
         let payload = Bytes::from_slice(&env, &buf);
         let root: BytesN<32> = env.crypto().sha256(&payload).into();
+
+        core_client.submit_attestation(&business, &period, &root, &100, &1, &None, &None);
         
         core_client.submit_attestation(&business, &period, &root, &100, &1, &None);
         lender_client.submit_revenue(&lender, &business, &period, &rev);
@@ -190,7 +203,7 @@ fn test_trailing_revenue_and_anomalies() {
 
     // Check trailing sum
     let periods = soroban_sdk::vec![
-        &env, 
+        &env,
         String::from_str(&env, "2026-01"),
         String::from_str(&env, "2026-02"),
         String::from_str(&env, "2026-03")

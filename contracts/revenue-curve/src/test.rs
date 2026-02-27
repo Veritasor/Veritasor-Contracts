@@ -205,6 +205,7 @@ fn test_calculate_pricing_basic() {
         &1_700_000_000u64,
         &1u32,
         &None,
+        &None,
         &0u64,
     );
 
@@ -235,6 +236,7 @@ fn test_calculate_pricing_with_risk() {
         &root,
         &1_700_000_000u64,
         &1u32,
+        &None,
         &None,
         &0u64,
     );
@@ -281,6 +283,7 @@ fn test_calculate_pricing_with_tier_discount() {
         &1_700_000_000u64,
         &1u32,
         &None,
+        &None,
         &0u64,
     );
 
@@ -311,6 +314,7 @@ fn test_calculate_pricing_max_cap() {
         &root,
         &1_700_000_000u64,
         &1u32,
+        &None,
         &None,
         &0u64,
     );
@@ -352,6 +356,7 @@ fn test_calculate_pricing_min_cap() {
         &root,
         &1_700_000_000u64,
         &1u32,
+        &None,
         &None,
         &0u64,
     );
@@ -398,6 +403,7 @@ fn test_calculate_pricing_revoked_attestation() {
         &root,
         &1_700_000_000u64,
         &1u32,
+        &None,
         &None,
         &0u64,
     );
@@ -503,6 +509,7 @@ fn test_multiple_pricing_scenarios() {
         &1_700_000_000u64,
         &1u32,
         &None,
+        &None,
         &0u64,
     );
     let output1 = client.calculate_pricing(&business1, &period1, &100_000i128, &10u32);
@@ -519,6 +526,7 @@ fn test_multiple_pricing_scenarios() {
         &1_700_000_000u64,
         &1u32,
         &None,
+        &None,
         &0u64,
     );
     let output2 = client.calculate_pricing(&business2, &period2, &600_000i128, &30u32);
@@ -534,6 +542,7 @@ fn test_multiple_pricing_scenarios() {
         &root,
         &1_700_000_000u64,
         &1u32,
+        &None,
         &None,
         &0u64,
     );
@@ -561,6 +570,7 @@ fn test_edge_case_zero_revenue() {
         &root,
         &1_700_000_000u64,
         &1u32,
+        &None,
         &None,
         &0u64,
     );

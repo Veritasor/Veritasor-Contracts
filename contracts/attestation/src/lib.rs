@@ -1,20 +1,40 @@
 #![no_std]
+#![allow(clippy::too_many_arguments)]
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Symbol, Vec};
+
+// Type aliases to reduce complexity - exported for other contracts
+pub type AttestationData = (BytesN<32>, u64, u32, i128, Option<BytesN<32>>, Option<u64>);
+pub type RevocationData = (Address, u64, String);
+pub type AttestationWithRevocation = (AttestationData, Option<RevocationData>);
+#[allow(dead_code)]
+pub type AttestationStatusResult = Vec<(String, Option<AttestationData>, Option<RevocationData>)>;
+
+// ─── Feature modules: add new `pub mod <name>;` here (one per feature) ───
+pub mod access_control;
 use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, String, Vec};
 
 pub mod dynamic_fees;
 pub mod events;
 pub mod fees;
 pub mod multisig;
+pub mod rate_limit;
+pub mod registry;
+// ─── End feature modules ───
 
 pub use access_control::{ROLE_ADMIN, ROLE_ATTESTOR, ROLE_BUSINESS, ROLE_OPERATOR};
 pub use dynamic_fees::{compute_fee, DataKey, FeeConfig};
 pub use events::{AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent};
 pub use fees::{FlatFeeConfig, collect_flat_fee};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
+pub use rate_limit::RateLimitConfig;
+pub use registry::{BusinessRecord, BusinessStatus};
+// ─── End re-exports ───
 pub use dynamic_fees::{compute_fee, DataKey, FeeConfig};
 
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod dispute_test;
 #[cfg(test)]
 mod dynamic_fees_test;
 #[cfg(test)]
@@ -24,6 +44,24 @@ mod fees_test;
 #[cfg(test)]
 mod multisig_test;
 #[cfg(test)]
+mod proof_hash_test;
+#[cfg(test)]
+mod rate_limit_test;
+#[cfg(test)]
+mod revocation_test;
+#[cfg(test)]
+mod test;
+// ─── End test modules ───
+
+pub mod dispute;
+use dispute::{
+    add_dispute_to_attestation_index, add_dispute_to_challenger_index, generate_dispute_id,
+    get_dispute_ids_by_attestation, get_dispute_ids_by_challenger, store_dispute,
+    validate_dispute_closure, validate_dispute_eligibility, validate_dispute_resolution, Dispute,
+    DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType, OptionalResolution,
+};
+#[cfg(test)]
+mod registry_test;
 mod test;
 mod multi_period_test; 
 
@@ -183,6 +221,99 @@ impl AttestationContract {
     }
     // ── Legacy Single-Period Attestation (Unchanged) ────────────────
 
+    /// Register a new business. The caller must hold `ROLE_BUSINESS` and
+    /// authorise as their own address.
+    ///
+    /// Creates a record in `Pending` state. Admin must call
+    /// `approve_business` before the business can submit attestations.
+    ///
+    /// Panics if `business` is already registered.
+    pub fn register_business(
+        env: Env,
+        business: Address,
+        name_hash: BytesN<32>,
+        jurisdiction: Symbol,
+        tags: Vec<Symbol>,
+    ) {
+        access_control::require_not_paused(&env);
+        registry::register_business(&env, &business, name_hash, jurisdiction, tags);
+    }
+
+    /// Approve a Pending business → Active. Caller must hold `ROLE_ADMIN`.
+    ///
+    /// Panics if `business` is not in `Pending` state.
+    pub fn approve_business(env: Env, caller: Address, business: Address) {
+        access_control::require_not_paused(&env);
+        registry::approve_business(&env, &caller, &business);
+    }
+
+    /// Suspend an Active business → Suspended. Caller must hold `ROLE_ADMIN`.
+    ///
+    /// `reason` is emitted in the on-chain event for compliance audit trails.
+    /// Panics if `business` is not in `Active` state.
+    pub fn suspend_business(env: Env, caller: Address, business: Address, reason: Symbol) {
+        registry::suspend_business(&env, &caller, &business, reason);
+    }
+
+    /// Reactivate a Suspended business → Active. Caller must hold `ROLE_ADMIN`.
+    ///
+    /// Panics if `business` is not in `Suspended` state.
+    pub fn reactivate_business(env: Env, caller: Address, business: Address) {
+        access_control::require_not_paused(&env);
+        registry::reactivate_business(&env, &caller, &business);
+    }
+
+    /// Replace the tag set on a business record. Caller must hold `ROLE_ADMIN`.
+    ///
+    /// Valid for any lifecycle state. Tags are the KYB/KYC extension hook.
+    pub fn update_business_tags(env: Env, caller: Address, business: Address, tags: Vec<Symbol>) {
+        registry::update_tags(&env, &caller, &business, tags);
+    }
+
+    /// Returns `true` if `business` is registered and `Active`.
+    ///
+    /// This is the attestation gate — called inside `submit_attestation`
+    /// to block Pending and Suspended businesses from submitting.
+    pub fn is_business_active(env: Env, business: Address) -> bool {
+        registry::is_active(&env, &business)
+    }
+
+    /// Return the full business record, or `None` if not registered.
+    pub fn get_business(env: Env, business: Address) -> Option<BusinessRecord> {
+        registry::get_business(&env, &business)
+    }
+
+    /// Return the current business status, or `None` if not registered.
+    pub fn get_business_status(env: Env, business: Address) -> Option<BusinessStatus> {
+        registry::get_status(&env, &business)
+    }
+
+    // ── Core attestation methods ────────────────────────────────────
+
+    /// Submit a revenue attestation.
+    ///
+    /// Stores the Merkle root, timestamp, and version for the given
+    /// (business, period) pair. If fees are enabled the caller pays the
+    /// calculated fee (base fee adjusted by tier and volume discounts)
+    /// in the configured token.
+    ///
+    /// An optional `proof_hash` (SHA-256, 32 bytes) may be provided to
+    /// link this attestation to a full off-chain revenue dataset or
+    /// proof bundle. The hash is content-addressable and must not reveal
+    /// sensitive information beyond acting as a pointer.
+    ///
+    /// The business address must authorize the call, or the caller must
+    /// have ATTESTOR role.
+    ///
+    /// # Expiry Semantics
+    /// * `expiry_timestamp` – Optional Unix timestamp (seconds) after which
+    ///   the attestation is considered stale. Pass `None` for no expiry.
+    /// * Expired attestations remain queryable but `is_expired()` returns true.
+    /// * Lenders and counterparties should check expiry before trusting data.
+    ///
+    /// Panics if:
+    /// - The contract is paused
+    /// - An attestation already exists for the same (business, period)
     pub fn submit_attestation(
         env: Env,
         business: Address,
@@ -190,6 +321,8 @@ impl AttestationContract {
         merkle_root: BytesN<32>,
         timestamp: u64,
         version: u32,
+        proof_hash: Option<BytesN<32>>,
+        expiry_timestamp: Option<u64>,
     ) {
         business.require_auth();
 
@@ -206,6 +339,14 @@ impl AttestationContract {
         // Track volume for future discount calculations.
         dynamic_fees::increment_business_count(&env, &business);
 
+        let data = (
+            merkle_root.clone(),
+            timestamp,
+            version,
+            fee_paid,
+            proof_hash.clone(),
+            expiry_timestamp,
+        );
         let data = (merkle_root.clone(), timestamp, version, total_fee);
         env.storage().instance().set(&key, &data);
 
@@ -217,11 +358,40 @@ impl AttestationContract {
             &merkle_root,
             timestamp,
             version,
+            fee_paid,
+            &proof_hash,
+            expiry_timestamp,
             total_fee,
         );
         let fee_paid = dynamic_fees::collect_fee(&env, &business);
         dynamic_fees::increment_business_count(&env, &business);
 
+        let proof_hash: Option<BytesN<32>> = None;
+        let expiry_timestamp: Option<u64> = None;
+        let data = (
+            merkle_root.clone(),
+            timestamp,
+            version,
+            fee_paid,
+            proof_hash.clone(),
+            expiry_timestamp,
+        );
+        env.storage().instance().set(&key, &data);
+
+        let metadata = extended_metadata::validate_metadata(&env, &currency_code, is_net);
+        extended_metadata::set_metadata(&env, &business, &period, &metadata);
+
+        events::emit_attestation_submitted(
+            &env,
+            &business,
+            &period,
+            &merkle_root,
+            timestamp,
+            version,
+            fee_paid,
+            &proof_hash,
+            expiry_timestamp,
+        );
         let data = (merkle_root, timestamp, version, fee_paid);
         env.storage().instance().set(&key, &data);
     }
@@ -239,6 +409,12 @@ impl AttestationContract {
         }
     }
 
+    /// Migrate an attestation to a new version.
+    ///
+    /// Only ADMIN role can migrate attestations. This updates the merkle root
+    /// and version while preserving the audit trail. The existing proof hash
+    /// is preserved — proof hashes cannot be modified without explicit migration.
+    pub fn migrate_attestation(
     // ── New: Multi-Period Attestation Methods ───────────────────────
 
     /// Submit a multi-period revenue attestation.
@@ -261,6 +437,15 @@ impl AttestationContract {
             panic!("start_period must be <= end_period");
         }
 
+        let key = DataKey::Attestation(business.clone(), period.clone());
+        let (old_merkle_root, timestamp, old_version, fee_paid, proof_hash, expiry_timestamp): (
+            BytesN<32>,
+            u64,
+            u32,
+            i128,
+            Option<BytesN<32>>,
+            Option<u64>,
+        ) = env
         let key = MultiPeriodKey::Ranges(business.clone());
         let mut ranges: Vec<AttestationRange> = env
             .storage()
@@ -286,6 +471,10 @@ impl AttestationContract {
             timestamp,
             version,
             fee_paid,
+            proof_hash,
+            expiry_timestamp,
+        );
+        env.storage().instance().set(&key, &data);
             revoked: false,
         });
 
@@ -300,6 +489,50 @@ impl AttestationContract {
 
     
 
+    /// Return stored attestation for (business, period), if any.
+    ///
+    /// Returns `(merkle_root, timestamp, version, fee_paid, proof_hash, expiry_timestamp)`.
+    /// - `proof_hash` is an optional SHA-256 hash pointing to the full off-chain proof bundle.
+    /// - `expiry_timestamp` is `None` if no expiry was set.
+    #[allow(clippy::type_complexity)]
+    pub fn get_attestation(
+        env: Env,
+        business: Address,
+        period: String,
+    ) -> Option<(BytesN<32>, u64, u32, i128, Option<BytesN<32>>, Option<u64>)> {
+        let key = DataKey::Attestation(business, period);
+        env.storage().instance().get(&key)
+    }
+
+    /// Return the off-chain proof hash for an attestation, if set.
+    ///
+    /// The proof hash is a content-addressable SHA-256 hash (32 bytes)
+    /// that points to the full off-chain revenue dataset or proof bundle
+    /// associated with this attestation. Returns `None` if no attestation
+    /// exists or if no proof hash was provided at submission time.
+    #[allow(clippy::type_complexity)]
+    pub fn get_proof_hash(env: Env, business: Address, period: String) -> Option<BytesN<32>> {
+        let key = DataKey::Attestation(business, period);
+        let record: Option<(BytesN<32>, u64, u32, i128, Option<BytesN<32>>, Option<u64>)> =
+            env.storage().instance().get(&key);
+        record.and_then(|(_, _, _, _, ph, _)| ph)
+    }
+
+    /// Check if an attestation has expired.
+    ///
+    /// Returns `true` if:
+    /// - The attestation exists
+    /// - It has an expiry timestamp set
+    /// - Current ledger time >= expiry timestamp
+    ///
+    /// Returns `false` if attestation doesn't exist or has no expiry.
+    pub fn is_expired(env: Env, business: Address, period: String) -> bool {
+        if let Some((_root, _ts, _ver, _fee, _proof_hash, Some(expiry_ts))) =
+            Self::get_attestation(env.clone(), business, period)
+        {
+            env.ledger().timestamp() >= expiry_ts
+        } else {
+            false
     pub fn get_attestation_for_period(
         env: Env,
         business: Address,
@@ -325,6 +558,15 @@ impl AttestationContract {
         target_period: u32,
         merkle_root: BytesN<32>,
     ) -> bool {
+        // Check if revoked first (most efficient check)
+        if Self::is_revoked(env.clone(), business.clone(), period.clone()) {
+            return false;
+        }
+
+        if let Some((stored_root, _ts, _ver, _fee, _proof_hash, _expiry)) =
+            Self::get_attestation(env.clone(), business, period)
+        {
+            stored_root == merkle_root
         if let Some(range) = Self::get_attestation_for_period(env, business, target_period) {
             range.merkle_root == merkle_root
         } else {
@@ -332,6 +574,94 @@ impl AttestationContract {
         }
     }
 
+    /// One-time setup of the admin address. Admin is the single authorized updater of the
+    /// authorized-analytics set. Anomaly data is stored under a separate instance key and
+    /// never modifies attestation (merkle root, timestamp, version) storage.
+    pub fn init(env: Env, admin: Address) {
+        admin.require_auth();
+        if env.storage().instance().has(&ADMIN_KEY_TAG) {
+            panic!("admin already set");
+        }
+        env.storage().instance().set(&ADMIN_KEY_TAG, &admin);
+    }
+
+    /// Adds an address to the set of authorized updaters (analytics/oracle). Caller must be admin.
+    pub fn add_authorized_analytics(env: Env, caller: Address, analytics: Address) {
+        caller.require_auth();
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&ADMIN_KEY_TAG)
+            .expect("admin not set");
+        if caller != admin {
+            panic!("caller is not admin");
+        }
+        let key = (AUTHORIZED_KEY_TAG, analytics);
+        env.storage().instance().set(&key, &());
+    }
+
+    /// Removes an address from the set of authorized updaters. Caller must be admin.
+    pub fn remove_authorized_analytics(env: Env, caller: Address, analytics: Address) {
+        caller.require_auth();
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&ADMIN_KEY_TAG)
+            .expect("admin not set");
+        if caller != admin {
+            panic!("caller is not admin");
+        }
+        let key = (AUTHORIZED_KEY_TAG, analytics);
+        env.storage().instance().remove(&key);
+    }
+
+    /// Stores anomaly flags and risk score for an existing attestation. Only addresses in the
+    /// authorized-analytics set (added by admin) may call this; updater must pass their address
+    /// and authorize. flags: bitmask for anomaly conditions (semantics defined off-chain).
+    /// score: risk score in [0, 100]; higher means higher risk. Panics if attestation missing or score > 100.
+    pub fn set_anomaly(
+        env: Env,
+        updater: Address,
+        business: Address,
+        period: String,
+        flags: u32,
+        score: u32,
+    ) {
+        updater.require_auth();
+        let key_auth = (AUTHORIZED_KEY_TAG, updater.clone());
+        if !env.storage().instance().has(&key_auth) {
+            panic!("updater not authorized");
+        }
+        let attest_key = (business.clone(), period.clone());
+        if !env.storage().instance().has(&attest_key) {
+            panic!("attestation does not exist for this business and period");
+        }
+        if score > ANOMALY_SCORE_MAX {
+            panic!("score out of range");
+        }
+        let anomaly_key = (ANOMALY_KEY_TAG, business, period);
+        env.storage().instance().set(&anomaly_key, &(flags, score));
+    }
+
+    /// Returns anomaly flags and risk score for (business, period) if set. For use by lenders.
+    pub fn get_anomaly(env: Env, business: Address, period: String) -> Option<(u32, u32)> {
+        let key = (ANOMALY_KEY_TAG, business, period);
+        env.storage().instance().get(&key)
+    }
+
+    /// Get all attestations for a business with their revocation status.
+    ///
+    /// This method is useful for audit and reporting purposes.
+    /// Note: This requires the business to maintain a list of their periods
+    /// as the contract does not store a global index of attestations.
+    ///
+    /// # Arguments
+    /// * `business` - Business address to query attestations for
+    /// * `periods` - List of period identifiers to retrieve
+    ///
+    /// # Returns
+    /// Vector of tuples containing (period, attestation_data, revocation_info)
+    pub fn get_business_attestations(
     pub fn revoke_multi_period_attestation(
         env: Env,
         business: Address,
@@ -378,6 +708,120 @@ impl AttestationContract {
     }
 
 
+    /// Return the contract admin address.
+    pub fn get_admin(env: Env) -> Address {
+        dynamic_fees::get_admin(&env)
+    }
+
+    // ── Rate-limit queries ──────────────────────────────────────────
+
+    /// Return the current rate limit configuration, or None if not set.
+    pub fn get_rate_limit_config(env: Env) -> Option<RateLimitConfig> {
+        rate_limit::get_rate_limit_config(&env)
+    }
+
+    /// Return how many submissions a business has in the current window.
+    ///
+    /// Returns 0 when rate limiting is not configured or disabled.
+    pub fn get_submission_window_count(env: Env, business: Address) -> u32 {
+        rate_limit::get_submission_count(&env, &business)
+    }
+
+    // ─── New feature methods: add new sections below (e.g. `// ── MyFeature ───` then methods). Do not edit sections above. ───
+
+    // ── Dispute Operations ──────────────────────────────────────────
+
+    /// Open a new dispute for an existing attestation.
+    ///
+    /// The challenger must provide evidence and a dispute type.
+    /// Panics if no attestation exists or if the challenger already
+    /// has an open dispute for this attestation.
+    pub fn open_dispute(
+        env: Env,
+        challenger: Address,
+        business: Address,
+        period: String,
+        dispute_type: DisputeType,
+        evidence: String,
+    ) -> u64 {
+        challenger.require_auth();
+
+        validate_dispute_eligibility(&env, &challenger, &business, &period)
+            .unwrap_or_else(|e| panic!("{}", e));
+
+        let dispute_id = generate_dispute_id(&env);
+        let dispute = Dispute {
+            id: dispute_id,
+            challenger: challenger.clone(),
+            business: business.clone(),
+            period: period.clone(),
+            status: DisputeStatus::Open,
+            dispute_type,
+            evidence,
+            timestamp: env.ledger().timestamp(),
+            resolution: OptionalResolution::None,
+        };
+
+        store_dispute(&env, &dispute);
+        add_dispute_to_attestation_index(&env, &business, &period, dispute_id);
+        add_dispute_to_challenger_index(&env, &challenger, dispute_id);
+
+        dispute_id
+    }
+
+    /// Resolve an open dispute with an outcome.
+    ///
+    /// Panics if the dispute does not exist or is not in Open status.
+    pub fn resolve_dispute(
+        env: Env,
+        dispute_id: u64,
+        resolver: Address,
+        outcome: DisputeOutcome,
+        notes: String,
+    ) {
+        resolver.require_auth();
+
+        let mut dispute = validate_dispute_resolution(&env, dispute_id, &resolver)
+            .unwrap_or_else(|e| panic!("{}", e));
+
+        let resolution = DisputeResolution {
+            resolver,
+            outcome,
+            timestamp: env.ledger().timestamp(),
+            notes,
+        };
+
+        dispute.status = DisputeStatus::Resolved;
+        dispute.resolution = OptionalResolution::Some(resolution);
+        store_dispute(&env, &dispute);
+    }
+
+    /// Close a resolved dispute, making it final.
+    ///
+    /// Panics if the dispute does not exist or is not in Resolved status.
+    pub fn close_dispute(env: Env, dispute_id: u64) {
+        let mut dispute =
+            validate_dispute_closure(&env, dispute_id).unwrap_or_else(|e| panic!("{}", e));
+
+        dispute.status = DisputeStatus::Closed;
+        store_dispute(&env, &dispute);
+    }
+
+    /// Retrieve details of a specific dispute.
+    pub fn get_dispute(env: Env, dispute_id: u64) -> Option<Dispute> {
+        dispute::get_dispute(&env, dispute_id)
+    }
+
+    /// Get all dispute IDs for a specific attestation.
+    pub fn get_disputes_by_attestation(env: Env, business: Address, period: String) -> Vec<u64> {
+        get_dispute_ids_by_attestation(&env, &business, &period)
+    }
+
+    /// Get all dispute IDs opened by a specific challenger.
+    pub fn get_disputes_by_challenger(env: Env, challenger: Address) -> Vec<u64> {
+        get_dispute_ids_by_challenger(&env, &challenger)
+    }
+}
     pub fn get_fee_config(env: Env) -> Option<FeeConfig> { dynamic_fees::get_fee_config(&env) }
     pub fn get_fee_quote(env: Env, business: Address) -> i128 { dynamic_fees::calculate_fee(&env, &business) }
     pub fn get_business_tier(env: Env, business: Address) -> u32 { dynamic_fees::get_business_tier(&env, &business) }

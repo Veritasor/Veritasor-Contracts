@@ -21,11 +21,12 @@ fn test_submit_attestation_without_expiry() {
     let period = String::from_str(&env, "2026-Q1");
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
 
+    client.submit_attestation(&business, &period, &merkle_root, &1000, &1, &None, &None);
     client.submit_attestation(&business, &period, &merkle_root, &1000, &1, &None, &0u64);
 
     let result = client.get_attestation(&business, &period);
     assert!(result.is_some());
-    let (root, ts, ver, _fee, expiry) = result.unwrap();
+    let (root, ts, ver, _fee, _proof_hash, expiry) = result.unwrap();
     assert_eq!(root, merkle_root);
     assert_eq!(ts, 1000);
     assert_eq!(ver, 1);
@@ -46,13 +47,14 @@ fn test_submit_attestation_with_expiry() {
         &merkle_root,
         &1000,
         &1,
+        &None,
         &Some(expiry_ts),
         &0u64,
     );
 
     let result = client.get_attestation(&business, &period);
     assert!(result.is_some());
-    let (_root, _ts, _ver, _fee, expiry) = result.unwrap();
+    let (_root, _ts, _ver, _fee, _proof_hash, expiry) = result.unwrap();
     assert_eq!(expiry, Some(expiry_ts));
 }
 
@@ -63,6 +65,7 @@ fn test_is_expired_returns_false_when_no_expiry() {
     let period = String::from_str(&env, "2026-Q1");
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
 
+    client.submit_attestation(&business, &period, &merkle_root, &1000, &1, &None, &None);
     client.submit_attestation(&business, &period, &merkle_root, &1000, &1, &None, &0u64);
 
     assert!(!client.is_expired(&business, &period));
@@ -84,6 +87,7 @@ fn test_is_expired_returns_false_when_not_expired() {
         &merkle_root,
         &1000,
         &1,
+        &None,
         &Some(expiry_ts),
         &0u64,
     );
@@ -107,6 +111,7 @@ fn test_is_expired_returns_true_when_expired() {
         &merkle_root,
         &1000,
         &1,
+        &None,
         &Some(expiry_ts),
         &0u64,
     );
@@ -133,6 +138,7 @@ fn test_is_expired_at_exact_expiry_time() {
         &merkle_root,
         &1000,
         &1,
+        &None,
         &Some(expiry_ts),
         &0u64,
     );
@@ -168,6 +174,7 @@ fn test_expired_attestation_still_queryable() {
         &merkle_root,
         &1000,
         &1,
+        &None,
         &Some(expiry_ts),
         &0u64,
     );
@@ -199,6 +206,7 @@ fn test_verify_attestation_ignores_expiry() {
         &merkle_root,
         &1000,
         &1,
+        &None,
         &Some(expiry_ts),
         &0u64,
     );
@@ -228,6 +236,10 @@ fn test_migrate_preserves_expiry() {
         &old_root,
         &1000,
         &1,
+        &None,
+        &Some(expiry_ts),
+    );
+    client.migrate_attestation(&admin, &business, &period, &new_root, &2);
         &Some(expiry_ts),
         &0u64,
     );
@@ -235,7 +247,7 @@ fn test_migrate_preserves_expiry() {
 
     let result = client.get_attestation(&business, &period);
     assert!(result.is_some());
-    let (root, _ts, ver, _fee, expiry) = result.unwrap();
+    let (root, _ts, ver, _fee, _proof_hash, expiry) = result.unwrap();
     assert_eq!(root, new_root);
     assert_eq!(ver, 2);
     assert_eq!(expiry, Some(expiry_ts));
