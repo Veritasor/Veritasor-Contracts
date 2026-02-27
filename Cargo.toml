@@ -11,6 +11,7 @@ members = [
     "contracts/network-config",
     "contracts/protocol-dao",
     "contracts/protocol-simulation",
+    "contracts/revenue-bonds",
     "contracts/revenue-stream",
 ]
 resolver = "2"
