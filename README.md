@@ -47,6 +47,33 @@ See [docs/offchain-proof-hash.md](docs/offchain-proof-hash.md) for the full spec
 | `remove_authorized_analytics(caller, analytics)`                                                      | Remove an authorized analytics address (admin only).                                                                           |
 | `set_anomaly(updater, business, period, flags, score)`                                                | Store anomaly flags and risk score (authorized updaters only; score 0–100).                                                    |
 | `get_anomaly(business, period)`                                                                       | Returns `Option<(u32, u32)>` (flags, score) for lenders.                                                                       |
+| Method | Description |
+|--------|-------------|
+| `submit_attestation(business, period, merkle_root, timestamp, version)` | Store attestation. Panics if one already exists for this business and period. |
+| `get_attestation(business, period)` | Returns `Option<(BytesN<32>, u64, u32)>`. |
+| `verify_attestation(business, period, merkle_root)` | Returns `true` if an attestation exists and its root matches. |
+| `init(admin)` | One-time setup of admin for revocation. |
+| `revoke_attestation(caller, business, period)` | Set attestation status to revoked (admin only). |
+| `get_attestations_page(business, periods, period_start, period_end, status_filter, version_filter, limit, cursor)` | Paginated query with filters. Returns (results, next_cursor). Limit capped at 30. See [docs/attestation-queries.md](docs/attestation-queries.md). |
+| `init(admin)` | One-time setup of admin for anomaly feature. |
+| `add_authorized_analytics(caller, analytics)` | Add an authorized analytics/oracle address (admin only). |
+| `remove_authorized_analytics(caller, analytics)` | Remove an authorized analytics address (admin only). |
+| `set_anomaly(updater, business, period, flags, score)` | Store anomaly flags and risk score (authorized updaters only; score 0–100). |
+| `get_anomaly(business, period)` | Returns `Option<(u32, u32)>` (flags, score) for lenders. |
+| `initialize(admin)` | One-time setup. Sets the admin address. |
+| `configure_fees(token, collector, base_fee, enabled)` | Admin: set fee token, collector, base fee, and toggle. |
+| `set_tier_discount(tier, discount_bps)` | Admin: set discount (0–10 000 bps) for a tier level. |
+| `set_business_tier(business, tier)` | Admin: assign a business to a tier. |
+| `set_volume_brackets(thresholds, discounts)` | Admin: set volume discount brackets. |
+| `set_fee_enabled(enabled)` | Admin: toggle fee collection on/off. |
+| `submit_attestation(business, period, merkle_root, timestamp, version)` | Store attestation; collects fee if enabled. Business must authorize. |
+| `get_attestation(business, period)` | Returns `Option<(BytesN<32>, u64, u32, i128)>` (root, ts, ver, fee_paid). |
+| `verify_attestation(business, period, merkle_root)` | Returns `true` if attestation exists and root matches. |
+| `get_fee_config()` | Current fee configuration or None. |
+| `get_fee_quote(business)` | Fee the business would pay for its next attestation. |
+| `get_business_tier(business)` | Tier assigned to a business (0 if unset). |
+| `get_business_count(business)` | Cumulative attestation count. |
+| `get_admin()` | Contract admin address. |
 
 ### Prerequisites
 
@@ -103,6 +130,9 @@ Benchmarks measure CPU instructions and memory usage for all core operations. Se
 
 ```
 veritasor-contracts/
+├── Cargo.toml                 # Workspace root
+├── docs/
+│   └── attestation-queries.md # Pagination and filtering
 ├── Cargo.toml              # Workspace root
 ├── docs/
 │   └── attestation-anomaly-flags.md   # Anomaly flags and risk scores
@@ -114,6 +144,9 @@ veritasor-contracts/
     └── attestation/
         ├── Cargo.toml
         └── src/
+            ├── lib.rs               # Contract logic
+            ├── test.rs              # Unit tests
+            └── query_pagination_test.rs  # Pagination tests
             ├── lib.rs         # Contract logic
             ├── test.rs        # Unit tests
             └── anomaly_test.rs  # Anomaly feature tests

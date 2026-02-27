@@ -31,6 +31,10 @@
 //! - Safe rounding with residual allocation
 
 use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, String, Vec};
+use veritasor_common::replay_protection;
+
+/// Nonce channels for replay protection
+pub const NONCE_CHANNEL_ADMIN: u32 = 1;
 
 // ════════════════════════════════════════════════════════════════════
 //  Storage types
@@ -90,16 +94,26 @@ impl RevenueShareContract {
     ///
     /// # Parameters
     /// - `admin`: Administrator address with configuration privileges
+    /// - `nonce`: Replay protection nonce (must be 0 for first call)
     /// - `attestation_contract`: Address of the Veritasor attestation contract
     /// - `token`: Token contract address for revenue distributions
     ///
     /// # Panics
     /// - If already initialized
-    pub fn initialize(env: Env, admin: Address, attestation_contract: Address, token: Address) {
+    /// - If nonce is invalid
+    pub fn initialize(env: Env, admin: Address, nonce: u64, attestation_contract: Address, token: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
         }
         admin.require_auth();
+        
+        // Verify and increment nonce for replay protection
+        replay_protection::verify_and_increment_nonce(
+            &env, 
+            &admin, 
+            NONCE_CHANNEL_ADMIN, 
+            nonce
+        );
 
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage()
@@ -121,11 +135,16 @@ impl RevenueShareContract {
     /// - Each stakeholder must have at least 1 bps
     /// - No duplicate addresses
     ///
+    /// # Parameters
+    /// - `nonce`: Replay protection nonce for admin
+    /// - `stakeholders`: Vector of stakeholder configurations
+    ///
     /// # Panics
     /// - If caller is not admin
+    /// - If nonce is invalid
     /// - If validation fails
-    pub fn configure_stakeholders(env: Env, stakeholders: Vec<Stakeholder>) {
-        let _admin = Self::require_admin(&env);
+    pub fn configure_stakeholders(env: Env, nonce: u64, stakeholders: Vec<Stakeholder>) {
+        let _admin = Self::require_admin_with_nonce(&env, nonce);
 
         // Validate stakeholder count
         let count = stakeholders.len();
@@ -164,10 +183,15 @@ impl RevenueShareContract {
 
     /// Update the attestation contract address.
     ///
+    /// # Parameters
+    /// - `nonce`: Replay protection nonce for admin
+    /// - `attestation_contract`: New attestation contract address
+    ///
     /// # Panics
     /// - If caller is not admin
-    pub fn set_attestation_contract(env: Env, attestation_contract: Address) {
-        Self::require_admin(&env);
+    /// - If nonce is invalid
+    pub fn set_attestation_contract(env: Env, nonce: u64, attestation_contract: Address) {
+        Self::require_admin_with_nonce(&env, nonce);
         env.storage()
             .instance()
             .set(&DataKey::AttestationContract, &attestation_contract);
@@ -175,10 +199,15 @@ impl RevenueShareContract {
 
     /// Update the token contract address.
     ///
+    /// # Parameters
+    /// - `nonce`: Replay protection nonce for admin
+    /// - `token`: New token contract address
+    ///
     /// # Panics
     /// - If caller is not admin
-    pub fn set_token(env: Env, token: Address) {
-        Self::require_admin(&env);
+    /// - If nonce is invalid
+    pub fn set_token(env: Env, nonce: u64, token: Address) {
+        Self::require_admin_with_nonce(&env, nonce);
         env.storage().instance().set(&DataKey::Token, &token);
     }
 
@@ -323,7 +352,13 @@ impl RevenueShareContract {
         env.storage()
             .instance()
             .get(&DataKey::Token)
-            .expect("token not configured")
+            .expect("not initialized")
+    }
+
+    /// Get the current nonce for replay protection.
+    /// Returns the nonce value that must be supplied on the next call.
+    pub fn get_replay_nonce(env: Env, actor: Address, channel: u32) -> u64 {
+        replay_protection::get_nonce(&env, &actor, channel)
     }
 
     // ── Internal Helpers ────────────────────────────────────────────
@@ -335,6 +370,26 @@ impl RevenueShareContract {
             .get(&DataKey::Admin)
             .expect("contract not initialized");
         admin.require_auth();
+        admin
+    }
+    
+    /// Helper function to require admin auth and verify replay protection nonce
+    fn require_admin_with_nonce(env: &Env, nonce: u64) -> Address {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("contract not initialized");
+        admin.require_auth();
+        
+        // Verify and increment nonce for replay protection
+        replay_protection::verify_and_increment_nonce(
+            env, 
+            &admin, 
+            NONCE_CHANNEL_ADMIN, 
+            nonce
+        );
+        
         admin
     }
 }

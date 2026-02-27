@@ -11,6 +11,7 @@ doctest = false
 
 [dependencies]
 soroban-sdk = "22.0"
+veritasor-common = { path = "../common" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 veritasor-attestation = { path = "../attestation" }
@@ -18,6 +19,7 @@ veritasor-attestation = { path = "../attestation" }
 [dev-dependencies]
 soroban-sdk = { version = "22.0", features = ["testutils"] }
 veritasor-attestation = { path = "../attestation" }
+veritasor-common = { path = "../common" }
 
 [profile.release]
 opt-level = "z"

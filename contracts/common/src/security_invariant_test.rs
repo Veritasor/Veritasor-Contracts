@@ -24,10 +24,10 @@ fn invariant_attestation_single_initialization() {
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    client.initialize(&admin, &0u64);
     assert_eq!(client.get_admin(), admin);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.initialize(&Address::generate(&env));
+        client.initialize(&Address::generate(&env), &0u64);
     }));
     assert!(result.is_err());
 }
@@ -40,11 +40,11 @@ fn invariant_attestation_unauthorized_cannot_grant_role() {
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    client.initialize(&admin, &0u64);
     let other = Address::generate(&env);
     let target = Address::generate(&env);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.grant_role(&other, &target, &1u32);
+        client.grant_role(&other, &target, &1u32, &0u64);
     }));
     assert!(result.is_err());
 }
@@ -57,10 +57,10 @@ fn invariant_registry_single_initialization() {
     let contract_id = env.register(IntegrationRegistryContract, ());
     let client = IntegrationRegistryContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    client.initialize(&admin, &0u64);
     assert_eq!(client.get_admin(), admin);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.initialize(&Address::generate(&env));
+        client.initialize(&Address::generate(&env), &1u64);
     }));
     assert!(result.is_err());
 }
@@ -73,7 +73,7 @@ fn invariant_registry_unauthorized_cannot_register() {
     let contract_id = env.register(IntegrationRegistryContract, ());
     let client = IntegrationRegistryContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    client.initialize(&admin, &0u64);
     let non_gov = Address::generate(&env);
     let id = String::from_str(&env, "stripe");
     let meta = ProviderMetadata {
@@ -84,7 +84,7 @@ fn invariant_registry_unauthorized_cannot_register() {
         category: String::from_str(&env, "payment"),
     };
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.register_provider(&non_gov, &id, &meta);
+        client.register_provider(&non_gov, &id, &meta, &0u64);
     }));
     assert!(result.is_err());
 }

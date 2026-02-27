@@ -2,6 +2,8 @@ use super::dispute::{DisputeOutcome, DisputeStatus, DisputeType, OptionalResolut
 use super::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, BytesN, Env, String};
+use super::dispute::{DisputeStatus, DisputeType, DisputeOutcome};
+use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String, Vec};
 
 /// Helper: register the contract and return a client with mock auths.
 fn setup() -> (Env, AttestationContractClient<'static>) {
@@ -29,6 +31,7 @@ fn test_open_dispute_success() {
         &None,
         &None,
     );
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
 
     let challenger = Address::generate(&env);
     let dispute_type = DisputeType::RevenueMismatch;
@@ -59,6 +62,7 @@ fn test_open_dispute_no_attestation() {
 
     let result = client.try_open_dispute(&challenger, &business, &period, &dispute_type, &evidence);
     assert!(result.is_err());
+    assert!(result.is_err());
 }
 
 #[test]
@@ -77,6 +81,7 @@ fn test_duplicate_dispute_prevention() {
         &None,
         &None,
     );
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
 
     let challenger = Address::generate(&env);
     let dispute_type = DisputeType::RevenueMismatch;
@@ -89,6 +94,9 @@ fn test_duplicate_dispute_prevention() {
         client.try_open_dispute(&challenger, &business, &period, &dispute_type, &evidence2);
     assert!(result.is_err());
 
+    assert!(result.is_err());
+    
+    // Verify first dispute still exists and is unchanged
     let dispute = client.get_dispute(&dispute_id1).unwrap();
     assert_eq!(dispute.evidence, evidence);
 }
@@ -109,6 +117,7 @@ fn test_dispute_resolution() {
         &None,
         &None,
     );
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
 
     let challenger = Address::generate(&env);
     let dispute_id = client.open_dispute(
@@ -146,6 +155,7 @@ fn test_resolve_nonexistent_dispute() {
 
     let result = client.try_resolve_dispute(&1u64, &resolver, &outcome, &notes);
     assert!(result.is_err());
+    assert!(result.is_err());
 }
 
 #[test]
@@ -164,6 +174,7 @@ fn test_resolve_closed_dispute() {
         &None,
         &None,
     );
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
 
     let challenger = Address::generate(&env);
     let dispute_id = client.open_dispute(
@@ -189,6 +200,7 @@ fn test_resolve_closed_dispute() {
         &String::from_str(&env, "Notes"),
     );
     assert!(result.is_err());
+    assert!(result.is_err());
 }
 
 #[test]
@@ -207,6 +219,7 @@ fn test_close_dispute() {
         &None,
         &None,
     );
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
 
     let challenger = Address::generate(&env);
     let dispute_id = client.open_dispute(
@@ -247,6 +260,7 @@ fn test_close_unresolved_dispute() {
         &None,
         &None,
     );
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
 
     let challenger = Address::generate(&env);
     let dispute_id = client.open_dispute(
@@ -258,6 +272,7 @@ fn test_close_unresolved_dispute() {
     );
 
     let result = client.try_close_dispute(&dispute_id);
+    assert!(result.is_err());
     assert!(result.is_err());
 }
 
@@ -277,6 +292,7 @@ fn test_get_disputes_by_attestation() {
         &None,
         &None,
     );
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
 
     // Open multiple disputes for same attestation
     let challenger1 = Address::generate(&env);
@@ -337,6 +353,9 @@ fn test_get_disputes_by_challenger() {
         &None,
         &None,
     );
+    
+    client.submit_attestation(&business1, &period1, &root, &1700000000u64, &1u32, &None, &0u64);
+    client.submit_attestation(&business2, &period2, &root, &1700000000u64, &1u32, &None, &0u64);
 
     // Open disputes from same challenger
     let dispute_id1 = client.open_dispute(
@@ -379,6 +398,7 @@ fn test_business_vs_lender_dispute_scenario() {
         &None,
         &None,
     );
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
 
     // Lender challenges the attestation (business vs lender scenario)
     let lender = Address::generate(&env);
@@ -416,6 +436,10 @@ fn test_business_vs_lender_dispute_scenario() {
         assert_eq!(resolution.resolver, business);
     } else {
         panic!("expected resolution to be Some");
+    {
+        let resolution = dispute.resolution.unwrap();
+        assert_eq!(resolution.outcome, DisputeOutcome::Rejected);
+        assert_eq!(resolution.resolver, business);
     }
 
     // Close dispute
@@ -436,6 +460,7 @@ fn test_dispute_lifecycle_complete_flow() {
     client.submit_attestation(
         &business, &period, &root, &timestamp, &version, &None, &None,
     );
+    client.submit_attestation(&business, &period, &root, &timestamp, &version, &None, &0u64);
 
     // Phase 2: Open dispute
     let challenger = Address::generate(&env);
@@ -477,4 +502,5 @@ fn test_dispute_lifecycle_complete_flow() {
     let challenger_disputes = client.get_disputes_by_challenger(&challenger);
     assert_eq!(challenger_disputes.len(), 1);
     assert_eq!(challenger_disputes.get(0), Some(dispute_id));
+}
 }

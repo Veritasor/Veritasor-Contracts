@@ -7,7 +7,7 @@ fn setup_contract_with_admin(env: &Env) -> (Address, AttestationContractClient<'
     let client = AttestationContractClient::new(env, &contract_id);
     let admin = Address::generate(env);
     env.mock_all_auths();
-    client.init(&admin);
+    client.init(&admin, &0u64);
     (admin, client)
 }
 
@@ -18,8 +18,8 @@ fn init_sets_admin() {
     let client = AttestationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     env.mock_all_auths();
-    client.init(&admin);
-    client.add_authorized_analytics(&admin, &Address::generate(&env));
+    client.init(&admin, &0u64);
+    client.add_authorized_analytics(&admin, &Address::generate(&env), &0u64);
 }
 
 #[test]
@@ -30,8 +30,8 @@ fn init_twice_panics() {
     let client = AttestationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     env.mock_all_auths();
-    client.init(&admin);
-    client.init(&admin);
+    client.init(&admin, &0u64);
+    client.init(&admin, &1u64);
 }
 
 #[test]
@@ -39,8 +39,8 @@ fn add_and_remove_authorized_analytics() {
     let env = Env::default();
     let (admin, client) = setup_contract_with_admin(&env);
     let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
-    client.remove_authorized_analytics(&admin, &analytics);
+    client.add_authorized_analytics(&admin, &analytics, &0u64);
+    client.remove_authorized_analytics(&admin, &analytics, &1u64);
 }
 
 #[test]
@@ -50,7 +50,7 @@ fn add_authorized_analytics_non_admin_panics() {
     let (_admin, client) = setup_contract_with_admin(&env);
     let other = Address::generate(&env);
     let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&other, &analytics);
+    client.add_authorized_analytics(&other, &analytics, &0u64);
 }
 
 #[test]
@@ -62,7 +62,7 @@ fn add_authorized_analytics_without_init_panics() {
     let admin = Address::generate(&env);
     let analytics = Address::generate(&env);
     env.mock_all_auths();
-    client.add_authorized_analytics(&admin, &analytics);
+    client.add_authorized_analytics(&admin, &analytics, &0u64);
 }
 
 #[test]
@@ -70,12 +70,12 @@ fn set_anomaly_and_get_anomaly() {
     let env = Env::default();
     let (admin, client) = setup_contract_with_admin(&env);
     let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
+    client.add_authorized_analytics(&admin, &analytics, &0u64);
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32);
-    client.set_anomaly(&analytics, &business, &period, &1u32, &50u32);
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
+    client.set_anomaly(&analytics, &business, &period, &1u32, &50u32, &0u64);
     let out = client.get_anomaly(&business, &period).unwrap();
     assert_eq!(out.0, 1u32);
     assert_eq!(out.1, 50u32);
@@ -86,13 +86,13 @@ fn set_anomaly_multiple_updates_overwrites() {
     let env = Env::default();
     let (admin, client) = setup_contract_with_admin(&env);
     let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
+    client.add_authorized_analytics(&admin, &analytics, &0u64);
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32);
-    client.set_anomaly(&analytics, &business, &period, &1u32, &10u32);
-    client.set_anomaly(&analytics, &business, &period, &2u32, &90u32);
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
+    client.set_anomaly(&analytics, &business, &period, &1u32, &10u32, &0u64);
+    client.set_anomaly(&analytics, &business, &period, &2u32, &90u32, &1u64);
     let out = client.get_anomaly(&business, &period).unwrap();
     assert_eq!(out.0, 2u32);
     assert_eq!(out.1, 90u32);
@@ -104,13 +104,13 @@ fn set_anomaly_unauthorized_panics() {
     let env = Env::default();
     let (admin, client) = setup_contract_with_admin(&env);
     let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
+    client.add_authorized_analytics(&admin, &analytics, &0u64);
     let unauthorized = Address::generate(&env);
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32);
-    client.set_anomaly(&unauthorized, &business, &period, &1u32, &50u32);
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
+    client.set_anomaly(&unauthorized, &business, &period, &1u32, &50u32, &0u64);
 }
 
 #[test]
@@ -119,10 +119,10 @@ fn set_anomaly_without_attestation_panics() {
     let env = Env::default();
     let (admin, client) = setup_contract_with_admin(&env);
     let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
+    client.add_authorized_analytics(&admin, &analytics, &0u64);
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
-    client.set_anomaly(&analytics, &business, &period, &1u32, &50u32);
+    client.set_anomaly(&analytics, &business, &period, &1u32, &50u32, &0u64);
 }
 
 #[test]
@@ -131,12 +131,12 @@ fn set_anomaly_score_out_of_range_panics() {
     let env = Env::default();
     let (admin, client) = setup_contract_with_admin(&env);
     let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
+    client.add_authorized_analytics(&admin, &analytics, &0u64);
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32);
-    client.set_anomaly(&analytics, &business, &period, &0u32, &101u32);
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
+    client.set_anomaly(&analytics, &business, &period, &0u32, &101u32, &0u64);
 }
 
 #[test]
@@ -144,12 +144,12 @@ fn set_anomaly_score_boundary_100() {
     let env = Env::default();
     let (admin, client) = setup_contract_with_admin(&env);
     let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
+    client.add_authorized_analytics(&admin, &analytics, &0u64);
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32);
-    client.set_anomaly(&analytics, &business, &period, &0u32, &100u32);
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
+    client.set_anomaly(&analytics, &business, &period, &0u32, &100u32, &0u64);
     let out = client.get_anomaly(&business, &period).unwrap();
     assert_eq!(out.1, 100u32);
 }
@@ -161,7 +161,7 @@ fn get_anomaly_none_when_not_set() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32);
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
     let out = client.get_anomaly(&business, &period);
     assert!(out.is_none());
 }
@@ -169,14 +169,17 @@ fn get_anomaly_none_when_not_set() {
 #[test]
 fn attestation_without_anomaly_data_unchanged() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[5u8; 32]);
     let timestamp = 1700000000u64;
     let version = 2u32;
-    client.submit_attestation(&business, &period, &root, &timestamp, &version);
+    client.submit_attestation(&business, &period, &root, &timestamp, &version, &None, &0u64);
     assert!(client.get_anomaly(&business, &period).is_none());
     let stored = client.get_attestation(&business, &period).unwrap();
     assert_eq!(stored.0, root);
@@ -190,14 +193,14 @@ fn anomaly_update_does_not_corrupt_attestation() {
     let env = Env::default();
     let (admin, client) = setup_contract_with_admin(&env);
     let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
+    client.add_authorized_analytics(&admin, &analytics, &0u64);
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[7u8; 32]);
     let timestamp = 1700000001u64;
     let version = 3u32;
-    client.submit_attestation(&business, &period, &root, &timestamp, &version);
-    client.set_anomaly(&analytics, &business, &period, &0xFFu32, &75u32);
+    client.submit_attestation(&business, &period, &root, &timestamp, &version, &None, &0u64);
+    client.set_anomaly(&analytics, &business, &period, &0xFFu32, &75u32, &0u64);
     let stored = client.get_attestation(&business, &period).unwrap();
     assert_eq!(stored.0, root);
     assert_eq!(stored.1, timestamp);
@@ -214,14 +217,14 @@ fn two_authorized_updaters_can_both_set_anomaly() {
     let (admin, client) = setup_contract_with_admin(&env);
     let analytics1 = Address::generate(&env);
     let analytics2 = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics1);
-    client.add_authorized_analytics(&admin, &analytics2);
+    client.add_authorized_analytics(&admin, &analytics1, &0u64);
+    client.add_authorized_analytics(&admin, &analytics2, &1u64);
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32);
-    client.set_anomaly(&analytics1, &business, &period, &1u32, &25u32);
-    client.set_anomaly(&analytics2, &business, &period, &2u32, &50u32);
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
+    client.set_anomaly(&analytics1, &business, &period, &1u32, &25u32, &0u64);
+    client.set_anomaly(&analytics2, &business, &period, &2u32, &50u32, &1u64);
     let out = client.get_anomaly(&business, &period).unwrap();
     assert_eq!(out.0, 2u32);
     assert_eq!(out.1, 50u32);
@@ -232,13 +235,13 @@ fn removed_analytics_cannot_set_anomaly() {
     let env = Env::default();
     let (admin, client) = setup_contract_with_admin(&env);
     let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
+    client.add_authorized_analytics(&admin, &analytics, &0u64);
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32);
-    client.set_anomaly(&analytics, &business, &period, &1u32, &50u32);
-    client.remove_authorized_analytics(&admin, &analytics);
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
+    client.set_anomaly(&analytics, &business, &period, &1u32, &50u32, &0u64);
+    client.remove_authorized_analytics(&admin, &analytics, &1u64);
     let out = client.get_anomaly(&business, &period).unwrap();
     assert_eq!(out.0, 1u32);
     assert_eq!(out.1, 50u32);
@@ -250,11 +253,11 @@ fn removed_analytics_set_anomaly_panics() {
     let env = Env::default();
     let (admin, client) = setup_contract_with_admin(&env);
     let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
+    client.add_authorized_analytics(&admin, &analytics, &0u64);
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32);
-    client.remove_authorized_analytics(&admin, &analytics);
-    client.set_anomaly(&analytics, &business, &period, &2u32, &60u32);
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
+    client.remove_authorized_analytics(&admin, &analytics, &1u64);
+    client.set_anomaly(&analytics, &business, &period, &2u32, &60u32, &0u64);
 }

@@ -51,6 +51,14 @@ pub const TOPIC_UNPAUSED: Symbol = symbol_short!("unpaus");
 pub const TOPIC_FEE_CONFIG: Symbol = symbol_short!("fee_cfg");
 /// Topic for rate limit configuration events
 pub const TOPIC_RATE_LIMIT: Symbol = symbol_short!("rate_lm");
+/// Topic for key rotation proposed events
+pub const TOPIC_KEY_ROTATION_PROPOSED: Symbol = symbol_short!("kr_prop");
+/// Topic for key rotation confirmed events
+pub const TOPIC_KEY_ROTATION_CONFIRMED: Symbol = symbol_short!("kr_conf");
+/// Topic for key rotation cancelled events
+pub const TOPIC_KEY_ROTATION_CANCELLED: Symbol = symbol_short!("kr_canc");
+/// Topic for emergency key rotation events
+pub const TOPIC_KEY_ROTATION_EMERGENCY: Symbol = symbol_short!("kr_emer");
 
 // Topic for business registered
 pub const TOPIC_BIZ_REGISTERED: Symbol = symbol_short!("biz_reg");
@@ -169,6 +177,42 @@ pub struct RateLimitConfigChangedEvent {
     pub enabled: bool,
     /// Address that made the change
     pub changed_by: Address,
+}
+
+/// Event data for key rotation proposed
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct KeyRotationProposedEvent {
+    /// Address of the current admin proposing the rotation
+    pub old_admin: Address,
+    /// Address of the proposed new admin
+    pub new_admin: Address,
+    /// Ledger sequence after which the rotation can be confirmed
+    pub timelock_until: u32,
+    /// Ledger sequence after which the rotation expires
+    pub expires_at: u32,
+}
+
+/// Event data for key rotation confirmed
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct KeyRotationConfirmedEvent {
+    /// Address of the previous admin
+    pub old_admin: Address,
+    /// Address of the new admin
+    pub new_admin: Address,
+    /// Whether this was an emergency rotation
+    pub is_emergency: bool,
+}
+
+/// Event data for key rotation cancelled
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct KeyRotationCancelledEvent {
+    /// Address of the admin who cancelled the rotation
+    pub cancelled_by: Address,
+    /// Address that was proposed as the new admin
+    pub proposed_new_admin: Address,
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -368,4 +412,55 @@ pub fn emit_rate_limit_config_changed(
         changed_by: changed_by.clone(),
     };
     env.events().publish((TOPIC_RATE_LIMIT,), event);
+}
+
+/// Emit a key rotation proposed event.
+///
+/// This event is emitted when an admin proposes a key rotation.
+pub fn emit_key_rotation_proposed(
+    env: &Env,
+    old_admin: &Address,
+    new_admin: &Address,
+    timelock_until: u32,
+    expires_at: u32,
+) {
+    let event = KeyRotationProposedEvent {
+        old_admin: old_admin.clone(),
+        new_admin: new_admin.clone(),
+        timelock_until,
+        expires_at,
+    };
+    env.events().publish((TOPIC_KEY_ROTATION_PROPOSED,), event);
+}
+
+/// Emit a key rotation confirmed event.
+///
+/// This event is emitted when a rotation is successfully confirmed.
+pub fn emit_key_rotation_confirmed(
+    env: &Env,
+    old_admin: &Address,
+    new_admin: &Address,
+    is_emergency: bool,
+) {
+    let event = KeyRotationConfirmedEvent {
+        old_admin: old_admin.clone(),
+        new_admin: new_admin.clone(),
+        is_emergency,
+    };
+    env.events().publish((TOPIC_KEY_ROTATION_CONFIRMED,), event);
+}
+
+/// Emit a key rotation cancelled event.
+///
+/// This event is emitted when a pending rotation is cancelled.
+pub fn emit_key_rotation_cancelled(
+    env: &Env,
+    cancelled_by: &Address,
+    proposed_new_admin: &Address,
+) {
+    let event = KeyRotationCancelledEvent {
+        cancelled_by: cancelled_by.clone(),
+        proposed_new_admin: proposed_new_admin.clone(),
+    };
+    env.events().publish((TOPIC_KEY_ROTATION_CANCELLED,), event);
 }

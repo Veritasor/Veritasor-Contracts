@@ -130,7 +130,7 @@ fn setup_basic() -> (Env, AttestationContractClient<'static>, Address) {
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    client.initialize(&admin, &0u64);
     (env, client, admin)
 }
 
@@ -149,7 +149,7 @@ fn setup_with_fees() -> (
     let client = AttestationContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    client.initialize(&admin, &0u64);
 
     // Deploy mock token
     let token_admin = Address::generate(&env);
@@ -159,7 +159,7 @@ fn setup_with_fees() -> (
     let collector = Address::generate(&env);
     let base_fee = 1_000_000i128;
 
-    client.configure_fees(&token_contract.address(), &collector, &base_fee, &true);
+    client.configure_fees(&token_contract.address(), &collector, &base_fee, &true, &1u64);
 
     (env, client, admin, collector, token_client)
 }
@@ -175,7 +175,7 @@ fn bench_submit_attestation_no_fee() {
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
     let before = BudgetSnapshot::capture(&env);
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None, &0u64);
     let after = BudgetSnapshot::capture(&env);
 
     let cost = before.delta(&after);
@@ -194,7 +194,7 @@ fn bench_submit_attestation_with_fee() {
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
     let before = BudgetSnapshot::capture(&env);
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None, &0u64);
     let after = BudgetSnapshot::capture(&env);
 
     let cost = before.delta(&after);
@@ -210,7 +210,7 @@ fn bench_verify_attestation() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[2u8; 32]);
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None, &0u64);
 
     let before = BudgetSnapshot::capture(&env);
     let result = client.verify_attestation(&business, &period, &root);
@@ -230,12 +230,12 @@ fn bench_revoke_attestation() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[3u8; 32]);
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None, &0u64);
 
     let reason = String::from_str(&env, "fraud detected");
 
     let before = BudgetSnapshot::capture(&env);
-    client.revoke_attestation(&admin, &business, &period, &reason);
+    client.revoke_attestation(&admin, &business, &period, &reason, &1u64);
     let after = BudgetSnapshot::capture(&env);
 
     let cost = before.delta(&after);
@@ -252,10 +252,10 @@ fn bench_migrate_attestation() {
     let old_root = BytesN::from_array(&env, &[4u8; 32]);
     let new_root = BytesN::from_array(&env, &[5u8; 32]);
 
-    client.submit_attestation(&business, &period, &old_root, &1_700_000_000u64, &1u32);
+    client.submit_attestation(&business, &period, &old_root, &1_700_000_000u64, &1u32, &None, &0u64);
 
     let before = BudgetSnapshot::capture(&env);
-    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32, &1u64);
     let after = BudgetSnapshot::capture(&env);
 
     let cost = before.delta(&after);
@@ -271,7 +271,7 @@ fn bench_get_attestation() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[6u8; 32]);
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None, &0u64);
 
     let before = BudgetSnapshot::capture(&env);
     let result = client.get_attestation(&business, &period);
@@ -313,7 +313,8 @@ fn bench_submit_batch_small() {
     for i in 0..batch_size {
         let period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
         let root = BytesN::from_array(&env, &[i as u8; 32]);
-        client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+        let nonce = client.get_replay_nonce(&business, &crate::NONCE_CHANNEL_BUSINESS);
+        client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None, &nonce);
     }
 
     let after = BudgetSnapshot::capture(&env);
@@ -345,7 +346,8 @@ fn bench_submit_batch_large() {
             &std::format!("2026-{:02}-{:02}", (i / 12) + 1, (i % 12) + 1),
         );
         let root = BytesN::from_array(&env, &[i as u8; 32]);
-        client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+        let nonce = client.get_replay_nonce(&business, &crate::NONCE_CHANNEL_BUSINESS);
+        client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None, &nonce);
     }
 
     let after = BudgetSnapshot::capture(&env);
@@ -371,15 +373,16 @@ fn bench_fee_with_tier_discount() {
     let business = Address::generate(&env);
     token_client.mint(&business, &10_000_000i128);
 
-    // Set tier 1 with 10% discount
-    client.set_tier_discount(&1u32, &1000u32);
-    client.set_business_tier(&business, &1u32);
+    // Set tier 1 with 10% discount (admin nonces 2, 3 after setup_with_fees used 1)
+    client.set_tier_discount(&1u32, &1000u32, &2u64);
+    client.set_business_tier(&business, &1u32, &3u64);
 
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[7u8; 32]);
 
     let before = BudgetSnapshot::capture(&env);
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    let nonce = client.get_replay_nonce(&business, &crate::NONCE_CHANNEL_BUSINESS);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None, &nonce);
     let after = BudgetSnapshot::capture(&env);
 
     let cost = before.delta(&after);
@@ -393,16 +396,17 @@ fn bench_fee_with_volume_discount() {
     let business = Address::generate(&env);
     token_client.mint(&business, &100_000_000i128);
 
-    // Set volume brackets
+    // Set volume brackets (admin nonce 2)
     let thresholds = Vec::from_array(&env, [5u64, 10u64]);
     let discounts = Vec::from_array(&env, [500u32, 1000u32]);
-    client.set_volume_brackets(&thresholds, &discounts);
+    client.set_volume_brackets(&thresholds, &discounts, &2u64);
 
     // Submit 10 attestations to trigger volume discount
     for i in 0..10 {
         let period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
         let root = BytesN::from_array(&env, &[i as u8; 32]);
-        client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+        let nonce = client.get_replay_nonce(&business, &crate::NONCE_CHANNEL_BUSINESS);
+        client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None, &nonce);
     }
 
     // Benchmark the 11th submission with volume discount
@@ -410,7 +414,8 @@ fn bench_fee_with_volume_discount() {
     let root = BytesN::from_array(&env, &[11u8; 32]);
 
     let before = BudgetSnapshot::capture(&env);
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    let nonce = client.get_replay_nonce(&business, &crate::NONCE_CHANNEL_BUSINESS);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None, &nonce);
     let after = BudgetSnapshot::capture(&env);
 
     let cost = before.delta(&after);
@@ -424,20 +429,21 @@ fn bench_fee_with_combined_discounts() {
     let business = Address::generate(&env);
     token_client.mint(&business, &100_000_000i128);
 
-    // Set tier discount
-    client.set_tier_discount(&2u32, &2000u32); // 20% tier discount
-    client.set_business_tier(&business, &2u32);
+    // Set tier discount (admin nonces 2, 3)
+    client.set_tier_discount(&2u32, &2000u32, &2u64); // 20% tier discount
+    client.set_business_tier(&business, &2u32, &3u64);
 
-    // Set volume brackets
+    // Set volume brackets (admin nonce 4)
     let thresholds = Vec::from_array(&env, [5u64]);
     let discounts = Vec::from_array(&env, [1000u32]); // 10% volume discount
-    client.set_volume_brackets(&thresholds, &discounts);
+    client.set_volume_brackets(&thresholds, &discounts, &4u64);
 
     // Submit 5 attestations
     for i in 0..5 {
         let period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
         let root = BytesN::from_array(&env, &[i as u8; 32]);
-        client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+        let nonce = client.get_replay_nonce(&business, &crate::NONCE_CHANNEL_BUSINESS);
+        client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None, &nonce);
     }
 
     // Benchmark with both discounts active
@@ -445,7 +451,8 @@ fn bench_fee_with_combined_discounts() {
     let root = BytesN::from_array(&env, &[6u8; 32]);
 
     let before = BudgetSnapshot::capture(&env);
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    let nonce = client.get_replay_nonce(&business, &crate::NONCE_CHANNEL_BUSINESS);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None, &nonce);
     let after = BudgetSnapshot::capture(&env);
 
     let cost = before.delta(&after);
@@ -461,7 +468,7 @@ fn bench_grant_role() {
     let account = Address::generate(&env);
 
     let before = BudgetSnapshot::capture(&env);
-    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
+    client.grant_role(&admin, &account, &ROLE_ATTESTOR, &1u64);
     let after = BudgetSnapshot::capture(&env);
 
     let cost = before.delta(&after);
@@ -474,7 +481,7 @@ fn bench_has_role() {
     let (env, client, admin) = setup_basic();
 
     let account = Address::generate(&env);
-    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
+    client.grant_role(&admin, &account, &ROLE_ATTESTOR, &1u64);
 
     let before = BudgetSnapshot::capture(&env);
     let result = client.has_role(&account, &ROLE_ATTESTOR);
@@ -496,8 +503,8 @@ fn bench_worst_case_verify_revoked() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[8u8; 32]);
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
-    client.revoke_attestation(&admin, &business, &period, &String::from_str(&env, "test"));
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None, &0u64);
+    client.revoke_attestation(&admin, &business, &period, &String::from_str(&env, "test"), &1u64);
 
     let before = BudgetSnapshot::capture(&env);
     let result = client.verify_attestation(&business, &period, &root);
@@ -525,7 +532,8 @@ fn bench_worst_case_large_merkle_root() {
     );
 
     let before = BudgetSnapshot::capture(&env);
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    let nonce = client.get_replay_nonce(&business, &crate::NONCE_CHANNEL_BUSINESS);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None, &nonce);
     let after = BudgetSnapshot::capture(&env);
 
     let cost = before.delta(&after);
@@ -544,7 +552,8 @@ fn bench_comparative_read_vs_write() {
 
     // Measure write
     let before_write = BudgetSnapshot::capture(&env);
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    let nonce = client.get_replay_nonce(&business, &crate::NONCE_CHANNEL_BUSINESS);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None, &nonce);
     let after_write = BudgetSnapshot::capture(&env);
 
     // Measure read

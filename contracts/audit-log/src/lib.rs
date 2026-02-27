@@ -10,9 +10,13 @@
 
 #![no_std]
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, String, Vec};
+use veritasor_common::replay_protection;
 
 #[cfg(test)]
 mod test;
+
+/// Nonce channels for replay protection
+pub const NONCE_CHANNEL_ADMIN: u32 = 1;
 
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -52,8 +56,17 @@ pub struct AuditLogContract;
 #[contractimpl]
 impl AuditLogContract {
     /// Initialize with admin. Only admin can authorize emitters.
-    pub fn initialize(env: Env, admin: Address) {
+    /// Initialize the audit log with an admin address.
+    ///
+    /// # Replay Protection
+    /// Uses admin address and `NONCE_CHANNEL_ADMIN` channel.
+    /// First call must use nonce 0.
+    pub fn initialize(env: Env, admin: Address, nonce: u64) {
         admin.require_auth();
+
+        // Verify and increment nonce for replay protection
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
+
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
         }
@@ -61,10 +74,20 @@ impl AuditLogContract {
         env.storage().instance().set(&DataKey::NextSeq, &0u64);
     }
 
-    /// Add an audit record. Callable by authorized emitters (contracts) or admin.
-    /// In practice, only whitelisted contracts should call this (enforced off-chain or via auth).
+    /// Add an audit record. Callable by admin with replay protection.
+    ///
+    /// # Replay Protection
+    /// Uses admin address and `NONCE_CHANNEL_ADMIN` channel.
+    ///
+    /// # Arguments
+    /// * `nonce` - Current nonce for admin, must match stored value
+    /// * `actor` - Address that performed the action being logged
+    /// * `source_contract` - Contract where the action originated
+    /// * `action` - Action type identifier
+    /// * `payload` - Optional payload or reference hash
     pub fn append(
         env: Env,
+        nonce: u64,
         actor: Address,
         source_contract: Address,
         action: String,
@@ -76,6 +99,9 @@ impl AuditLogContract {
             .get(&DataKey::Admin)
             .expect("not initialized");
         admin.require_auth();
+
+        // Verify and increment nonce for replay protection
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
         let seq: u64 = env.storage().instance().get(&DataKey::NextSeq).unwrap_or(0);
         let ledger_seq = env.ledger().sequence();
         let record = AuditRecord {
@@ -144,5 +170,11 @@ impl AuditLogContract {
             .instance()
             .get(&DataKey::Admin)
             .expect("not initialized")
+    }
+
+    /// Get the current nonce for replay protection.
+    /// Returns the nonce value that must be supplied on the next call.
+    pub fn get_replay_nonce(env: Env, actor: Address, channel: u32) -> u64 {
+        replay_protection::get_nonce(&env, &actor, channel)
     }
 }

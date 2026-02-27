@@ -70,6 +70,8 @@ pub enum ProposalAction {
     RevokeRole(Address, u32),
     /// Update fee configuration
     UpdateFeeConfig(Address, Address, i128, bool), // (token, collector, base_fee, enabled)
+    /// Emergency admin key rotation (bypasses timelock)
+    EmergencyRotateAdmin(Address), // new_admin
 }
 
 /// Proposal state

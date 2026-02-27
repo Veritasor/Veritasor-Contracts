@@ -22,10 +22,10 @@ fn setup(
     let admin = Address::generate(env);
     let stream_contract_id = env.register(RevenueStreamContract, ());
     let stream_client = RevenueStreamContractClient::new(env, &stream_contract_id);
-    stream_client.initialize(&admin);
+    stream_client.initialize(&admin, &0u64);
     let attestation_id = env.register(AttestationContract, ());
     let attestation_client = AttestationContractClient::new(env, &attestation_id);
-    attestation_client.initialize(&admin);
+    attestation_client.initialize(&admin, &0u64);
     let token_admin = Address::generate(env);
     let token_contract = env.register_stellar_asset_contract_v2(token_admin);
     let token = token_contract.address().clone();
@@ -59,11 +59,13 @@ fn test_create_and_release_stream() {
         &1u32,
         &None,
         &None,
+        &0u64,
     );
     let amount = 1000i128;
     StellarAssetClient::new(&env, &token).mint(&admin, &amount);
     let stream_id = stream_client.create_stream(
         &admin,
+        &1u64,
         &attestation_id,
         &business,
         &period,
@@ -93,6 +95,7 @@ fn test_release_without_attestation_fails() {
     StellarAssetClient::new(&env, &token).mint(&admin, &amount);
     let stream_id = stream_client.create_stream(
         &admin,
+        &1u64,
         &attestation_id,
         &business,
         &period,
@@ -122,13 +125,15 @@ fn test_release_when_revoked_fails() {
         &1u32,
         &None,
         &None,
+        &0u64,
     );
     let reason = String::from_str(&env, "test revoke");
-    attestation_client.revoke_attestation(&admin, &business, &period, &reason);
+    attestation_client.revoke_attestation(&admin, &business, &period, &reason, &1u64);
     let amount = 1000i128;
     StellarAssetClient::new(&env, &token).mint(&admin, &amount);
     let stream_id = stream_client.create_stream(
         &admin,
+        &1u64,
         &attestation_id,
         &business,
         &period,
@@ -158,11 +163,13 @@ fn test_double_release_fails() {
         &1u32,
         &None,
         &None,
+        &0u64,
     );
     let amount = 1000i128;
     StellarAssetClient::new(&env, &token).mint(&admin, &amount);
     let stream_id = stream_client.create_stream(
         &admin,
+        &1u64,
         &attestation_id,
         &business,
         &period,
@@ -187,6 +194,7 @@ fn test_get_stream() {
     StellarAssetClient::new(&env, &token).mint(&admin, &amount);
     let stream_id = stream_client.create_stream(
         &admin,
+        &1u64,
         &attestation_id,
         &business,
         &period,
@@ -212,6 +220,7 @@ fn test_multiple_streams() {
     StellarAssetClient::new(&env, &token).mint(&admin, &amount);
     let id0 = stream_client.create_stream(
         &admin,
+        &1u64,
         &attestation_id,
         &business,
         &String::from_str(&env, "2026-01"),
@@ -221,6 +230,7 @@ fn test_multiple_streams() {
     );
     let id1 = stream_client.create_stream(
         &admin,
+        &2u64,
         &attestation_id,
         &business,
         &String::from_str(&env, "2026-02"),
@@ -238,6 +248,7 @@ fn test_multiple_streams() {
         &1u32,
         &None,
         &None,
+        &0u64,
     );
     stream_client.release(&id0);
     assert!(stream_client.get_stream(&id0).unwrap().released);

@@ -14,7 +14,7 @@ fn setup() -> (Env, IntegrationRegistryContractClient<'static>, Address) {
     let contract_id = env.register(IntegrationRegistryContract, ());
     let client = IntegrationRegistryContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    client.initialize(&admin, &0u64);
     (env, client, admin)
 }
 
@@ -45,7 +45,7 @@ fn test_initialize() {
 fn test_initialize_twice_panics() {
     let (env, client, _admin) = setup();
     let new_admin = Address::generate(&env);
-    client.initialize(&new_admin);
+    client.initialize(&new_admin, &1u64);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -58,7 +58,7 @@ fn test_register_provider() {
     let id = String::from_str(&env, "stripe");
     let metadata = sample_metadata(&env);
 
-    client.register_provider(&admin, &id, &metadata);
+    client.register_provider(&admin, &id, &metadata, &0u64);
 
     let provider = client.get_provider(&id).unwrap();
     assert_eq!(provider.id, id);
@@ -73,8 +73,8 @@ fn test_register_duplicate_provider_panics() {
     let id = String::from_str(&env, "stripe");
     let metadata = sample_metadata(&env);
 
-    client.register_provider(&admin, &id, &metadata);
-    client.register_provider(&admin, &id, &metadata);
+    client.register_provider(&admin, &id, &metadata, &0u64);
+    client.register_provider(&admin, &id, &metadata, &1u64);
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn test_register_without_governance_panics() {
     let id = String::from_str(&env, "stripe");
     let metadata = sample_metadata(&env);
 
-    client.register_provider(&non_gov, &id, &metadata);
+    client.register_provider(&non_gov, &id, &metadata, &0u64);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -98,10 +98,10 @@ fn test_enable_provider() {
     let id = String::from_str(&env, "stripe");
     let metadata = sample_metadata(&env);
 
-    client.register_provider(&admin, &id, &metadata);
+    client.register_provider(&admin, &id, &metadata, &0u64);
     assert!(!client.is_enabled(&id));
 
-    client.enable_provider(&admin, &id);
+    client.enable_provider(&admin, &id, &1u64);
     assert!(client.is_enabled(&id));
     assert!(client.is_valid_for_attestation(&id));
 }
@@ -112,10 +112,10 @@ fn test_deprecate_provider() {
     let id = String::from_str(&env, "stripe");
     let metadata = sample_metadata(&env);
 
-    client.register_provider(&admin, &id, &metadata);
-    client.enable_provider(&admin, &id);
+    client.register_provider(&admin, &id, &metadata, &0u64);
+    client.enable_provider(&admin, &id, &1u64);
 
-    client.deprecate_provider(&admin, &id);
+    client.deprecate_provider(&admin, &id, &2u64);
     assert!(client.is_deprecated(&id));
     assert!(!client.is_enabled(&id));
     // Deprecated providers are still valid for attestations
@@ -128,10 +128,10 @@ fn test_disable_provider() {
     let id = String::from_str(&env, "stripe");
     let metadata = sample_metadata(&env);
 
-    client.register_provider(&admin, &id, &metadata);
-    client.enable_provider(&admin, &id);
+    client.register_provider(&admin, &id, &metadata, &0u64);
+    client.enable_provider(&admin, &id, &1u64);
 
-    client.disable_provider(&admin, &id);
+    client.disable_provider(&admin, &id, &2u64);
     assert!(!client.is_enabled(&id));
     assert!(!client.is_valid_for_attestation(&id));
 
@@ -145,12 +145,12 @@ fn test_re_enable_deprecated_provider() {
     let id = String::from_str(&env, "stripe");
     let metadata = sample_metadata(&env);
 
-    client.register_provider(&admin, &id, &metadata);
-    client.enable_provider(&admin, &id);
-    client.deprecate_provider(&admin, &id);
+    client.register_provider(&admin, &id, &metadata, &0u64);
+    client.enable_provider(&admin, &id, &1u64);
+    client.deprecate_provider(&admin, &id, &2u64);
 
-    // Re-enable from deprecated
-    client.enable_provider(&admin, &id);
+    // Re-enable from deprecated (nonce 3)
+    client.enable_provider(&admin, &id, &3u64);
     assert!(client.is_enabled(&id));
 }
 
@@ -160,12 +160,12 @@ fn test_re_enable_disabled_provider() {
     let id = String::from_str(&env, "stripe");
     let metadata = sample_metadata(&env);
 
-    client.register_provider(&admin, &id, &metadata);
-    client.enable_provider(&admin, &id);
-    client.disable_provider(&admin, &id);
+    client.register_provider(&admin, &id, &metadata, &0u64);
+    client.enable_provider(&admin, &id, &1u64);
+    client.disable_provider(&admin, &id, &2u64);
 
-    // Re-enable from disabled
-    client.enable_provider(&admin, &id);
+    // Re-enable from disabled (nonce 3)
+    client.enable_provider(&admin, &id, &3u64);
     assert!(client.is_enabled(&id));
 }
 
@@ -176,9 +176,9 @@ fn test_deprecate_registered_provider_panics() {
     let id = String::from_str(&env, "stripe");
     let metadata = sample_metadata(&env);
 
-    client.register_provider(&admin, &id, &metadata);
+    client.register_provider(&admin, &id, &metadata, &0u64);
     // Cannot deprecate a registered provider directly
-    client.deprecate_provider(&admin, &id);
+    client.deprecate_provider(&admin, &id, &1u64);
 }
 
 #[test]
@@ -188,10 +188,10 @@ fn test_disable_already_disabled_panics() {
     let id = String::from_str(&env, "stripe");
     let metadata = sample_metadata(&env);
 
-    client.register_provider(&admin, &id, &metadata);
-    client.enable_provider(&admin, &id);
-    client.disable_provider(&admin, &id);
-    client.disable_provider(&admin, &id);
+    client.register_provider(&admin, &id, &metadata, &0u64);
+    client.enable_provider(&admin, &id, &1u64);
+    client.disable_provider(&admin, &id, &2u64);
+    client.disable_provider(&admin, &id, &3u64);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -204,7 +204,7 @@ fn test_update_metadata() {
     let id = String::from_str(&env, "stripe");
     let metadata = sample_metadata(&env);
 
-    client.register_provider(&admin, &id, &metadata);
+    client.register_provider(&admin, &id, &metadata, &0u64);
 
     let new_metadata = ProviderMetadata {
         name: String::from_str(&env, "Stripe v2"),
@@ -214,7 +214,7 @@ fn test_update_metadata() {
         category: String::from_str(&env, "payment"),
     };
 
-    client.update_metadata(&admin, &id, &new_metadata);
+    client.update_metadata(&admin, &id, &new_metadata, &1u64);
 
     let provider = client.get_provider(&id).unwrap();
     assert_eq!(provider.metadata.name, new_metadata.name);
@@ -228,7 +228,7 @@ fn test_update_nonexistent_provider_panics() {
     let id = String::from_str(&env, "nonexistent");
     let metadata = sample_metadata(&env);
 
-    client.update_metadata(&admin, &id, &metadata);
+    client.update_metadata(&admin, &id, &metadata, &0u64);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -245,9 +245,9 @@ fn test_get_all_providers() {
 
     let metadata = sample_metadata(&env);
 
-    client.register_provider(&admin, &stripe, &metadata);
-    client.register_provider(&admin, &shopify, &metadata);
-    client.register_provider(&admin, &quickbooks, &metadata);
+    client.register_provider(&admin, &stripe, &metadata, &0u64);
+    client.register_provider(&admin, &shopify, &metadata, &1u64);
+    client.register_provider(&admin, &quickbooks, &metadata, &2u64);
 
     let all = client.get_all_providers();
     assert_eq!(all.len(), 3);
@@ -263,12 +263,12 @@ fn test_get_enabled_providers() {
 
     let metadata = sample_metadata(&env);
 
-    client.register_provider(&admin, &stripe, &metadata);
-    client.register_provider(&admin, &shopify, &metadata);
-    client.register_provider(&admin, &quickbooks, &metadata);
+    client.register_provider(&admin, &stripe, &metadata, &0u64);
+    client.register_provider(&admin, &shopify, &metadata, &1u64);
+    client.register_provider(&admin, &quickbooks, &metadata, &2u64);
 
-    client.enable_provider(&admin, &stripe);
-    client.enable_provider(&admin, &shopify);
+    client.enable_provider(&admin, &stripe, &3u64);
+    client.enable_provider(&admin, &shopify, &4u64);
     // quickbooks remains registered
 
     let enabled = client.get_enabled_providers();
@@ -284,12 +284,12 @@ fn test_get_deprecated_providers() {
 
     let metadata = sample_metadata(&env);
 
-    client.register_provider(&admin, &stripe, &metadata);
-    client.register_provider(&admin, &shopify, &metadata);
+    client.register_provider(&admin, &stripe, &metadata, &0u64);
+    client.register_provider(&admin, &shopify, &metadata, &1u64);
 
-    client.enable_provider(&admin, &stripe);
-    client.enable_provider(&admin, &shopify);
-    client.deprecate_provider(&admin, &stripe);
+    client.enable_provider(&admin, &stripe, &2u64);
+    client.enable_provider(&admin, &shopify, &3u64);
+    client.deprecate_provider(&admin, &stripe, &4u64);
 
     let deprecated = client.get_deprecated_providers();
     assert_eq!(deprecated.len(), 1);
@@ -304,16 +304,16 @@ fn test_get_status() {
     // Not registered yet
     assert!(client.get_status(&id).is_none());
 
-    client.register_provider(&admin, &id, &metadata);
+    client.register_provider(&admin, &id, &metadata, &0u64);
     assert_eq!(client.get_status(&id), Some(ProviderStatus::Registered));
 
-    client.enable_provider(&admin, &id);
+    client.enable_provider(&admin, &id, &1u64);
     assert_eq!(client.get_status(&id), Some(ProviderStatus::Enabled));
 
-    client.deprecate_provider(&admin, &id);
+    client.deprecate_provider(&admin, &id, &2u64);
     assert_eq!(client.get_status(&id), Some(ProviderStatus::Deprecated));
 
-    client.disable_provider(&admin, &id);
+    client.disable_provider(&admin, &id, &3u64);
     assert_eq!(client.get_status(&id), Some(ProviderStatus::Disabled));
 }
 
@@ -326,19 +326,19 @@ fn test_is_valid_for_attestation() {
     // Not registered
     assert!(!client.is_valid_for_attestation(&id));
 
-    client.register_provider(&admin, &id, &metadata);
+    client.register_provider(&admin, &id, &metadata, &0u64);
     // Registered but not enabled
     assert!(!client.is_valid_for_attestation(&id));
 
-    client.enable_provider(&admin, &id);
+    client.enable_provider(&admin, &id, &1u64);
     // Enabled - valid
     assert!(client.is_valid_for_attestation(&id));
 
-    client.deprecate_provider(&admin, &id);
+    client.deprecate_provider(&admin, &id, &2u64);
     // Deprecated - still valid
     assert!(client.is_valid_for_attestation(&id));
 
-    client.disable_provider(&admin, &id);
+    client.disable_provider(&admin, &id, &3u64);
     // Disabled - not valid
     assert!(!client.is_valid_for_attestation(&id));
 }
@@ -354,13 +354,13 @@ fn test_grant_governance() {
 
     assert!(!client.has_governance(&new_gov));
 
-    client.grant_governance(&admin, &new_gov);
+    client.grant_governance(&admin, &new_gov, &1u64);
     assert!(client.has_governance(&new_gov));
 
     // New governance member can register providers
     let id = String::from_str(&env, "stripe");
     let metadata = sample_metadata(&env);
-    client.register_provider(&new_gov, &id, &metadata);
+    client.register_provider(&new_gov, &id, &metadata, &0u64);
 }
 
 #[test]
@@ -368,10 +368,10 @@ fn test_revoke_governance() {
     let (env, client, admin) = setup();
     let new_gov = Address::generate(&env);
 
-    client.grant_governance(&admin, &new_gov);
+    client.grant_governance(&admin, &new_gov, &1u64);
     assert!(client.has_governance(&new_gov));
 
-    client.revoke_governance(&admin, &new_gov);
+    client.revoke_governance(&admin, &new_gov, &2u64);
     assert!(!client.has_governance(&new_gov));
 }
 
@@ -382,7 +382,7 @@ fn test_grant_governance_non_admin_panics() {
     let non_admin = Address::generate(&env);
     let target = Address::generate(&env);
 
-    client.grant_governance(&non_admin, &target);
+    client.grant_governance(&non_admin, &target, &0u64);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -421,27 +421,27 @@ fn test_full_lifecycle() {
     let metadata = sample_metadata(&env);
 
     // Register
-    client.register_provider(&admin, &id, &metadata);
+    client.register_provider(&admin, &id, &metadata, &0u64);
     assert_eq!(client.get_status(&id), Some(ProviderStatus::Registered));
 
     // Enable
-    client.enable_provider(&admin, &id);
+    client.enable_provider(&admin, &id, &1u64);
     assert_eq!(client.get_status(&id), Some(ProviderStatus::Enabled));
 
     // Deprecate
-    client.deprecate_provider(&admin, &id);
+    client.deprecate_provider(&admin, &id, &2u64);
     assert_eq!(client.get_status(&id), Some(ProviderStatus::Deprecated));
 
     // Re-enable
-    client.enable_provider(&admin, &id);
+    client.enable_provider(&admin, &id, &3u64);
     assert_eq!(client.get_status(&id), Some(ProviderStatus::Enabled));
 
     // Disable
-    client.disable_provider(&admin, &id);
+    client.disable_provider(&admin, &id, &4u64);
     assert_eq!(client.get_status(&id), Some(ProviderStatus::Disabled));
 
     // Re-enable from disabled
-    client.enable_provider(&admin, &id);
+    client.enable_provider(&admin, &id, &5u64);
     assert_eq!(client.get_status(&id), Some(ProviderStatus::Enabled));
 }
 
@@ -473,16 +473,23 @@ fn test_multiple_categories() {
         category: String::from_str(&env, "accounting"),
     };
 
-    client.register_provider(&admin, &String::from_str(&env, "stripe"), &payment_metadata);
+    client.register_provider(
+        &admin,
+        &String::from_str(&env, "stripe"),
+        &payment_metadata,
+        &0u64,
+    );
     client.register_provider(
         &admin,
         &String::from_str(&env, "shopify"),
         &ecommerce_metadata,
+        &1u64,
     );
     client.register_provider(
         &admin,
         &String::from_str(&env, "quickbooks"),
         &accounting_metadata,
+        &2u64,
     );
 
     let stripe = client
