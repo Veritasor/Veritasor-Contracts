@@ -32,6 +32,7 @@
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec,
 };
+use veritasor_common::replay_protection;
 
 #[cfg(test)]
 mod test;
@@ -141,17 +142,30 @@ pub struct IntegrationRegistryContract;
 
 #[contractimpl]
 impl IntegrationRegistryContract {
+    // Logical nonce channels for replay protection.
+    pub const NONCE_CHANNEL_ADMIN: u32 = 1;
+    pub const NONCE_CHANNEL_GOVERNANCE: u32 = 2;
+
     // ── Initialization ──────────────────────────────────────────────
 
     /// Initialize the contract with an admin address.
     ///
     /// Must be called before any admin-gated method. The caller must
     /// authorize as `admin`.
-    pub fn initialize(env: Env, admin: Address) {
+    ///
+    /// Replay protection: uses the admin address and `NONCE_CHANNEL_ADMIN`.
+    /// The first valid call must supply `nonce = 0` for this pair.
+    pub fn initialize(env: Env, admin: Address, nonce: u64) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
         }
         admin.require_auth();
+        replay_protection::verify_and_increment_nonce(
+            &env,
+            &admin,
+            Self::NONCE_CHANNEL_ADMIN,
+            nonce,
+        );
         env.storage().instance().set(&DataKey::Admin, &admin);
 
         // Grant governance role to admin
@@ -165,8 +179,16 @@ impl IntegrationRegistryContract {
     /// Grant governance role to an address.
     ///
     /// Only the admin can grant governance roles.
-    pub fn grant_governance(env: Env, admin: Address, account: Address) {
+    ///
+    /// Replay protection: uses the admin address and `NONCE_CHANNEL_ADMIN`.
+    pub fn grant_governance(env: Env, admin: Address, account: Address, nonce: u64) {
         Self::require_admin(&env, &admin);
+        replay_protection::verify_and_increment_nonce(
+            &env,
+            &admin,
+            Self::NONCE_CHANNEL_ADMIN,
+            nonce,
+        );
         env.storage()
             .instance()
             .set(&DataKey::GovernanceRole(account), &true);
@@ -175,8 +197,16 @@ impl IntegrationRegistryContract {
     /// Revoke governance role from an address.
     ///
     /// Only the admin can revoke governance roles.
-    pub fn revoke_governance(env: Env, admin: Address, account: Address) {
+    ///
+    /// Replay protection: uses the admin address and `NONCE_CHANNEL_ADMIN`.
+    pub fn revoke_governance(env: Env, admin: Address, account: Address, nonce: u64) {
         Self::require_admin(&env, &admin);
+        replay_protection::verify_and_increment_nonce(
+            &env,
+            &admin,
+            Self::NONCE_CHANNEL_ADMIN,
+            nonce,
+        );
         env.storage()
             .instance()
             .set(&DataKey::GovernanceRole(account), &false);
@@ -192,8 +222,22 @@ impl IntegrationRegistryContract {
     /// * `caller` - Must have governance role
     /// * `id` - Unique provider identifier (e.g., "stripe")
     /// * `metadata` - Provider metadata
-    pub fn register_provider(env: Env, caller: Address, id: String, metadata: ProviderMetadata) {
+    ///
+    /// Replay protection: uses the caller address and `NONCE_CHANNEL_GOVERNANCE`.
+    pub fn register_provider(
+        env: Env,
+        caller: Address,
+        id: String,
+        metadata: ProviderMetadata,
+        nonce: u64,
+    ) {
         Self::require_governance(&env, &caller);
+        replay_protection::verify_and_increment_nonce(
+            &env,
+            &caller,
+            Self::NONCE_CHANNEL_GOVERNANCE,
+            nonce,
+        );
 
         let key = DataKey::Provider(id.clone());
         if env.storage().instance().has(&key) {
@@ -236,8 +280,16 @@ impl IntegrationRegistryContract {
     /// Enable an integration provider.
     ///
     /// Only registered or deprecated providers can be enabled.
-    pub fn enable_provider(env: Env, caller: Address, id: String) {
+    ///
+    /// Replay protection: uses the caller address and `NONCE_CHANNEL_GOVERNANCE`.
+    pub fn enable_provider(env: Env, caller: Address, id: String, nonce: u64) {
         Self::require_governance(&env, &caller);
+        replay_protection::verify_and_increment_nonce(
+            &env,
+            &caller,
+            Self::NONCE_CHANNEL_GOVERNANCE,
+            nonce,
+        );
 
         let key = DataKey::Provider(id.clone());
         let mut provider: Provider = env
@@ -269,8 +321,16 @@ impl IntegrationRegistryContract {
     /// Deprecate an integration provider.
     ///
     /// Deprecated providers are still valid but discouraged for new attestations.
-    pub fn deprecate_provider(env: Env, caller: Address, id: String) {
+    ///
+    /// Replay protection: uses the caller address and `NONCE_CHANNEL_GOVERNANCE`.
+    pub fn deprecate_provider(env: Env, caller: Address, id: String, nonce: u64) {
         Self::require_governance(&env, &caller);
+        replay_protection::verify_and_increment_nonce(
+            &env,
+            &caller,
+            Self::NONCE_CHANNEL_GOVERNANCE,
+            nonce,
+        );
 
         let key = DataKey::Provider(id.clone());
         let mut provider: Provider = env
@@ -300,8 +360,16 @@ impl IntegrationRegistryContract {
     /// Disable an integration provider.
     ///
     /// Disabled providers cannot be used in new attestations.
-    pub fn disable_provider(env: Env, caller: Address, id: String) {
+    ///
+    /// Replay protection: uses the caller address and `NONCE_CHANNEL_GOVERNANCE`.
+    pub fn disable_provider(env: Env, caller: Address, id: String, nonce: u64) {
         Self::require_governance(&env, &caller);
+        replay_protection::verify_and_increment_nonce(
+            &env,
+            &caller,
+            Self::NONCE_CHANNEL_GOVERNANCE,
+            nonce,
+        );
 
         let key = DataKey::Provider(id.clone());
         let mut provider: Provider = env
@@ -333,8 +401,22 @@ impl IntegrationRegistryContract {
     /// Update provider metadata.
     ///
     /// Can be called on any provider regardless of status.
-    pub fn update_metadata(env: Env, caller: Address, id: String, metadata: ProviderMetadata) {
+    ///
+    /// Replay protection: uses the caller address and `NONCE_CHANNEL_GOVERNANCE`.
+    pub fn update_metadata(
+        env: Env,
+        caller: Address,
+        id: String,
+        metadata: ProviderMetadata,
+        nonce: u64,
+    ) {
         Self::require_governance(&env, &caller);
+        replay_protection::verify_and_increment_nonce(
+            &env,
+            &caller,
+            Self::NONCE_CHANNEL_GOVERNANCE,
+            nonce,
+        );
 
         let key = DataKey::Provider(id.clone());
         let mut provider: Provider = env
@@ -481,5 +563,10 @@ impl IntegrationRegistryContract {
             .get(&DataKey::GovernanceRole(caller.clone()))
             .unwrap_or(false);
         assert!(has_role, "caller does not have governance role");
+    }
+
+    /// Get the current nonce for a given `(actor, channel)` pair.
+    pub fn get_replay_nonce(env: Env, actor: Address, channel: u32) -> u64 {
+        replay_protection::get_nonce(&env, &actor, channel)
     }
 }

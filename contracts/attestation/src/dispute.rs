@@ -1,9 +1,9 @@
 //! Dispute management module for attestation challenges
-use soroban_sdk::{contracttype, Address, BytesN, Env, String, Vec};
+use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 /// Status of a dispute
-#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DisputeStatus {
     /// Dispute is open and awaiting resolution
     Open,
@@ -14,8 +14,8 @@ pub enum DisputeStatus {
 }
 
 /// Type of dispute being raised
-#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DisputeType {
     /// Disputed revenue amount differs from claimed amount
     RevenueMismatch,
@@ -26,8 +26,8 @@ pub enum DisputeType {
 }
 
 /// Resolution outcome of a dispute
-#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DisputeOutcome {
     /// Dispute upheld - challenger wins
     Upheld,
@@ -38,8 +38,8 @@ pub enum DisputeOutcome {
 }
 
 /// Resolution details when a dispute is resolved
-#[derive(Clone, Debug, PartialEq)]
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DisputeResolution {
     /// Address of the party resolving the dispute
     pub resolver: Address,
@@ -51,9 +51,38 @@ pub struct DisputeResolution {
     pub notes: String,
 }
 
-/// Dispute record for a challenged attestation
+/// Optional resolution (contracttype-compatible alternative to Option<DisputeResolution>).
 #[derive(Clone, Debug, PartialEq)]
 #[contracttype]
+pub enum MaybeResolution {
+    None,
+    Some(DisputeResolution),
+}
+
+impl MaybeResolution {
+    pub fn is_none(&self) -> bool {
+        matches!(self, MaybeResolution::None)
+    }
+    pub fn is_some(&self) -> bool {
+        matches!(self, MaybeResolution::Some(_))
+    }
+    pub fn unwrap(self) -> DisputeResolution {
+        match self {
+            MaybeResolution::Some(r) => r,
+            MaybeResolution::None => panic!("called unwrap on None"),
+        }
+    }
+    pub fn as_ref(&self) -> core::option::Option<&DisputeResolution> {
+        match self {
+            MaybeResolution::Some(r) => core::option::Option::Some(r),
+            MaybeResolution::None => core::option::Option::None,
+        }
+    }
+}
+
+/// Dispute record for a challenged attestation
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Dispute {
     /// Unique identifier for this dispute
     pub id: u64,
@@ -72,17 +101,19 @@ pub struct Dispute {
     /// Timestamp when dispute was opened
     pub timestamp: u64,
     /// Resolution details (None if not yet resolved)
-    pub resolution: Option<DisputeResolution>,
+    pub resolution: MaybeResolution,
 }
 
 /// Storage keys for dispute management
-#[derive(Clone)]
 #[contracttype]
+#[derive(Clone)]
 enum DisputeKey {
     /// Counter for generating unique dispute IDs
     DisputeIdCounter,
     /// Individual dispute record: (dispute_id) -> Dispute
     Dispute(u64),
+    /// Resolution for a dispute: (dispute_id) -> DisputeResolution
+    DisputeResolution(u64),
     /// Disputes by attestation: (business, period) -> Vec<dispute_id>
     DisputesByAttestation(Address, String),
     /// Disputes by challenger: (challenger) -> Vec<dispute_id>
@@ -110,14 +141,34 @@ pub fn get_dispute(env: &Env, dispute_id: u64) -> Option<Dispute> {
     env.storage().instance().get(&key)
 }
 
+/// Store a dispute resolution
+pub fn store_dispute_resolution(env: &Env, dispute_id: u64, resolution: &DisputeResolution) {
+    let key = DisputeKey::DisputeResolution(dispute_id);
+    env.storage().instance().set(&key, resolution);
+}
+
+/// Retrieve a dispute resolution by dispute ID
+pub fn get_dispute_resolution(env: &Env, dispute_id: u64) -> Option<DisputeResolution> {
+    let key = DisputeKey::DisputeResolution(dispute_id);
+    env.storage().instance().get(&key)
+}
+
 /// Get all dispute IDs for a specific attestation
 pub fn get_dispute_ids_by_attestation(env: &Env, business: &Address, period: &String) -> Vec<u64> {
     let key = DisputeKey::DisputesByAttestation(business.clone(), period.clone());
-    env.storage().instance().get(&key).unwrap_or_else(|| Vec::new(env))
+    env.storage()
+        .instance()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env))
 }
 
 /// Add dispute ID to attestation index
-pub fn add_dispute_to_attestation_index(env: &Env, business: &Address, period: &String, dispute_id: u64) {
+pub fn add_dispute_to_attestation_index(
+    env: &Env,
+    business: &Address,
+    period: &String,
+    dispute_id: u64,
+) {
     let key = DisputeKey::DisputesByAttestation(business.clone(), period.clone());
     let mut disputes = get_dispute_ids_by_attestation(env, business, period);
     disputes.push_back(dispute_id);
@@ -127,7 +178,10 @@ pub fn add_dispute_to_attestation_index(env: &Env, business: &Address, period: &
 /// Get all dispute IDs opened by a challenger
 pub fn get_dispute_ids_by_challenger(env: &Env, challenger: &Address) -> Vec<u64> {
     let key = DisputeKey::DisputesByChallenger(challenger.clone());
-    env.storage().instance().get(&key).unwrap_or_else(|| Vec::new(env))
+    env.storage()
+        .instance()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env))
 }
 
 /// Add dispute ID to challenger index
@@ -139,7 +193,12 @@ pub fn add_dispute_to_challenger_index(env: &Env, challenger: &Address, dispute_
 }
 
 /// Check if a challenger has already opened a dispute for this attestation
-pub fn has_existing_dispute(env: &Env, challenger: &Address, business: &Address, period: &String) -> bool {
+pub fn has_existing_dispute(
+    env: &Env,
+    challenger: &Address,
+    business: &Address,
+    period: &String,
+) -> bool {
     let dispute_ids = get_dispute_ids_by_attestation(env, business, period);
     for i in 0..dispute_ids.len() {
         if let Some(dispute_id) = dispute_ids.get(i) {
@@ -181,14 +240,14 @@ pub fn validate_dispute_eligibility(
 pub fn validate_dispute_resolution(
     env: &Env,
     dispute_id: u64,
-    resolver: &Address,
+    _resolver: &Address,
 ) -> Result<Dispute, &'static str> {
     let dispute = get_dispute(env, dispute_id).ok_or("dispute not found")?;
-    
+
     if dispute.status != DisputeStatus::Open {
         return Err("dispute is not open");
     }
-    
+
     // In a real implementation, we would check if resolver is authorized
     // (e.g., is an arbitrator, governance contract, or predefined resolver)
     // For now, we'll allow any address to resolve
@@ -198,10 +257,10 @@ pub fn validate_dispute_resolution(
 /// Validate that a dispute can be closed
 pub fn validate_dispute_closure(env: &Env, dispute_id: u64) -> Result<Dispute, &'static str> {
     let dispute = get_dispute(env, dispute_id).ok_or("dispute not found")?;
-    
+
     if dispute.status != DisputeStatus::Resolved {
         return Err("dispute is not resolved");
     }
-    
+
     Ok(dispute)
 }

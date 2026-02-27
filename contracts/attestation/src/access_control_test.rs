@@ -15,7 +15,7 @@ fn setup() -> (Env, AttestationContractClient<'static>, Address) {
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    client.initialize(&admin, &0u64);
     (env, client, admin)
 }
 
@@ -36,7 +36,7 @@ fn test_grant_role() {
 
     assert!(!client.has_role(&user, &ROLE_ATTESTOR));
 
-    client.grant_role(&admin, &user, &ROLE_ATTESTOR);
+    client.grant_role(&admin, &user, &ROLE_ATTESTOR, &1u64);
 
     assert!(client.has_role(&user, &ROLE_ATTESTOR));
 }
@@ -46,8 +46,8 @@ fn test_grant_multiple_roles() {
     let (env, client, admin) = setup();
     let user = Address::generate(&env);
 
-    client.grant_role(&admin, &user, &ROLE_ATTESTOR);
-    client.grant_role(&admin, &user, &ROLE_BUSINESS);
+    client.grant_role(&admin, &user, &ROLE_ATTESTOR, &1u64);
+    client.grant_role(&admin, &user, &ROLE_BUSINESS, &2u64);
 
     assert!(client.has_role(&user, &ROLE_ATTESTOR));
     assert!(client.has_role(&user, &ROLE_BUSINESS));
@@ -61,10 +61,10 @@ fn test_revoke_role() {
     let (env, client, admin) = setup();
     let user = Address::generate(&env);
 
-    client.grant_role(&admin, &user, &ROLE_ATTESTOR);
+    client.grant_role(&admin, &user, &ROLE_ATTESTOR, &1u64);
     assert!(client.has_role(&user, &ROLE_ATTESTOR));
 
-    client.revoke_role(&admin, &user, &ROLE_ATTESTOR);
+    client.revoke_role(&admin, &user, &ROLE_ATTESTOR, &2u64);
     assert!(!client.has_role(&user, &ROLE_ATTESTOR));
 }
 
@@ -73,10 +73,10 @@ fn test_revoke_one_role_keeps_others() {
     let (env, client, admin) = setup();
     let user = Address::generate(&env);
 
-    client.grant_role(&admin, &user, &ROLE_ATTESTOR);
-    client.grant_role(&admin, &user, &ROLE_BUSINESS);
+    client.grant_role(&admin, &user, &ROLE_ATTESTOR, &1u64);
+    client.grant_role(&admin, &user, &ROLE_BUSINESS, &2u64);
 
-    client.revoke_role(&admin, &user, &ROLE_ATTESTOR);
+    client.revoke_role(&admin, &user, &ROLE_ATTESTOR, &3u64);
 
     assert!(!client.has_role(&user, &ROLE_ATTESTOR));
     assert!(client.has_role(&user, &ROLE_BUSINESS));
@@ -88,8 +88,8 @@ fn test_get_role_holders() {
     let user1 = Address::generate(&env);
     let user2 = Address::generate(&env);
 
-    client.grant_role(&admin, &user1, &ROLE_ATTESTOR);
-    client.grant_role(&admin, &user2, &ROLE_BUSINESS);
+    client.grant_role(&admin, &user1, &ROLE_ATTESTOR, &1u64);
+    client.grant_role(&admin, &user2, &ROLE_BUSINESS, &2u64);
 
     let holders = client.get_role_holders();
     // Admin + 2 users
@@ -103,7 +103,7 @@ fn test_non_admin_cannot_grant_role() {
     let non_admin = Address::generate(&env);
     let target = Address::generate(&env);
 
-    client.grant_role(&non_admin, &target, &ROLE_ATTESTOR);
+    client.grant_role(&non_admin, &target, &ROLE_ATTESTOR, &1u64);
 }
 
 #[test]
@@ -113,8 +113,8 @@ fn test_non_admin_cannot_revoke_role() {
     let non_admin = Address::generate(&env);
     let target = Address::generate(&env);
 
-    client.grant_role(&admin, &target, &ROLE_ATTESTOR);
-    client.revoke_role(&non_admin, &target, &ROLE_ATTESTOR);
+    client.grant_role(&admin, &target, &ROLE_ATTESTOR, &1u64);
+    client.revoke_role(&non_admin, &target, &ROLE_ATTESTOR, &1u64);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -127,7 +127,7 @@ fn test_admin_can_pause() {
 
     assert!(!client.is_paused());
 
-    client.pause(&admin);
+    client.pause(&admin, &1u64);
 
     assert!(client.is_paused());
 }
@@ -137,9 +137,9 @@ fn test_operator_can_pause() {
     let (env, client, admin) = setup();
     let operator = Address::generate(&env);
 
-    client.grant_role(&admin, &operator, &ROLE_OPERATOR);
+    client.grant_role(&admin, &operator, &ROLE_OPERATOR, &1u64);
 
-    client.pause(&operator);
+    client.pause(&operator, &0u64);
 
     assert!(client.is_paused());
 }
@@ -148,10 +148,10 @@ fn test_operator_can_pause() {
 fn test_admin_can_unpause() {
     let (_env, client, admin) = setup();
 
-    client.pause(&admin);
+    client.pause(&admin, &1u64);
     assert!(client.is_paused());
 
-    client.unpause(&admin);
+    client.unpause(&admin, &2u64);
     assert!(!client.is_paused());
 }
 
@@ -161,11 +161,11 @@ fn test_operator_cannot_unpause() {
     let (env, client, admin) = setup();
     let operator = Address::generate(&env);
 
-    client.grant_role(&admin, &operator, &ROLE_OPERATOR);
-    client.pause(&admin);
+    client.grant_role(&admin, &operator, &ROLE_OPERATOR, &1u64);
+    client.pause(&admin, &2u64);
 
     // Operator can pause but cannot unpause
-    client.unpause(&operator);
+    client.unpause(&operator, &0u64);
 }
 
 #[test]
@@ -174,7 +174,7 @@ fn test_non_operator_cannot_pause() {
     let (env, client, _admin) = setup();
     let user = Address::generate(&env);
 
-    client.pause(&user);
+    client.pause(&user, &1u64);
 }
 
 #[test]
@@ -182,13 +182,21 @@ fn test_non_operator_cannot_pause() {
 fn test_submit_attestation_when_paused() {
     let (env, client, admin) = setup();
 
-    client.pause(&admin);
+    client.pause(&admin, &1u64);
 
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
+        &0u64,
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -202,10 +210,10 @@ fn test_attestor_cannot_grant_admin() {
     let attestor = Address::generate(&env);
     let target = Address::generate(&env);
 
-    client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
+    client.grant_role(&admin, &attestor, &ROLE_ATTESTOR, &1u64);
 
     // Attestor tries to grant ADMIN role
-    client.grant_role(&attestor, &target, &ROLE_ADMIN);
+    client.grant_role(&attestor, &target, &ROLE_ADMIN, &0u64);
 }
 
 #[test]
@@ -215,9 +223,9 @@ fn test_business_cannot_grant_roles() {
     let business = Address::generate(&env);
     let target = Address::generate(&env);
 
-    client.grant_role(&admin, &business, &ROLE_BUSINESS);
+    client.grant_role(&admin, &business, &ROLE_BUSINESS, &1u64);
 
-    client.grant_role(&business, &target, &ROLE_ATTESTOR);
+    client.grant_role(&business, &target, &ROLE_ATTESTOR, &0u64);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -230,7 +238,7 @@ fn test_revoke_nonexistent_role() {
     let user = Address::generate(&env);
 
     // Should not panic when revoking a role the user doesn't have
-    client.revoke_role(&admin, &user, &ROLE_ATTESTOR);
+    client.revoke_role(&admin, &user, &ROLE_ATTESTOR, &1u64);
     assert!(!client.has_role(&user, &ROLE_ATTESTOR));
 }
 
@@ -239,8 +247,8 @@ fn test_grant_same_role_twice() {
     let (env, client, admin) = setup();
     let user = Address::generate(&env);
 
-    client.grant_role(&admin, &user, &ROLE_ATTESTOR);
-    client.grant_role(&admin, &user, &ROLE_ATTESTOR);
+    client.grant_role(&admin, &user, &ROLE_ATTESTOR, &1u64);
+    client.grant_role(&admin, &user, &ROLE_ATTESTOR, &2u64);
 
     assert!(client.has_role(&user, &ROLE_ATTESTOR));
 }
@@ -263,10 +271,10 @@ fn test_all_role_combinations() {
     let user = Address::generate(&env);
 
     // Grant all roles
-    client.grant_role(&admin, &user, &ROLE_ADMIN);
-    client.grant_role(&admin, &user, &ROLE_ATTESTOR);
-    client.grant_role(&admin, &user, &ROLE_BUSINESS);
-    client.grant_role(&admin, &user, &ROLE_OPERATOR);
+    client.grant_role(&admin, &user, &ROLE_ADMIN, &1u64);
+    client.grant_role(&admin, &user, &ROLE_ATTESTOR, &2u64);
+    client.grant_role(&admin, &user, &ROLE_BUSINESS, &3u64);
+    client.grant_role(&admin, &user, &ROLE_OPERATOR, &4u64);
 
     let roles = client.get_roles(&user);
     assert_eq!(
@@ -275,7 +283,7 @@ fn test_all_role_combinations() {
     );
 
     // Revoke one
-    client.revoke_role(&admin, &user, &ROLE_BUSINESS);
+    client.revoke_role(&admin, &user, &ROLE_BUSINESS, &5u64);
     let roles = client.get_roles(&user);
     assert_eq!(roles, ROLE_ADMIN | ROLE_ATTESTOR | ROLE_OPERATOR);
 }
