@@ -2,6 +2,8 @@
 use crate::dynamic_fees::DataKey;
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
+use super::DataKey;
+
 /// Status of a dispute
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]

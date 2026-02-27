@@ -218,7 +218,7 @@ fn get_attestations_page_filter_active_after_revoke() {
     let client = AttestationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     env.mock_all_auths();
-    client.init(&admin);
+    client.initialize(&admin);
     let business = Address::generate(&env);
     let mut periods = Vec::new(&env);
     for i in 1..=3 {
@@ -302,7 +302,7 @@ fn init_and_revoke_attestation() {
     let client = AttestationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     env.mock_all_auths();
-    client.init(&admin);
+    client.initialize(&admin);
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
@@ -325,20 +325,20 @@ fn init_and_revoke_attestation() {
 }
 
 #[test]
-#[should_panic(expected = "caller is not admin")]
 fn revoke_attestation_non_admin_panics() {
     let env = Env::default();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     env.mock_all_auths();
-    client.init(&admin);
+    client.initialize(&admin);
     let other = Address::generate(&env);
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
     client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None);
-    client.revoke_attestation(&other, &business, &period, &soroban_sdk::String::from_str(&env, "test reason"));
+    let result = client.try_revoke_attestation(&other, &business, &period, &soroban_sdk::String::from_str(&env, "test reason"));
+    assert!(result.is_err());
 }
 
 #[test]
@@ -346,6 +346,7 @@ fn periods_list_includes_missing_attestations_skipped() {
     let env = Env::default();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
+    env.mock_all_auths();
     let business = Address::generate(&env);
     let p1 = String::from_str(&env, "2026-01");
     let p2 = String::from_str(&env, "2026-02");

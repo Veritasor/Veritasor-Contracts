@@ -13,6 +13,7 @@ pub mod interface_spec_check;
 pub mod interface_spec_check_test;
 
 #[cfg(test)]
+pub mod key_rotation_test;
 pub mod merkle;
 
 #[cfg(test)]

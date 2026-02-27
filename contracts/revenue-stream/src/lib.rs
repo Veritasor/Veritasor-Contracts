@@ -37,6 +37,13 @@ mod attestation_import {
     pub use Client as AttestationContractClient;
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+use veritasor_attestation::AttestationContractClient;
+
+#[cfg(target_arch = "wasm32")]
+use attestation_import::AttestationContractClient;
+
+#[cfg(target_arch = "wasm32")]
 impl<'a> AttestationContractClient<'a> {
     pub fn new(env: &'a Env, address: &'a Address) -> Self {
         AttestationContractClient { env, address }
@@ -47,6 +54,7 @@ impl<'a> AttestationContractClient<'a> {
         &self,
         business: &Address,
         period: &String,
+    ) -> Option<(BytesN<32>, u64, u32, i128, Option<u64>)> {
     ) -> Option<(BytesN<32>, u64, u32, i128, Option<BytesN<32>>, Option<u64>)> {
         let mut args = soroban_sdk::Vec::new(self.env);
         args.push_back(business.into_val(self.env));

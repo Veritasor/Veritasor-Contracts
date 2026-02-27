@@ -11,6 +11,16 @@ pub enum SlashOutcome {
     NoSlash,
 }
 
+/// Pending unstake request subject to an unbonding period.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PendingUnstake {
+    /// Amount locked for withdrawal.
+    pub amount: i128,
+    /// Unix timestamp (seconds) when withdrawal becomes available.
+    pub unlock_timestamp: u64,
+}
+
 /// Stake record for an attestor
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -29,6 +39,8 @@ enum DataKey {
     MinStake,
     Stake(Address),
     DisputeContract,
+    UnbondingPeriod,
+    PendingUnstake(Address),
 }
 
 #[contract]
@@ -44,6 +56,7 @@ impl AttestorStakingContract {
     /// * `treasury` - Address to receive slashed funds
     /// * `min_stake` - Minimum stake required for attestors
     /// * `dispute_contract` - Dispute resolution contract address
+    /// * `unbonding_period_seconds` - Time lock before unstake withdrawal is available
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -51,6 +64,7 @@ impl AttestorStakingContract {
         treasury: Address,
         min_stake: i128,
         dispute_contract: Address,
+        unbonding_period_seconds: u64,
     ) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
@@ -65,6 +79,9 @@ impl AttestorStakingContract {
         env.storage()
             .instance()
             .set(&DataKey::DisputeContract, &dispute_contract);
+        env.storage()
+            .instance()
+            .set(&DataKey::UnbondingPeriod, &unbonding_period_seconds);
     }
 
     /// Stake tokens as an attestor
@@ -77,7 +94,6 @@ impl AttestorStakingContract {
         assert!(amount > 0, "amount must be positive");
 
         let token: Address = env.storage().instance().get(&DataKey::Token).unwrap();
-        let min_stake: i128 = env.storage().instance().get(&DataKey::MinStake).unwrap();
 
         let stake_key = DataKey::Stake(attestor.clone());
         let mut stake: Stake = env.storage().instance().get(&stake_key).unwrap_or(Stake {
@@ -87,7 +103,7 @@ impl AttestorStakingContract {
         });
 
         stake.amount += amount;
-        assert!(stake.amount >= min_stake, "total stake below minimum");
+        assert!(stake.amount >= 0, "stake overflow");
 
         env.storage().instance().set(&stake_key, &stake);
 
@@ -96,14 +112,20 @@ impl AttestorStakingContract {
         token_client.transfer(&attestor, &env.current_contract_address(), &amount);
     }
 
-    /// Unstake tokens (only unlocked amount)
+    /// Request to unstake tokens.
+    ///
+    /// This locks the requested amount immediately and makes it withdrawable
+    /// only after the configured unbonding period.
     ///
     /// # Arguments
     /// * `attestor` - Address unstaking tokens
     /// * `amount` - Amount to unstake
-    pub fn unstake(env: Env, attestor: Address, amount: i128) {
+    pub fn request_unstake(env: Env, attestor: Address, amount: i128) {
         attestor.require_auth();
         assert!(amount > 0, "amount must be positive");
+
+        let pending_key = DataKey::PendingUnstake(attestor.clone());
+        assert!(!env.storage().instance().has(&pending_key), "pending unstake exists");
 
         let stake_key = DataKey::Stake(attestor.clone());
         let mut stake: Stake = env
@@ -115,13 +137,55 @@ impl AttestorStakingContract {
         let available = stake.amount - stake.locked;
         assert!(available >= amount, "insufficient unlocked stake");
 
-        stake.amount -= amount;
+        stake.locked += amount;
         env.storage().instance().set(&stake_key, &stake);
+
+        let unbonding: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::UnbondingPeriod)
+            .unwrap_or(0);
+        let unlock_timestamp = env.ledger().timestamp().saturating_add(unbonding);
+        let pending = PendingUnstake {
+            amount,
+            unlock_timestamp,
+        };
+        env.storage().instance().set(&pending_key, &pending);
+    }
+
+    /// Withdraw previously requested unstake after the unbonding period.
+    pub fn withdraw_unstaked(env: Env, attestor: Address) {
+        attestor.require_auth();
+
+        let pending_key = DataKey::PendingUnstake(attestor.clone());
+        let pending: PendingUnstake = env
+            .storage()
+            .instance()
+            .get(&pending_key)
+            .expect("no pending unstake");
+        assert!(
+            env.ledger().timestamp() >= pending.unlock_timestamp,
+            "unstake not yet unlocked"
+        );
+
+        let stake_key = DataKey::Stake(attestor.clone());
+        let mut stake: Stake = env
+            .storage()
+            .instance()
+            .get(&stake_key)
+            .expect("no stake found");
+        assert!(stake.locked >= pending.amount, "locked invariant violated");
+        assert!(stake.amount >= pending.amount, "stake invariant violated");
+
+        stake.amount -= pending.amount;
+        stake.locked -= pending.amount;
+        env.storage().instance().set(&stake_key, &stake);
+        env.storage().instance().remove(&pending_key);
 
         // Transfer tokens back to attestor
         let token: Address = env.storage().instance().get(&DataKey::Token).unwrap();
         let token_client = token::Client::new(&env, &token);
-        token_client.transfer(&env.current_contract_address(), &attestor, &amount);
+        token_client.transfer(&env.current_contract_address(), &attestor, &pending.amount);
     }
 
     /// Slash an attestor's stake for a proven-false attestation
@@ -171,6 +235,23 @@ impl AttestorStakingContract {
         }
 
         stake.amount -= slash_amount;
+
+        // Maintain invariants after slashing.
+        // locked must never exceed amount.
+        if stake.locked > stake.amount {
+            stake.locked = stake.amount;
+        }
+
+        // If there is a pending unstake request, ensure it does not exceed locked.
+        let pending_key = DataKey::PendingUnstake(attestor.clone());
+        if env.storage().instance().has(&pending_key) {
+            let mut pending: PendingUnstake = env.storage().instance().get(&pending_key).unwrap();
+            if pending.amount > stake.locked {
+                pending.amount = stake.locked;
+                env.storage().instance().set(&pending_key, &pending);
+            }
+        }
+
         env.storage().instance().set(&stake_key, &stake);
         env.storage().instance().set(&slash_key, &true);
 
@@ -189,6 +270,21 @@ impl AttestorStakingContract {
         env.storage().instance().get(&stake_key)
     }
 
+    /// Get pending unstake information for an attestor.
+    pub fn get_pending_unstake(env: Env, attestor: Address) -> Option<PendingUnstake> {
+        let pending_key = DataKey::PendingUnstake(attestor);
+        env.storage().instance().get(&pending_key)
+    }
+
+    /// Returns true if the attestor meets the minimum stake requirement.
+    pub fn is_eligible(env: Env, attestor: Address) -> bool {
+        let min_stake: i128 = env.storage().instance().get(&DataKey::MinStake).unwrap();
+        match Self::get_stake(env, attestor) {
+            Some(stake) => stake.amount >= min_stake,
+            None => false,
+        }
+    }
+
     /// Get contract admin
     pub fn get_admin(env: Env) -> Address {
         env.storage().instance().get(&DataKey::Admin).unwrap()
@@ -197,6 +293,40 @@ impl AttestorStakingContract {
     /// Get minimum stake requirement
     pub fn get_min_stake(env: Env) -> i128 {
         env.storage().instance().get(&DataKey::MinStake).unwrap()
+    }
+
+    /// Get unbonding period (seconds).
+    pub fn get_unbonding_period(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&DataKey::UnbondingPeriod)
+            .unwrap_or(0)
+    }
+
+    /// Admin: update minimum stake requirement.
+    pub fn set_min_stake(env: Env, min_stake: i128) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        assert!(min_stake > 0, "min_stake must be positive");
+        env.storage().instance().set(&DataKey::MinStake, &min_stake);
+    }
+
+    /// Admin: update dispute contract.
+    pub fn set_dispute_contract(env: Env, dispute_contract: Address) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::DisputeContract, &dispute_contract);
+    }
+
+    /// Admin: update unbonding period.
+    pub fn set_unbonding_period(env: Env, unbonding_period_seconds: u64) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::UnbondingPeriod, &unbonding_period_seconds);
     }
 }
 
