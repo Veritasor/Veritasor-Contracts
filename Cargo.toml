@@ -8,10 +8,15 @@ members = [
     "contracts/audit-log",
     "contracts/business-config",
     "contracts/integration-registry",
+    "contracts/lender-access-list",
+    "contracts/lender-consumer",
     "contracts/network-config",
     "contracts/protocol-dao",
     "contracts/protocol-simulation",
     "contracts/revenue-bonds",
+    "contracts/revenue-curve",
+    "contracts/revenue-settlement",
+    "contracts/revenue-share",
     "contracts/revenue-stream",
 ]
 resolver = "2"

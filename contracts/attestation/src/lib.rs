@@ -2,6 +2,9 @@
 use core::cmp::Ordering;
 use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, String, Symbol, Vec};
 
+#[cfg(test)]
+mod expiry_test;
+
 /// Attestor staking client: WASM import for wasm32, crate client for host builds.
 #[cfg(target_arch = "wasm32")]
 mod attestor_staking_import {
@@ -171,6 +174,21 @@ impl AttestationContract {
 
     pub fn is_revoked(env: Env, business: Address, period: String) -> bool {
         false
+    }
+
+    /// Verify that an attestation exists and matches the provided merkle root.
+    /// This does NOT check expiry - use is_expired() separately for that.
+    pub fn verify_attestation(
+        env: Env,
+        business: Address,
+        period: String,
+        merkle_root: BytesN<32>,
+    ) -> bool {
+        if let Some((stored_root, _, _, _, _, _)) = Self::get_attestation(env, business, period) {
+            stored_root == merkle_root
+        } else {
+            false
+        }
     }
 
     pub fn revoke_attestation(
