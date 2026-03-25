@@ -26,6 +26,10 @@ const NONCE_CHANNEL_BUSINESS: u32 = 1;
 
 pub const STATUS_ACTIVE: u32 = 0;
 pub const STATUS_REVOKED: u32 = 1;
+pub const BATCH_MIN_SIZE: u32 = 1;
+pub const BATCH_MAX_SIZE: u32 = 100;
+pub const BATCH_RATE_LIMIT: u32 = 10;
+pub const BATCH_WINDOW_LEDGERS: u32 = 17_280;
 
 // Type aliases to reduce complexity
 pub type AttestationData = (BytesN<32>, u64, u32, i128, Option<BytesN<32>>, Option<u64>);
@@ -304,7 +308,110 @@ impl AttestationContract {
         id
     }
 
-    pub fn get_dispute(env: Env, id: u64) -> Option<Dispute> {
-        dispute::get_dispute(&env, id)
+
+    pub fn submit_attestations_batch(
+        env: Env,
+        items: Vec<BatchAttestationItem>,
+    ) {
+        let count = items.len();
+        if count == 0 {
+            panic!("batch cannot be empty");
+        }
+        if count > BATCH_MAX_SIZE {
+            panic!("batch_too_large");
+        }
+
+        // Check for duplicates within the batch itself
+        let mut seen: Vec<(Address, String)> = Vec::new(&env);
+        for i in 0..count {
+            let item = items.get(i).unwrap();
+            let key = DataKey::Attestation(item.business.clone(), item.period.clone());
+            if env.storage().instance().has(&key) {
+                panic!("attestation already exists");
+            }
+            for j in 0..seen.len() {
+                let (ref b, ref p) = seen.get(j).unwrap();
+                if b == &item.business && p == &item.period {
+                    panic!("duplicate attestation in batch");
+                }
+            }
+            seen.push_back((item.business.clone(), item.period.clone()));
+        }
+
+        // Rate limit check per unique business
+        let current_ledger = env.ledger().sequence();
+        let window_start: u32 = env.storage().instance()
+            .get(&DataKey::BatchWindowStart(items.get(0).unwrap().business.clone()))
+            .unwrap_or(0u32);
+        let batches_in_window: u32 =
+            if current_ledger.saturating_sub(window_start) < BATCH_WINDOW_LEDGERS {
+                env.storage().instance()
+                    .get(&DataKey::BatchCountInWindow(items.get(0).unwrap().business.clone()))
+                    .unwrap_or(0u32)
+            } else {
+                env.storage().instance()
+                    .set(&DataKey::BatchWindowStart(items.get(0).unwrap().business.clone()), &current_ledger);
+                0u32
+            };
+        if batches_in_window >= BATCH_RATE_LIMIT {
+            panic!("rate_limit_exceeded");
+        }
+
+        // Store all items
+        for i in 0..count {
+            let item = items.get(i).unwrap();
+            item.business.require_auth();
+            let fee = dynamic_fees::collect_fee(&env, &item.business);
+            dynamic_fees::increment_business_count(&env, &item.business);
+            let key = DataKey::Attestation(item.business.clone(), item.period.clone());
+            let data: AttestationData = (
+                item.merkle_root.clone(),
+                item.timestamp,
+                item.version,
+                fee,
+                None,
+                item.expiry_timestamp,
+            );
+            env.storage().instance().set(&key, &data);
+            events::emit_attestation_submitted(
+                &env,
+                &item.business,
+                &item.period,
+                &item.merkle_root,
+                item.timestamp,
+                item.version,
+                fee,
+                &None,
+                item.expiry_timestamp,
+            );
+        }
+
+        env.storage().instance()
+            .set(&DataKey::BatchCountInWindow(
+                items.get(0).unwrap().business.clone()),
+                &(batches_in_window + 1));
+    }
+
+
+
+    
+
+    pub fn get_batch_count_in_window(env: Env, business: Address) -> u32 {
+        let current_ledger = env.ledger().sequence();
+        let window_start: u32 = env.storage().instance()
+            .get(&DataKey::BatchWindowStart(business.clone()))
+            .unwrap_or(0u32);
+        if current_ledger.saturating_sub(window_start) < BATCH_WINDOW_LEDGERS {
+            env.storage().instance()
+                .get(&DataKey::BatchCountInWindow(business))
+                .unwrap_or(0u32)
+        } else {
+            0u32
+        }
+    }
+
+    pub fn batch_limits(_env: Env) -> (u32, u32, u32, u32) {
+        (BATCH_MIN_SIZE, BATCH_MAX_SIZE, BATCH_RATE_LIMIT, BATCH_WINDOW_LEDGERS)
     }
 }
+mod batch_limits_test;
