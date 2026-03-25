@@ -77,8 +77,15 @@ pub enum DataKey {
     /// Per-business submission timestamps within the current window.
     /// Stores a `Vec<u64>` of ledger timestamps.
     SubmissionTimestamps(Address),
-}
 
+
+    // ── Batch submission limits ────────────────────────────────
+    /// Ledger sequence when the current batch rate-limit window opened.
+    BatchWindowStart(Address),
+    /// Number of batch calls made in the current window.
+    BatchCountInWindow(Address),
+
+}
 /// On-chain fee configuration.
 ///
 /// Stored under [`DataKey::FeeConfig`].
