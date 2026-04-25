@@ -271,7 +271,6 @@ fn test_all_role_combinations() {
     let (env, client, admin) = setup();
     let user = Address::generate(&env);
 
-    // Grant all roles
     client.grant_role(&admin, &user, &ROLE_ADMIN, &1u64);
     client.grant_role(&admin, &user, &ROLE_ATTESTOR, &2u64);
     client.grant_role(&admin, &user, &ROLE_BUSINESS, &3u64);
@@ -283,8 +282,139 @@ fn test_all_role_combinations() {
         ROLE_ADMIN | ROLE_ATTESTOR | ROLE_BUSINESS | ROLE_OPERATOR
     );
 
-    // Revoke one
     client.revoke_role(&admin, &user, &ROLE_BUSINESS, &5u64);
     let roles = client.get_roles(&user);
     assert_eq!(roles, ROLE_ADMIN | ROLE_ATTESTOR | ROLE_OPERATOR);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Role Revocation Mid-Call Tests
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_revoke_admin_role_prevents_admin_operations() {
+    let (env, client, admin) = setup();
+    let target = Address::generate(&env);
+
+    client.grant_role(&admin, &target, &ROLE_ADMIN, &1u64);
+    assert!(client.has_role(&target, &ROLE_ADMIN));
+
+    client.revoke_role(&admin, &target, &ROLE_ADMIN, &2u64);
+    assert!(!client.has_role(&target, &ROLE_ADMIN));
+}
+
+#[test]
+fn test_role_revocation_is_idempotent() {
+    let (env, client, admin) = setup();
+    let user = Address::generate(&env);
+
+    client.grant_role(&admin, &user, &ROLE_ATTESTOR, &1u64);
+    client.revoke_role(&admin, &user, &ROLE_ATTESTOR, &2u64);
+    client.revoke_role(&admin, &user, &ROLE_ATTESTOR, &3u64);
+    assert!(!client.has_role(&user, &ROLE_ATTESTOR));
+}
+
+#[test]
+fn test_partial_revocation_preserves_other_roles() {
+    let (env, client, admin) = setup();
+    let user = Address::generate(&env);
+
+    client.grant_role(&admin, &user, &(ROLE_ATTESTOR | ROLE_BUSINESS), &1u64);
+    client.revoke_role(&admin, &user, &ROLE_ATTESTOR, &2u64);
+    assert!(!client.has_role(&user, &ROLE_ATTESTOR));
+    assert!(client.has_role(&user, &ROLE_BUSINESS));
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Delegation Pitfall Tests
+// ════════════════════════════════════════════════════════════
+
+#[test]
+fn test_delegator_cannot_escalate_own_role() {
+    let (env, client, admin) = setup();
+    let user = Address::generate(&env);
+
+    client.grant_role(&admin, &user, &ROLE_ATTESTOR, &1u64);
+    client.grant_role(&user, &user, &(ROLE_ATTESTOR | ROLE_ADMIN), &0u64);
+}
+
+#[test]
+fn test_cannot_grant_role_to_zero_address() {
+    let (env, client, admin) = setup();
+    let zero_addr = Address::from_string(&soroban_sdk::String::from_str(&env, "GAQAA"));
+
+    client.grant_role(&admin, &zero_addr, &ROLE_ATTESTOR, &1u64);
+}
+
+#[test]
+fn test_operator_cannot_grant_any_role() {
+    let (env, client, admin) = setup();
+    let operator = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    client.grant_role(&admin, &operator, &ROLE_OPERATOR, &1u64);
+    client.grant_role(&operator, &target, &ROLE_ATTESTOR, &0u64);
+}
+
+#[test]
+fn test_attestor_cannot_modify_roles() {
+    let (env, client, admin) = setup();
+    let attestor = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    client.grant_role(&admin, &attestor, &ROLE_ATTESTOR, &1u64);
+    client.grant_role(&attestor, &target, &ROLE_BUSINESS, &0u64);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Misconfigured Roles Tests
+// ══════════════════════════════════════════════════��═════════════════
+
+#[test]
+fn test_invalid_role_bitmap_rejected() {
+    let (env, client, admin) = setup();
+    let user = Address::generate(&env);
+
+    let invalid_role = 0xFFFF_FFFFu32;
+    client.grant_role(&admin, &user, &invalid_role, &1u64);
+}
+
+#[test]
+fn test_zero_role_cannot_be_granted() {
+    let (env, client, admin) = setup();
+    let user = Address::generate(&env);
+
+    client.grant_role(&admin, &user, &0u32, &1u64);
+    assert_eq!(client.get_roles(&user), 0);
+}
+
+#[test]
+fn test_role_holders_tracks_unique_addresses() {
+    let (env, client, admin) = setup();
+    let user = Address::generate(&env);
+
+    let initial_holders = client.get_role_holders();
+    let initial_len = initial_holders.len();
+
+    client.grant_role(&admin, &user, &ROLE_ATTESTOR, &1u64);
+    let new_holders = client.get_role_holders();
+    assert_eq!(new_holders.len(), initial_len + 1);
+
+    client.grant_role(&admin, &user, &ROLE_BUSINESS, &2u64);
+    let still_holders = client.get_role_holders();
+    assert_eq!(still_holders.len(), initial_len + 1);
+}
+
+#[test]
+fn test_role_holders_removes_address_with_no_roles() {
+    let (env, client, admin) = setup();
+    let user = Address::generate(&env);
+
+    client.grant_role(&admin, &user, &ROLE_ATTESTOR, &1u64);
+    let with_role = client.get_role_holders();
+    assert!(with_role.iter().any(|a| a == user));
+
+    client.revoke_role(&admin, &user, &ROLE_ATTESTOR, &2u64);
+    let without_role = client.get_role_holders();
+    assert!(!without_role.iter().any(|a| a == user));
 }

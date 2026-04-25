@@ -467,3 +467,238 @@ fn test_lender_queries_snapshots_for_underwriting() {
     assert_eq!(latest.anomaly_count, 2u32);
     assert!(client.is_epoch_finalized(&String::from_str(&env, "2026-03")));
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  Immutability Tests
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_finalized_epoch_rejects_new_snapshots() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-02");
+
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &0u32, &1u64);
+    client.finalize_epoch(&admin, &epoch);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.record_snapshot(&admin, &business, &epoch, &200_000i128, &1u32, &2u64);
+    }));
+
+    assert!(result.is_err(), "finalized epoch must reject new snapshots");
+}
+
+#[test]
+fn test_finalization_is_permanent() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-02");
+
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &0u32, &1u64);
+    client.finalize_epoch(&admin, &epoch);
+
+    assert!(client.is_epoch_finalized(&epoch));
+    assert!(client.get_epoch_finalization(&epoch).is_some());
+
+    let finalization = client.get_epoch_finalization(&epoch).unwrap();
+    assert_eq!(finalization.epoch, epoch);
+    assert_eq!(finalization.finalized_by, admin);
+}
+
+#[test]
+fn test_snapshots_immutable_after_finalization() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-02");
+
+    set_ledger_timestamp(&env, 1_700_000_100);
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &0u32, &1u64);
+    client.finalize_epoch(&admin, &epoch);
+
+    let snapshot = client.get_snapshot(&business, &epoch).unwrap();
+    assert_eq!(snapshot.trailing_revenue, 100_000i128);
+    assert_eq!(snapshot.recorded_at, 1_700_000_100);
+}
+
+#[test]
+fn test_snapshot_replacement_allowed_before_finalization() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-02");
+
+    set_ledger_timestamp(&env, 1_700_000_100);
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &0u32, &1u64);
+
+    set_ledger_timestamp(&env, 1_700_000_200);
+    client.record_snapshot(&admin, &business, &epoch, &200_000i128, &1u32, &2u64);
+
+    let snapshot = client.get_snapshot(&business, &epoch).unwrap();
+    assert_eq!(snapshot.trailing_revenue, 200_000i128);
+    assert_eq!(snapshot.recorded_at, 1_700_000_200);
+}
+
+#[test]
+fn test_epoch_finalization_prevents_epoch_business_overwrite() {
+    let (env, client, admin) = setup_snapshot_only();
+    let epoch = String::from_str(&env, "2026-02");
+    let business1 = Address::generate(&env);
+    let business2 = Address::generate(&env);
+
+    client.record_snapshot(&admin, &business1, &epoch, &100_000i128, &0u32, &1u64);
+    client.finalize_epoch(&admin, &epoch);
+
+    let epoch_businesses = client.get_epoch_businesses(&epoch);
+    assert_eq!(epoch_businesses.len(), 1);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.record_snapshot(&admin, &business2, &epoch, &200_000i128, &0u32, &1u64);
+    }));
+    assert!(result.is_err());
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Snapshot Replacement Policy Tests
+// ════════════════════════════════════════���═══════════════════════════════════
+
+#[test]
+fn test_replacement_increments_attestation_count() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+
+    client.record_snapshot(&admin, &business, &period, &100_000i128, &0u32, &1u64);
+    client.record_snapshot(&admin, &business, &period, &100_000i128, &0u32, &2u64);
+
+    let snapshot = client.get_snapshot(&business, &period).unwrap();
+    assert_eq!(snapshot.attestation_count, 2u64);
+}
+
+#[test]
+fn test_finalized_epoch_snapshot_count_is_final() {
+    let (env, client, admin) = setup_snapshot_only();
+    let epoch = String::from_str(&env, "2026-02");
+    let business = Address::generate(&env);
+
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &0u32, &1u64);
+    client.finalize_epoch(&admin, &epoch);
+
+    let finalization = client.get_epoch_finalization(&epoch).unwrap();
+    assert_eq!(finalization.snapshot_count, 1);
+
+    client.record_snapshot(&admin, &business, &String::from_str(&env, "2026-03"), &200_000i128, &0u32, &1u64);
+    client.finalize_epoch(&admin, &String::from_str(&env, "2026-03"));
+
+    let epoch1_finalization = client.get_epoch_finalization(&epoch).unwrap();
+    assert_eq!(epoch1_finalization.snapshot_count, 1);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Admin Override Tests
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_admin_can_finalize_any_epoch() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-02");
+
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &0u32, &1u64);
+    client.finalize_epoch(&admin, &epoch);
+
+    assert!(client.is_epoch_finalized(&epoch));
+}
+
+#[test]
+fn test_admin_cannot_unfinalize_epoch() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-02");
+
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &0u32, &1u64);
+    client.finalize_epoch(&admin, &epoch);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.finalize_epoch(&admin, &epoch);
+    }));
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_writer_cannot_finalize_epoch() {
+    let (env, client, admin) = setup_snapshot_only();
+    let writer = Address::generate(&env);
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-02");
+
+    client.add_writer(&admin, &writer);
+    client.record_snapshot(&writer, &business, &epoch, &100_000i128, &0u32, &1u64);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.finalize_epoch(&writer, &epoch);
+    }));
+
+    assert!(result.is_err());
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Read API Tests
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_get_snapshot_returns_none_for_unfinalized() {
+    let (_env, client, _admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-99");
+
+    assert!(client.get_snapshot(&business, &period).is_none());
+}
+
+#[test]
+fn test_snapshots_for_business_returns_all_periods() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+
+    let periods = ["2026-01", "2026-02", "2026-03"];
+    for p in periods {
+        let period = String::from_str(&env, p);
+        client.record_snapshot(&admin, &business, &period, &100_000i128, &0u32, &1u64);
+    }
+
+    let snapshots = client.get_snapshots_for_business(&business);
+    assert_eq!(snapshots.len(), 3);
+}
+
+#[test]
+fn test_historical_snapshots_read_after_finalization() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-02");
+
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &1u32, &1u64);
+    client.finalize_epoch(&admin, &epoch);
+
+    let snapshot = client.get_snapshot(&business, &epoch).unwrap();
+    assert_eq!(snapshot.trailing_revenue, 100_000i128);
+    assert_eq!(snapshot.anomaly_count, 1u32);
+}
+
+#[test]
+fn test_snapshot_immutability_proof() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-02");
+
+    set_ledger_timestamp(&env, 1_700_000_100);
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &0u32, &1u64);
+
+    client.finalize_epoch(&admin, &epoch);
+
+    let snapshot = client.get_snapshot(&business, &epoch).unwrap();
+    let finalization = client.get_epoch_finalization(&epoch).unwrap();
+
+    assert_eq!(snapshot.period, epoch);
+    assert_eq!(snapshot.recorded_at, 1_700_000_100);
+    assert_eq!(finalization.epoch, epoch);
+    assert_eq!(finalization.finalized_by, admin);
+}
