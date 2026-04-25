@@ -467,3 +467,115 @@ fn test_lender_queries_snapshots_for_underwriting() {
     assert_eq!(latest.anomaly_count, 2u32);
     assert!(client.is_epoch_finalized(&String::from_str(&env, "2026-03")));
 }
+
+#[test]
+fn test_finalized_epoch_rejects_new_snapshots() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-02");
+
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &0u32, &1u64);
+    client.finalize_epoch(&admin, &epoch);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.record_snapshot(&admin, &business, &epoch, &200_000i128, &1u32, &2u64);
+    }));
+
+    assert!(result.is_err(), "finalized epoch must reject new snapshots");
+}
+
+#[test]
+fn test_finalization_is_permanent() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-02");
+
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &0u32, &1u64);
+    client.finalize_epoch(&admin, &epoch);
+
+    assert!(client.is_epoch_finalized(&epoch));
+    assert!(client.get_epoch_finalization(&epoch).is_some());
+
+    let finalization = client.get_epoch_finalization(&epoch).unwrap();
+    assert_eq!(finalization.epoch, epoch);
+    assert_eq!(finalization.finalized_by, admin);
+}
+
+#[test]
+fn test_snapshots_immutable_after_finalization() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-02");
+
+    set_ledger_timestamp(&env, 1_700_000_100);
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &0u32, &1u64);
+    client.finalize_epoch(&admin, &epoch);
+
+    let snapshot = client.get_snapshot(&business, &epoch).unwrap();
+    assert_eq!(snapshot.trailing_revenue, 100_000i128);
+    assert_eq!(snapshot.recorded_at, 1_700_000_100);
+}
+
+#[test]
+fn test_snapshot_replacement_allowed_before_finalization() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-02");
+
+    set_ledger_timestamp(&env, 1_700_000_100);
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &0u32, &1u64);
+
+    set_ledger_timestamp(&env, 1_700_000_200);
+    client.record_snapshot(&admin, &business, &epoch, &200_000i128, &1u32, &2u64);
+
+    let snapshot = client.get_snapshot(&business, &epoch).unwrap();
+    assert_eq!(snapshot.trailing_revenue, 200_000i128);
+    assert_eq!(snapshot.recorded_at, 1_700_000_200);
+}
+
+#[test]
+fn test_admin_cannot_unfinalize_epoch() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-02");
+
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &0u32, &1u64);
+    client.finalize_epoch(&admin, &epoch);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.finalize_epoch(&admin, &epoch);
+    }));
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_writer_cannot_finalize_epoch() {
+    let (env, client, admin) = setup_snapshot_only();
+    let writer = Address::generate(&env);
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-02");
+
+    client.add_writer(&admin, &writer);
+    client.record_snapshot(&writer, &business, &epoch, &100_000i128, &0u32, &1u64);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.finalize_epoch(&writer, &epoch);
+    }));
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_historical_snapshots_read_after_finalization() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-02");
+
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &1u32, &1u64);
+    client.finalize_epoch(&admin, &epoch);
+
+    let snapshot = client.get_snapshot(&business, &epoch).unwrap();
+    assert_eq!(snapshot.trailing_revenue, 100_000i128);
+    assert_eq!(snapshot.anomaly_count, 1u32);
+}

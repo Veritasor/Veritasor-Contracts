@@ -483,3 +483,173 @@ fn test_replay_nonce_increments() {
 
     assert_eq!(client.get_replay_nonce(&admin, &NONCE_CHANNEL_ADMIN), 2);
 }
+
+#[test]
+fn test_admin_cannot_be_changed() {
+    let (_env, client, admin) = setup();
+    assert_eq!(client.get_admin(), admin);
+}
+
+#[test]
+fn test_cannot_truncate_log_via_api() {
+    let (env, client, admin) = setup();
+    let actor = Address::generate(&env);
+    let source = Address::generate(&env);
+
+    for i in 1u64..=3 {
+        client.append(
+            &i,
+            &actor,
+            &source,
+            &String::from_str(&env, "submit"),
+            &String::from_str(&env, "payload"),
+        );
+    }
+
+    assert_eq!(client.get_log_count(), 3);
+    assert_no_sequence_gaps(&env, &client);
+}
+
+#[test]
+fn test_last_hash_updates_on_each_append() {
+    let (env, client, admin) = setup();
+    let actor = Address::generate(&env);
+    let source = Address::generate(&env);
+
+    let hash_0 = client.get_last_hash();
+
+    client.append(
+        &1u64,
+        &actor,
+        &source,
+        &String::from_str(&env, "a"),
+        &String::from_str(&env, ""),
+    );
+    let hash_1 = client.get_last_hash();
+    assert_ne!(hash_0, hash_1);
+
+    client.append(
+        &2u64,
+        &actor,
+        &source,
+        &String::from_str(&env, "b"),
+        &String::from_str(&env, ""),
+    );
+    let hash_2 = client.get_last_hash();
+    assert_ne!(hash_1, hash_2);
+
+    assert_no_sequence_gaps(&env, &client);
+}
+
+#[test]
+fn test_hash_uniqueness_for_identical_entries() {
+    let (env, client, admin) = setup();
+    let source = Address::generate(&env);
+
+    let actor1 = Address::generate(&env);
+    let actor2 = Address::generate(&env);
+
+    client.append(
+        &1u64,
+        &actor1,
+        &source,
+        &String::from_str(&env, "submit"),
+        &String::from_str(&env, "same_payload"),
+    );
+    client.append(
+        &2u64,
+        &actor2,
+        &source,
+        &String::from_str(&env, "submit"),
+        &String::from_str(&env, "same_payload"),
+    );
+
+    let rec1 = client.get_entry(&0).unwrap();
+    let rec2 = client.get_entry(&1).unwrap();
+    assert_ne!(rec1.entry_hash, rec2.entry_hash);
+}
+
+#[test]
+fn test_correlation_ids_via_payload() {
+    let (env, client, admin) = setup();
+    let source = Address::generate(&env);
+    let actor = Address::generate(&env);
+
+    let correlation_id = String::from_str(&env, "txn-abc123");
+    client.append(
+        &1u64,
+        &actor,
+        &source,
+        &String::from_str(&env, "submit"),
+        &correlation_id,
+    );
+
+    let rec = client.get_entry(&0).unwrap();
+    assert_eq!(rec.payload, String::from_str(&env, "txn-abc123"));
+}
+
+#[test]
+fn test_payload_distinguishes_entries() {
+    let (env, client, admin) = setup();
+    let source = Address::generate(&env);
+    let actor = Address::generate(&env);
+
+    client.append(
+        &1u64,
+        &actor,
+        &source,
+        &String::from_str(&env, "submit"),
+        &String::from_str(&env, "payload-a"),
+    );
+    client.append(
+        &2u64,
+        &actor,
+        &source,
+        &String::from_str(&env, "submit"),
+        &String::from_str(&env, "payload-b"),
+    );
+
+    let rec1 = client.get_entry(&0).unwrap();
+    let rec2 = client.get_entry(&1).unwrap();
+    assert_ne!(rec1.payload, rec2.payload);
+    assert_ne!(rec1.entry_hash, rec2.entry_hash);
+}
+
+#[test]
+fn test_actor_index_allows_filtered_queries() {
+    let (env, client, admin) = setup();
+    let source = Address::generate(&env);
+    let actor1 = Address::generate(&env);
+    let actor2 = Address::generate(&env);
+
+    client.append(
+        &1u64,
+        &actor1,
+        &source,
+        &String::from_str(&env, "submit"),
+        &String::from_str(&env, ""),
+    );
+    client.append(
+        &2u64,
+        &actor2,
+        &source,
+        &String::from_str(&env, "revoke"),
+        &String::from_str(&env, ""),
+    );
+    client.append(
+        &3u64,
+        &actor1,
+        &source,
+        &String::from_str(&env, "migrate"),
+        &String::from_str(&env, ""),
+    );
+
+    let seqs1 = client.get_seqs_by_actor(&actor1);
+    let seqs2 = client.get_seqs_by_actor(&actor2);
+
+    assert_eq!(seqs1.len(), 2);
+    assert_eq!(seqs2.len(), 1);
+    assert!(seqs1.iter().any(|&s| s == 0));
+    assert!(seqs1.iter().any(|&s| s == 2));
+    assert!(seqs2.iter().any(|&s| s == 1));
+}
