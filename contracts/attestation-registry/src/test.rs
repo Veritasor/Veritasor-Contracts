@@ -544,8 +544,84 @@ fn version_info_activated_at_is_reasonable() {
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  Reorg-resilience tests
+//  Cross-contract validation tests
 // ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn cross_contract_implementation_address_stable() {
+    let (_env, client, _admin, initial_impl) = setup();
+    let impl_address = client.get_current_implementation();
+    assert_eq!(impl_address, Some(initial_impl));
+}
+
+#[test]
+fn cross_contract_version_info_includes_address() {
+    let (_env, client, _admin, initial_impl) = setup();
+    let info = client.get_version_info().unwrap();
+    assert_eq!(info.implementation, initial_impl);
+}
+
+#[test]
+fn cross_contract_query_functions_consistent() {
+    let (_env, client, _admin, initial_impl) = setup();
+    let impl_from_query = client.get_current_implementation().unwrap();
+    let version_from_query = client.get_current_version().unwrap();
+    let info = client.get_version_info().unwrap();
+    
+    assert_eq!(impl_from_query, info.implementation);
+    assert_eq!(version_from_query, info.version);
+}
+
+#[test]
+fn cross_contract_upgrade_preserves_address_stability() {
+    let (env, client, _admin, _initial_impl) = setup();
+    let impl_v2 = Address::generate(&env);
+    
+    client.upgrade(&impl_v2, &2u32, &None);
+    
+    assert_eq!(client.get_current_implementation(), Some(impl_v2.clone()));
+    let info = client.get_version_info().unwrap();
+    assert_eq!(info.implementation, impl_v2);
+}
+
+#[test]
+fn cross_contract_rollback_restores_previous() {
+    let (env, client, _admin, impl_v1) = setup();
+    let impl_v2 = Address::generate(&env);
+    let impl_v2_clone = impl_v2.clone();
+    
+    client.upgrade(&impl_v2, &2u32, &None);
+    client.rollback();
+    
+    assert_eq!(client.get_current_implementation(), Some(impl_v1));
+    assert_eq!(client.get_previous_implementation(), Some(impl_v2_clone));
+}
+
+#[test]
+fn cross_contract_has_key_returns_false_for_unregistered() {
+    let (env, client, _admin, _initial_impl) = setup();
+    let attester = Address::generate(&env);
+    let key = soroban_sdk::String::from_str(&env, "test-period");
+    
+    assert!(!client.has_attestation_key(&attester, &key));
+}
+
+#[test]
+#[should_panic(expected = "registry not initialized")]
+fn cross_contract_register_key_requires_initialization() {
+    let (env, client) = setup_uninitialized();
+    let attester = Address::generate(&env);
+    let key = soroban_sdk::String::from_str(&env, "test-period");
+    client.register_attestation_key(&attester, &key);
+}
+
+#[test]
+fn cross_contract_has_key_before_initialization_returns_false() {
+    let (env, client) = setup_uninitialized();
+    let attester = Address::generate(&env);
+    let key = soroban_sdk::String::from_str(&env, "test-period");
+    assert!(!client.has_attestation_key(&attester, &key));
+}
 
 #[test]
 #[should_panic(expected = "new version must be greater than current version")]
@@ -580,4 +656,102 @@ fn reorg_resilience_upgrade_after_rollback() {
     assert_eq!(client.get_current_version(), Some(3u32));
     assert_eq!(client.get_previous_version(), Some(1u32));
     assert_eq!(client.get_previous_implementation(), Some(impl_v1));
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Security validation tests (negative tests for unauthorized access)
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+#[should_panic(expected = "attestation key already registered")]
+fn security_duplicate_key_same_attester_same_key_rejected() {
+    let (env, client, _admin, _initial_impl) = setup();
+    let attester = Address::generate(&env);
+    let key = soroban_sdk::String::from_str(&env, "2024-Q1");
+    
+    client.register_attestation_key(&attester, &key);
+    client.register_attestation_key(&attester, &key);
+}
+
+#[test]
+fn security_different_attesters_same_key_allowed() {
+    let (env, client, _admin, _initial_impl) = setup();
+    let attester_a = Address::generate(&env);
+    let attester_b = Address::generate(&env);
+    let key = soroban_sdk::String::from_str(&env, "unique-key");
+    
+    client.register_attestation_key(&attester_a, &key);
+    client.register_attestation_key(&attester_b, &key);
+    
+    assert!(client.has_attestation_key(&attester_a, &key));
+    assert!(client.has_attestation_key(&attester_b, &key));
+}
+
+#[test]
+fn security_key_persists_after_multiple_upgrades() {
+    let (env, client, _admin, _initial_impl) = setup();
+    let attester = Address::generate(&env);
+    let key = soroban_sdk::String::from_str(&env, "persistent-key");
+    
+    client.register_attestation_key(&attester, &key);
+    
+    for version in 2..=5 {
+        let new_impl = Address::generate(&env);
+        client.upgrade(&new_impl, &(version as u32), &None);
+        assert!(client.has_attestation_key(&attester, &key));
+    }
+}
+
+#[test]
+fn security_version_must_increase_strictly() {
+    let (env, client, _admin, _initial_impl) = setup();
+    let new_impl = Address::generate(&env);
+    
+    client.upgrade(&new_impl, &2u32, &None);
+    assert_eq!(client.get_current_version(), Some(2u32));
+}
+
+#[test]
+#[should_panic(expected = "new version must be greater than current version")]
+fn security_downgrade_rejected() {
+    let (env, client, _admin, _initial_impl) = setup();
+    let impl_v2 = Address::generate(&env);
+    let impl_v3 = Address::generate(&env);
+    
+    client.upgrade(&impl_v2, &2u32, &None);
+    client.upgrade(&impl_v3, &1u32, &None);
+}
+
+#[test]
+fn security_admin_transfer_and_verify() {
+    let (env, client, admin, _initial_impl) = setup();
+    let new_admin = Address::generate(&env);
+    let new_impl = Address::generate(&env);
+    
+    client.transfer_admin(&new_admin);
+    assert_eq!(client.get_admin(), Some(new_admin));
+    assert_ne!(client.get_admin(), Some(admin));
+    
+    client.upgrade(&new_impl, &2u32, &None);
+    assert_eq!(client.get_current_version(), Some(2u32));
+}
+
+#[test]
+fn security_rollback_swap_verification() {
+    let (env, client, _admin, impl_v1) = setup();
+    let impl_v2 = Address::generate(&env);
+    let impl_v3 = Address::generate(&env);
+    
+    client.upgrade(&impl_v2, &2u32, &None);
+    client.upgrade(&impl_v3, &3u32, &None);
+    
+    assert_eq!(client.get_previous_version(), Some(2u32));
+    assert_eq!(client.get_previous_implementation(), Some(impl_v2.clone()));
+    
+    client.rollback();
+    
+    assert_eq!(client.get_current_version(), Some(2u32));
+    assert_eq!(client.get_current_implementation(), Some(impl_v2.clone()));
+    assert_eq!(client.get_previous_version(), Some(3u32));
+    assert_eq!(client.get_previous_implementation(), Some(impl_v3));
 }

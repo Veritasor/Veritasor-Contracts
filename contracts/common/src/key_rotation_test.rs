@@ -1003,3 +1003,212 @@ fn test_cancel_then_repropose_then_confirm() {
         assert_eq!(result.new_admin, right_new);
     });
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  Negative Tests - Unauthorized Access
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+#[should_panic(expected = "caller is not the proposed new admin")]
+fn negative_confirm_by_wrong_new_admin() {
+    let (env, cid) = setup();
+    env.as_contract(&cid, || {
+        set_test_config(&env);
+        let old_admin = Address::generate(&env);
+        let new_admin = Address::generate(&env);
+        let wrong_admin = Address::generate(&env);
+
+        propose_rotation(&env, &old_admin, &new_admin);
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + 11);
+
+        confirm_rotation(&env, &wrong_admin);
+    });
+}
+
+#[test]
+#[should_panic(expected = "only the current admin can cancel")]
+fn negative_cancel_by_wrong_admin() {
+    let (env, cid) = setup();
+    env.as_contract(&cid, || {
+        set_test_config(&env);
+        let old_admin = Address::generate(&env);
+        let new_admin = Address::generate(&env);
+        let wrong_admin = Address::generate(&env);
+
+        propose_rotation(&env, &old_admin, &new_admin);
+        cancel_rotation(&env, &wrong_admin);
+    });
+}
+
+#[test]
+#[should_panic(expected = "no pending rotation")]
+fn negative_confirm_without_propose() {
+    let (env, cid) = setup();
+    env.as_contract(&cid, || {
+        let new_admin = Address::generate(&env);
+        confirm_rotation(&env, &new_admin);
+    });
+}
+
+#[test]
+#[should_panic(expected = "new admin must differ from current admin")]
+fn negative_propose_rotation_to_same_address() {
+    let (env, cid) = setup();
+    env.as_contract(&cid, || {
+        set_test_config(&env);
+        let admin = Address::generate(&env);
+        propose_rotation(&env, &admin, &admin);
+    });
+}
+
+#[test]
+#[should_panic(expected = "a rotation is already pending")]
+fn negative_propose_while_pending_already_exists() {
+    let (env, cid) = setup();
+    env.as_contract(&cid, || {
+        set_test_config(&env);
+        let old_admin = Address::generate(&env);
+        let new_admin1 = Address::generate(&env);
+        let new_admin2 = Address::generate(&env);
+
+        propose_rotation(&env, &old_admin, &new_admin1);
+        propose_rotation(&env, &old_admin, &new_admin2);
+    });
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Negative Tests - Timing Violations
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+#[should_panic(expected = "timelock has not elapsed")]
+fn negative_confirm_immediately_after_propose() {
+    let (env, cid) = setup();
+    env.as_contract(&cid, || {
+        set_test_config(&env);
+        let old_admin = Address::generate(&env);
+        let new_admin = Address::generate(&env);
+
+        propose_rotation(&env, &old_admin, &new_admin);
+        confirm_rotation(&env, &new_admin);
+    });
+}
+
+#[test]
+#[should_panic(expected = "rotation confirmation window has expired")]
+fn negative_confirm_after_expiry() {
+    let (env, cid) = setup();
+    env.as_contract(&cid, || {
+        set_test_config(&env);
+        let old_admin = Address::generate(&env);
+        let new_admin = Address::generate(&env);
+
+        propose_rotation(&env, &old_admin, &new_admin);
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + 31);
+
+        confirm_rotation(&env, &new_admin);
+    });
+}
+
+#[test]
+#[should_panic(expected = "rotation cooldown has not elapsed")]
+fn negative_propose_immediately_after_rotation() {
+    let (env, cid) = setup();
+    env.as_contract(&cid, || {
+        set_test_config(&env);
+        let admin1 = Address::generate(&env);
+        let admin2 = Address::generate(&env);
+        let admin3 = Address::generate(&env);
+
+        propose_rotation(&env, &admin1, &admin2);
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + 11);
+        confirm_rotation(&env, &admin2);
+
+        propose_rotation(&env, &admin2, &admin3);
+    });
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Negative Tests - Configuration
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+#[should_panic(expected = "timelock must be at least 1 ledger")]
+fn negative_zero_timelock_config() {
+    let (env, cid) = setup();
+    env.as_contract(&cid, || {
+        let config = RotationConfig {
+            timelock_ledgers: 0,
+            confirmation_window_ledgers: 20,
+            cooldown_ledgers: 5,
+            grace_period_ledgers: 10,
+        };
+        set_rotation_config(&env, &config);
+    });
+}
+
+#[test]
+#[should_panic(expected = "confirmation window must be at least 1 ledger")]
+fn negative_zero_confirmation_window_config() {
+    let (env, cid) = setup();
+    env.as_contract(&cid, || {
+        let config = RotationConfig {
+            timelock_ledgers: 10,
+            confirmation_window_ledgers: 0,
+            cooldown_ledgers: 5,
+            grace_period_ledgers: 10,
+        };
+        set_rotation_config(&env, &config);
+    });
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Negative Tests - Stale Key Scenarios
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn negative_grace_period_not_applied_to_emergency() {
+    let (env, cid) = setup();
+    env.as_contract(&cid, || {
+        set_test_config(&env);
+        let old_admin = Address::generate(&env);
+        let new_admin = Address::generate(&env);
+
+        emergency_rotate(&env, &old_admin, &new_admin);
+
+        assert!(!is_in_grace_period(&env, &old_admin));
+    });
+}
+
+#[test]
+fn negative_grace_period_applied_to_planned_rotation() {
+    let (env, cid) = setup();
+    env.as_contract(&cid, || {
+        set_test_config(&env);
+        let old_admin = Address::generate(&env);
+        let new_admin = Address::generate(&env);
+
+        propose_rotation(&env, &old_admin, &new_admin);
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + 11);
+        confirm_rotation(&env, &new_admin);
+
+        assert!(is_in_grace_period(&env, &old_admin));
+
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + 11);
+        assert!(!is_in_grace_period(&env, &old_admin));
+    });
+}
+
+#[test]
+fn negative_no_grace_period_for_unseen_admin() {
+    let (env, cid) = setup();
+    env.as_contract(&cid, || {
+        let unknown_admin = Address::generate(&env);
+        assert!(!is_in_grace_period(&env, &unknown_admin));
+    });
+}
