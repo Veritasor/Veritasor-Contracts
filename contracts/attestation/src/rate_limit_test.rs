@@ -32,16 +32,15 @@ fn set_ledger_timestamp(env: &Env, ts: u64) {
 fn submit(client: &AttestationContractClient<'_>, env: &Env, business: &Address, index: u32) {
     let period = String::from_str(env, &std::format!("2026-{:02}", index));
     let root = BytesN::from_array(env, &[index as u8; 32]);
-    let nonce = client.get_replay_nonce(business, &crate::NONCE_CHANNEL_BUSINESS);
     client.submit_attestation(
         business,
         &period,
         &root,
         &1_700_000_000u64,
         &1u32,
+        &0i128,
         &None,
         &None,
-        &nonce,
     );
 }
 
@@ -132,7 +131,6 @@ fn test_submit_within_full_and_burst_limits() {
 
     assert_eq!(client.get_submission_window_count(&business), 2);
     assert_eq!(client.get_submission_burst_count(&business), 2);
-    assert_eq!(client.get_replay_nonce(&business, &crate::NONCE_CHANNEL_BUSINESS), 2);
 }
 
 #[test]
@@ -477,4 +475,116 @@ fn test_storage_pruning_after_full_window_expiry() {
     set_ledger_timestamp(&env, 1_103); // > 1_002 + 100
     assert_eq!(client.get_submission_window_count(&business), 0);
     assert_eq!(client.get_submission_burst_count(&business), 0);
+}
+
+// ── Boundary and edge-case tests ─────────────────────────────────────────────
+
+/// Submission exactly at max_submissions (the Nth) must succeed;
+/// the very next one (N+1) must be rejected.
+#[test]
+#[should_panic(expected = "rate limit exceeded")]
+fn test_submission_at_limit_allowed_one_over_rejected() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+
+    // burst == full window so only the full-window guard can fire
+    configure_rate_limit(&client, 3, 3600, 3, 3600, true, 1);
+
+    set_ledger_timestamp(&env, 1_000);
+    submit(&client, &env, &business, 1);
+    set_ledger_timestamp(&env, 1_001);
+    submit(&client, &env, &business, 2);
+    set_ledger_timestamp(&env, 1_002);
+    // 3rd submission — exactly at the limit — must succeed
+    submit(&client, &env, &business, 3);
+    assert_eq!(client.get_submission_window_count(&business), 3);
+
+    // 4th submission — one over the limit — must panic
+    set_ledger_timestamp(&env, 1_003);
+    submit(&client, &env, &business, 4);
+}
+
+/// After the full window expires, all old timestamps are pruned and
+/// submissions must resume successfully.
+#[test]
+fn test_submissions_resume_after_full_window_expiry() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+
+    configure_rate_limit(&client, 2, 100, 2, 100, true, 1);
+
+    set_ledger_timestamp(&env, 1_000);
+    submit(&client, &env, &business, 1);
+    set_ledger_timestamp(&env, 1_001);
+    submit(&client, &env, &business, 2);
+
+    // Window is full; advance past window_seconds so all entries expire
+    set_ledger_timestamp(&env, 1_102); // > 1_001 + 100
+    assert_eq!(client.get_submission_window_count(&business), 0);
+
+    // New submission must succeed after pruning
+    submit(&client, &env, &business, 3);
+    assert_eq!(client.get_submission_window_count(&business), 1);
+}
+
+/// Burst window boundary: a timestamp recorded exactly at
+/// `now - burst_window_seconds` is no longer in the burst window
+/// (cutoff uses strict `>`, not `>=`), so the burst slot is freed.
+#[test]
+fn test_burst_boundary_timestamp_is_excluded() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+
+    // burst: 1 submission / 10 s; full: 5 / 3600 s
+    configure_rate_limit(&client, 5, 3600, 1, 10, true, 1);
+
+    set_ledger_timestamp(&env, 1_000);
+    submit(&client, &env, &business, 1);
+
+    // At now=1_010, cutoff = 1_010 - 10 = 1_000.
+    // The stored timestamp (1_000) is NOT > cutoff, so it is pruned from burst.
+    set_ledger_timestamp(&env, 1_010);
+    assert_eq!(client.get_submission_burst_count(&business), 0);
+
+    // A new submission at 1_010 must succeed (burst slot is free)
+    submit(&client, &env, &business, 2);
+    assert_eq!(client.get_submission_burst_count(&business), 1);
+}
+
+/// max_submissions = 1: the very first submission fills the window;
+/// the second must be rejected immediately.
+#[test]
+#[should_panic(expected = "rate limit exceeded")]
+fn test_max_submissions_one_rejects_second() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+
+    configure_rate_limit(&client, 1, 3600, 1, 3600, true, 1);
+
+    set_ledger_timestamp(&env, 1_000);
+    submit(&client, &env, &business, 1);
+
+    set_ledger_timestamp(&env, 1_001);
+    submit(&client, &env, &business, 2);
+}
+
+/// Disabled config (enabled = false) enforces nothing regardless of counts.
+/// Submissions beyond max_submissions must all succeed.
+#[test]
+fn test_disabled_config_enforces_nothing() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+
+    // Tightest possible config, but disabled
+    configure_rate_limit(&client, 1, 3600, 1, 3600, false, 1);
+
+    set_ledger_timestamp(&env, 1_000);
+    submit(&client, &env, &business, 1);
+    submit(&client, &env, &business, 2);
+    submit(&client, &env, &business, 3);
+
+    // Counts stay zero because rate limiting is off
+    assert_eq!(client.get_submission_window_count(&business), 0);
+    assert_eq!(client.get_submission_burst_count(&business), 0);
+    assert_eq!(client.get_business_count(&business), 3);
 }
