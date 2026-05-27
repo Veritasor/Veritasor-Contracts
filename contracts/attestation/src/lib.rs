@@ -102,11 +102,12 @@ fn compare_strings(a: &String, b: &String) -> Ordering {
 
 #[contractimpl]
 impl AttestationContract {
-    pub fn initialize(env: Env, admin: Address, _nonce: u64) {
+    pub fn initialize(env: Env, admin: Address, nonce: u64) {
         if dynamic_fees::is_initialized(&env) {
             panic!("already initialized");
         }
         admin.require_auth();
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
         dynamic_fees::set_admin(&env, &admin);
         access_control::grant_role(&env, &admin, ROLE_ADMIN, &admin);
     }
@@ -208,12 +209,14 @@ impl AttestationContract {
         merkle_root: BytesN<32>,
         timestamp: u64,
         version: u32,
-        _fee_paid: i128, // legacy argument, preserved for signature compatibility
+        _fee_paid: i128,
         proof_hash: Option<BytesN<32>>,
         expiry_timestamp: Option<u64>,
     ) {
         access_control::require_not_paused(&env);
         business.require_auth();
+
+        rate_limit::check_rate_limit(&env, &business);
 
         let key = DataKey::Attestation(business.clone(), period.clone());
         if env.storage().instance().has(&key) {
@@ -608,8 +611,38 @@ impl AttestationContract {
         dynamic_fees::get_admin(&env)
     }
 
-    pub fn get_submission_burst_count(env: Env, business: Address) -> u32 {
+    pub fn get_submission_window_count(env: Env, business: Address) -> u32 {
         rate_limit::get_submission_count(&env, &business)
+    }
+
+    pub fn get_submission_burst_count(env: Env, business: Address) -> u32 {
+        rate_limit::get_burst_submission_count(&env, &business)
+    }
+
+    pub fn get_rate_limit_config(env: Env) -> Option<RateLimitConfig> {
+        rate_limit::get_rate_limit_config(&env)
+    }
+
+    pub fn configure_rate_limit(
+        env: Env,
+        max_submissions: u32,
+        window_seconds: u64,
+        burst_max_submissions: u32,
+        burst_window_seconds: u64,
+        enabled: bool,
+        nonce: u64,
+    ) {
+        let admin = dynamic_fees::get_admin(&env);
+        admin.require_auth();
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
+        let config = RateLimitConfig {
+            max_submissions,
+            window_seconds,
+            burst_max_submissions,
+            burst_window_seconds,
+            enabled,
+        };
+        rate_limit::set_rate_limit_config(&env, &config);
     }
 
     pub fn configure_key_rotation(
@@ -851,5 +884,7 @@ impl AttestationContract {
 // ── Test Modules ──
 #[cfg(test)]
 mod batch_submission_test;
+#[cfg(test)]
+mod rate_limit_test;
 #[cfg(test)]
 mod test;
