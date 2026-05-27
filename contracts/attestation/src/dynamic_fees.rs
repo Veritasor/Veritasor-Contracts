@@ -48,6 +48,18 @@
 use soroban_sdk::{contracttype, token, Address, Env, Symbol, Val, Vec};
 
 // ════════════════════════════════════════════════════════════════════
+//  Tier bounds
+// ════════════════════════════════════════════════════════════════════
+
+/// Maximum supported business tier index (inclusive).
+///
+/// Tiers are 0-indexed: 0 = Standard, 1 = Pro, 2 = Enterprise, …, MAX_TIER = top tier.
+/// Both `set_business_tier` and `set_tier_discount` reject any value above this limit,
+/// preventing silent misconfiguration where a business is placed in an unconfigured tier
+/// that silently yields a 0-discount (full fee).
+pub const MAX_TIER: u32 = 9;
+
+// ════════════════════════════════════════════════════════════════════
 //  Storage types
 // ════════════════════════════════════════════════════════════════════
 
@@ -189,6 +201,7 @@ pub fn get_tier_discount(env: &Env, tier: u32) -> u32 {
 }
 
 pub fn set_tier_discount(env: &Env, tier: u32, discount_bps: u32) {
+    assert!(tier <= MAX_TIER, "tier exceeds MAX_TIER");
     assert!(discount_bps <= 10_000, "discount cannot exceed 10 000 bps");
     env.storage()
         .instance()
@@ -204,6 +217,7 @@ pub fn get_business_tier(env: &Env, business: &Address) -> u32 {
 }
 
 pub fn set_business_tier(env: &Env, business: &Address, tier: u32) {
+    assert!(tier <= MAX_TIER, "tier exceeds MAX_TIER");
     env.storage()
         .instance()
         .set(&DataKey::BusinessTier(business.clone()), &tier);
