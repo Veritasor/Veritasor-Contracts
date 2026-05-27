@@ -1051,14 +1051,7 @@ fn test_duplicate_identical_items_in_batch() {
     let (env, client) = setup();
     let business = Address::generate(&env);
 
-    let item = create_batch_item(
-        &env,
-        &business,
-        "2026-01",
-        &[1u8; 32],
-        1_700_000_000,
-        1,
-    );
+    let item = create_batch_item(&env, &business, "2026-01", &[1u8; 32], 1_700_000_000, 1);
 
     let mut items = Vec::new(&env);
     items.push_back(item.clone());
@@ -1077,26 +1070,12 @@ fn test_duplicate_across_batch_calls() {
 
     // First batch submission
     let mut items1 = Vec::new(&env);
-    items1.push_back(create_batch_item(
-        &env,
-        &business,
-        "2026-01",
-        &[1u8; 32],
-        1_700_000_000,
-        1,
-    ));
+    items1.push_back(create_batch_item(&env, &business, "2026-01", &[1u8; 32], 1_700_000_000, 1));
     client.submit_attestations_batch(&items1);
 
     // Second batch submission with same (business, period)
     let mut items2 = Vec::new(&env);
-    items2.push_back(create_batch_item(
-        &env,
-        &business,
-        "2026-01",
-        &[2u8; 32], // Different merkle_root, but same business+period
-        1_700_000_001,
-        1,
-    ));
+    items2.push_back(create_batch_item(&env, &business, "2026-01", &[2u8; 32], 1_700_000_001, 1)); // Different merkle_root, but same business+period
     client.submit_attestations_batch(&items2);
 }
 
@@ -1108,30 +1087,9 @@ fn test_distinct_periods_for_business_in_batch_succeed() {
     let business = Address::generate(&env);
 
     let mut items = Vec::new(&env);
-    items.push_back(create_batch_item(
-        &env,
-        &business,
-        "2026-01",
-        &[1u8; 32],
-        1_700_000_000,
-        1,
-    ));
-    items.push_back(create_batch_item(
-        &env,
-        &business,
-        "2026-02",
-        &[2u8; 32],
-        1_700_008_640,
-        1,
-    ));
-    items.push_back(create_batch_item(
-        &env,
-        &business,
-        "2026-03",
-        &[3u8; 32],
-        1_700_017_280,
-        1,
-    ));
+    items.push_back(create_batch_item(&env, &business, "2026-01", &[1u8; 32], 1_700_000_000, 1));
+    items.push_back(create_batch_item(&env, &business, "2026-02", &[2u8; 32], 1_700_008_640, 1));
+    items.push_back(create_batch_item(&env, &business, "2026-03", &[3u8; 32], 1_700_017_280, 1));
 
     client.submit_attestations_batch(&items);
 
