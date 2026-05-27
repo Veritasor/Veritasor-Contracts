@@ -592,8 +592,30 @@ impl AttestationContract {
         env.storage().instance().set(&key, &updated);
     }
 
+    /// Admin: set the DAO contract address for dynamic fee config override.
+    pub fn set_dao(env: Env, dao: Address) {
+        dynamic_fees::require_admin(&env);
+        dynamic_fees::set_dao(&env, &dao);
+    }
+
+    /// Admin: set the DAO contract address for flat fee config override.
+    pub fn set_flat_fee_dao(env: Env, dao: Address) {
+        dynamic_fees::require_admin(&env);
+        fees::set_dao(&env, &dao);
+    }
+
+    /// Returns the locally stored dynamic fee config (ignores DAO).
+    pub fn get_fee_config(env: Env) -> Option<FeeConfig> {
+        dynamic_fees::get_fee_config(&env)
+    }
+
     pub fn get_flat_fee_config(env: Env) -> Option<FlatFeeConfig> {
         fees::get_flat_fee_config(&env)
+    }
+
+    /// Returns the effective flat fee config (DAO override takes precedence).
+    pub fn get_effective_flat_fee_config(env: Env) -> Option<FlatFeeConfig> {
+        fees::get_effective_flat_fee_config(&env)
     }
 
     pub fn get_fee_quote(env: Env, business: Address) -> i128 {
@@ -851,5 +873,7 @@ impl AttestationContract {
 // ── Test Modules ──
 #[cfg(test)]
 mod batch_submission_test;
+#[cfg(test)]
+mod dao_override_test;
 #[cfg(test)]
 mod test;
