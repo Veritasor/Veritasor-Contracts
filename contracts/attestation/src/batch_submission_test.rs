@@ -10,6 +10,7 @@ use super::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
 use soroban_sdk::{Address, BytesN, Env, String, Vec};
+use soroban_sdk::Vec as SorobanVec;
 
 // ════════════════════════════════════════════════════════════════════
 //  Helpers
