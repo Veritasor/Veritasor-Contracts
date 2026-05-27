@@ -54,7 +54,7 @@ pub use dispute::{
     Dispute, DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType, OptionalResolution,
 };
 pub use dynamic_fees::{compute_fee, DataKey, FeeConfig};
-pub use events::{AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent};
+pub use events::{AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent, ProofHashUpdatedEvent};
 pub use fees::{collect_flat_fee, FlatFeeConfig};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
 pub use rate_limit::RateLimitConfig;
@@ -504,6 +504,42 @@ impl AttestationContract {
         );
     }
 
+    pub fn update_proof_hash(
+        env: Env,
+        caller: Address,
+        business: Address,
+        period: String,
+        proof_hash: Option<BytesN<32>>,
+    ) {
+        access_control::require_admin(&env, &caller);
+
+        let key = DataKey::Attestation(business.clone(), period.clone());
+        let (merkle_root, timestamp, version, fee, old_proof_hash, expiry): AttestationData = env
+            .storage()
+            .instance()
+            .get(&key)
+            .expect("attestation not found");
+
+        let data: AttestationData = (
+            merkle_root,
+            timestamp,
+            version,
+            fee,
+            proof_hash.clone(),
+            expiry,
+        );
+        env.storage().instance().set(&key, &data);
+
+        events::emit_proof_hash_updated(
+            &env,
+            &business,
+            &period,
+            &old_proof_hash,
+            &proof_hash,
+            &caller,
+        );
+    }
+
     pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
         let key = DataKey::Attestation(business, period);
         env.storage().instance().get(&key)
@@ -851,5 +887,7 @@ impl AttestationContract {
 // ── Test Modules ──
 #[cfg(test)]
 mod batch_submission_test;
+#[cfg(test)]
+mod proof_hash_update_test;
 #[cfg(test)]
 mod test;

@@ -124,6 +124,8 @@ pub const TOPIC_BIZ_APPROVED: Symbol = symbol_short!("biz_apr");
 pub const TOPIC_BIZ_SUSPENDED: Symbol = symbol_short!("biz_sus");
 /// Topic: business reactivated
 pub const TOPIC_BIZ_REACTIVATE: Symbol = symbol_short!("biz_rea");
+/// Topic: proof hash updated
+pub const TOPIC_PROOF_HASH_UPDATED: Symbol = symbol_short!("ph_upd");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -397,6 +399,24 @@ pub struct BusinessReactivatedEvent {
     pub business: Address,
     /// Admin address that performed the reactivation.
     pub reactivated_by: Address,
+}
+
+/// Normalized payload for `ProofHashUpdated` events.
+///
+/// Emitted when an attestation's proof hash is updated by an admin.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ProofHashUpdatedEvent {
+    /// Business address whose attestation was updated.
+    pub business: Address,
+    /// Period identifier of the attestation.
+    pub period: String,
+    /// Old proof hash value.
+    pub old_proof_hash: Option<BytesN<32>>,
+    /// New proof hash value.
+    pub new_proof_hash: Option<BytesN<32>>,
+    /// Address that performed the update.
+    pub updated_by: Address,
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -919,4 +939,37 @@ pub fn emit_business_reactivated(env: &Env, business: &Address, reactivated_by: 
     };
     env.events()
         .publish((TOPIC_BIZ_REACTIVATE, business.clone()), event);
+}
+
+/// Emit a `ProofHashUpdated` event.
+///
+/// # Arguments
+///
+/// * `env`            – Soroban execution environment.
+/// * `business`       – Business address whose attestation was updated.
+/// * `period`         – Period identifier of the attestation.
+/// * `old_proof_hash` – Old proof hash value.
+/// * `new_proof_hash` – New proof hash value.
+/// * `updated_by`     – Address that performed the update.
+///
+/// # Events
+///
+/// Publishes `(ph_upd, business)` → `ProofHashUpdatedEvent`.
+pub fn emit_proof_hash_updated(
+    env: &Env,
+    business: &Address,
+    period: &String,
+    old_proof_hash: &Option<BytesN<32>>,
+    new_proof_hash: &Option<BytesN<32>>,
+    updated_by: &Address,
+) {
+    let event = ProofHashUpdatedEvent {
+        business: business.clone(),
+        period: period.clone(),
+        old_proof_hash: old_proof_hash.clone(),
+        new_proof_hash: new_proof_hash.clone(),
+        updated_by: updated_by.clone(),
+    };
+    env.events()
+        .publish((TOPIC_PROOF_HASH_UPDATED, business.clone()), event);
 }
