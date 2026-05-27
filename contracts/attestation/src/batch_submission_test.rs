@@ -1053,7 +1053,7 @@ fn test_duplicate_identical_items_in_batch() {
 
     let item = create_batch_item(&env, &business, "2026-01", &[1u8; 32], 1_700_000_000, 1);
 
-    let mut items = Vec::new(&env);
+    let mut items = soroban_sdk::Vec::new(&env);
     items.push_back(item.clone());
     items.push_back(item); // Identical clone
 
