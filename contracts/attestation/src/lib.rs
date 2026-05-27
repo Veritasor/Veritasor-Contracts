@@ -482,7 +482,28 @@ impl AttestationContract {
             .get(&key)
             .expect("attestation not found");
 
-        let data: AttestationData = (
+        let data = (
+            old_root.clone(),
+            timestamp,
+            old_ver,
+            fee,
+            proof_hash.clone(),
+            expiry,
+        );
+        assert!(
+            new_version > old_ver,
+            "new version must be greater than old version"
+        );
+        assert!(
+            !Self::attestation_expired(&env, &data),
+            "cannot migrate an expired attestation"
+        );
+        assert!(
+            !dispute::is_attestation_revoked(&env, &business, &period),
+            "cannot migrate a revoked attestation"
+        );
+
+        let new_data: AttestationData = (
             new_merkle_root.clone(),
             timestamp,
             new_version,
@@ -490,7 +511,7 @@ impl AttestationContract {
             proof_hash,
             expiry,
         );
-        env.storage().instance().set(&key, &data);
+        env.storage().instance().set(&key, &new_data);
 
         events::emit_attestation_migrated(
             &env,
