@@ -729,6 +729,63 @@ impl AttestationContract {
         dispute::get_dispute(&env, dispute_id)
     }
 
+    /// Return all dispute IDs associated with a specific attestation.
+    pub fn get_disputes_by_attestation(
+        env: Env,
+        business: Address,
+        period: String,
+    ) -> Vec<u64> {
+        dispute::get_dispute_ids_by_attestation(&env, &business, &period)
+    }
+
+    /// Return all dispute IDs opened by a specific challenger.
+    pub fn get_disputes_by_challenger(env: Env, challenger: Address) -> Vec<u64> {
+        dispute::get_dispute_ids_by_challenger(&env, &challenger)
+    }
+
+    /// Revoke an attestation.
+    ///
+    /// The caller must be the business owner or hold the ADMIN role.
+    /// Delegates all authorization and idempotency checks to
+    /// [`dispute::require_revocation_authorized`], then atomically writes
+    /// the revocation record, updates the per-business index, and increments
+    /// the global revocation sequence counter via [`dispute::record_revocation`].
+    ///
+    /// # Parameters
+    /// - `caller`  — address authorizing the revocation (admin or business owner)
+    /// - `business` — business whose attestation is being revoked
+    /// - `period`   — period string identifying the attestation
+    /// - `reason`   — human-readable revocation reason stored on-chain
+    /// - `_nonce`   — legacy replay-protection argument (ignored; preserved for
+    ///                signature compatibility with off-chain tooling)
+    ///
+    /// # Panics
+    /// - Contract is paused
+    /// - Attestation does not exist
+    /// - Attestation is already revoked
+    /// - Caller is neither the business owner nor an admin
+    pub fn revoke_attestation(
+        env: Env,
+        caller: Address,
+        business: Address,
+        period: String,
+        reason: String,
+        _nonce: u64,
+    ) {
+        dispute::require_revocation_authorized(&env, &caller, &business, &period);
+        let revocation: RevocationData = (caller.clone(), env.ledger().timestamp(), reason.clone());
+        dispute::record_revocation(&env, &business, &period, &revocation);
+        events::emit_attestation_revoked(&env, &business, &period, &caller, &reason);
+    }
+
+    /// Return `true` when the attestation has been revoked.
+    ///
+    /// This is a thin public wrapper around [`dispute::is_attestation_revoked`]
+    /// so callers do not need to go through the dispute module directly.
+    pub fn is_revoked(env: Env, business: Address, period: String) -> bool {
+        dispute::is_attestation_revoked(&env, &business, &period)
+    }
+
     pub fn register_business(
         env: Env,
         business: Address,
@@ -855,3 +912,5 @@ mod batch_submission_test;
 mod fees_test;
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod verify_attestation_test;
