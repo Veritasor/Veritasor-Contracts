@@ -79,10 +79,15 @@ The function will panic (rejecting the entire batch) if:
 
 - The contract is paused
 - The batch is empty
+- The batch exceeds `MAX_BATCH_SIZE` (25 items)
 - Any business address fails to authorize
 - Any (business, period) pair already exists in storage
 - Any (business, period) pair appears multiple times within the batch
 - Any fee collection fails (e.g., insufficient token balance)
+
+#### Batch Size Limit
+
+`MAX_BATCH_SIZE = 25`. The duplicate scan is O(n²) and each item triggers an auth check, so an unbounded batch is a resource-exhaustion vector. At 25 items the validation loop runs at most 625 comparisons, keeping CPU cost predictable. Callers needing more than 25 attestations should split them across multiple transactions.
 
 #### Events
 
