@@ -504,6 +504,42 @@ impl AttestationContract {
         );
     }
 
+    pub fn extend_expiry(
+        env: Env,
+        business: Address,
+        period: String,
+        new_expiry: u64,
+    ) {
+        business.require_auth();
+
+        let key = DataKey::Attestation(business.clone(), period.clone());
+        let (merkle_root, timestamp, version, fee, proof_hash, old_expiry): AttestationData = env
+            .storage()
+            .instance()
+            .get(&key)
+            .expect("attestation not found");
+
+        let current_expiry = old_expiry.unwrap_or(0);
+        if new_expiry <= current_expiry {
+            panic!("new_expiry must be greater than current expiry");
+        }
+        if new_expiry <= timestamp {
+            panic!("new_expiry must be greater than attestation timestamp");
+        }
+
+        let data: AttestationData = (
+            merkle_root,
+            timestamp,
+            version,
+            fee,
+            proof_hash,
+            Some(new_expiry),
+        );
+        env.storage().instance().set(&key, &data);
+
+        events::emit_attestation_expiry_extended(&env, &business, &period, old_expiry, new_expiry);
+    }
+
     pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
         let key = DataKey::Attestation(business, period);
         env.storage().instance().get(&key)
@@ -851,5 +887,7 @@ impl AttestationContract {
 // ── Test Modules ──
 #[cfg(test)]
 mod batch_submission_test;
+#[cfg(test)]
+mod extend_expiry_test;
 #[cfg(test)]
 mod test;
