@@ -1038,3 +1038,47 @@ fn test_atomicity_clean_batch_succeeds_after_failed_batch() {
         .is_some());
     assert_eq!(client.get_business_count(&business), 3);
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  Batch size cap tests
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_batch_at_max_size_accepted() {
+    let (env, client) = setup();
+    let business = Address::generate(&env);
+
+    let mut items = Vec::new(&env);
+    for i in 0..MAX_BATCH_SIZE {
+        let period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
+        let mut root = [0u8; 32];
+        root[0] = i as u8;
+        items.push_back(create_batch_item(&env, &business, &std::format!("2026-{:02}", i + 1), &root, 1_700_000_000, 1));
+    }
+
+    client.submit_attestations_batch(&items);
+    assert_eq!(client.get_business_count(&business), MAX_BATCH_SIZE as u64);
+}
+
+#[test]
+#[should_panic(expected = "batch exceeds maximum size")]
+fn test_batch_one_over_max_size_rejected() {
+    let (env, client) = setup();
+    let business = Address::generate(&env);
+
+    let mut items = Vec::new(&env);
+    for i in 0..=MAX_BATCH_SIZE {
+        let mut root = [0u8; 32];
+        root[0] = i as u8;
+        items.push_back(create_batch_item(&env, &business, &std::format!("2026-{:02}", i + 1), &root, 1_700_000_000, 1));
+    }
+
+    client.submit_attestations_batch(&items);
+}
+
+#[test]
+#[should_panic(expected = "batch cannot be empty")]
+fn test_batch_empty_still_rejected() {
+    let (env, client) = setup();
+    client.submit_attestations_batch(&Vec::new(&env));
+}

@@ -92,6 +92,14 @@ pub struct BatchAttestationItem {
     pub expiry_timestamp: Option<u64>,
 }
 
+/// Maximum number of items allowed in a single batch submission.
+///
+/// The O(n²) duplicate scan and per-item auth checks mean cost grows
+/// quadratically. At 25 items the validation loop executes at most
+/// 25 × 25 = 625 comparisons — well within Soroban's CPU budget while
+/// still covering all practical bulk-submission use cases.
+pub const MAX_BATCH_SIZE: u32 = 25;
+
 #[contract]
 pub struct AttestationContract;
 
@@ -256,6 +264,9 @@ impl AttestationContract {
         access_control::require_not_paused(&env);
         if items.is_empty() {
             panic!("batch cannot be empty");
+        }
+        if items.len() > MAX_BATCH_SIZE {
+            panic!("batch exceeds maximum size");
         }
 
         // 1. Validation Phase
