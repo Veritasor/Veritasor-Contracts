@@ -852,4 +852,6 @@ impl AttestationContract {
 #[cfg(test)]
 mod batch_submission_test;
 #[cfg(test)]
+mod fee_admin_auth_test;
+#[cfg(test)]
 mod test;
