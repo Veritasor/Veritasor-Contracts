@@ -10,7 +10,6 @@ use super::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
 use soroban_sdk::{Address, BytesN, Env, String, Vec};
-use soroban_sdk::Vec as SorobanVec;
 
 // ════════════════════════════════════════════════════════════════════
 //  Helpers
@@ -98,7 +97,7 @@ fn test_batch_submit_single_item() {
     let (env, client) = setup();
     let business = Address::generate(&env);
 
-    let mut items = soroban_sdk::Vec::new(&env);
+    let mut items = Vec::new(&env);
     items.push_back(create_batch_item(
         &env,
         &business,
