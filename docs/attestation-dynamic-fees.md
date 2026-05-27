@@ -186,6 +186,54 @@ stellar contract invoke --network testnet --source <ADMIN_KEY> \
   --discounts '[500, 1000, 2000]'
 ```
 
+## DAO Fee Config Override
+
+The contract supports a **Protocol DAO override** for both the dynamic fee config and the flat fee config. When a DAO contract address is registered, the DAO-provided configuration takes precedence over the locally stored config.
+
+### How it works
+
+```
+get_effective_fee_config():
+  1. If a DAO address is set → call DAO.get_attestation_fee_config()
+     a. DAO returns Some(config) → use DAO config (ignores local)
+     b. DAO returns None         → fall back to local FeeConfig
+  2. No DAO set → use local FeeConfig
+```
+
+The same logic applies to flat fees via `get_effective_flat_fee_config()` / `get_attestation_flat_fee_config`.
+
+### Precedence table
+
+| DAO registered | DAO returns       | Effective config                                |
+|----------------|-------------------|-------------------------------------------------|
+| Yes            | `Some(config)`    | DAO config (token, collector, base_fee, enabled)|
+| Yes            | `None`            | Local `FeeConfig` (fallback)                    |
+| No             | —                 | Local `FeeConfig`                               |
+
+### Key invariants
+
+- **DAO `enabled=false` → free attestations**, regardless of local config.
+- **DAO `enabled=true` → DAO's `base_fee`, `token`, and `collector` are used**, not the local values.
+- **DAO `None` → local config is the source of truth**, as if no DAO were set.
+- The local config is never mutated by the DAO; `get_fee_config()` always returns the locally stored value.
+
+### Admin methods
+
+| Method                    | Description                                              |
+|---------------------------|----------------------------------------------------------|
+| `set_dao(dao)`            | Register DAO address for dynamic fee override (admin)    |
+| `set_flat_fee_dao(dao)`   | Register DAO address for flat fee override (admin)       |
+| `get_fee_config()`        | Read local dynamic fee config (ignores DAO)              |
+| `get_flat_fee_config()`   | Read local flat fee config (ignores DAO)                 |
+| `get_effective_flat_fee_config()` | Read effective flat fee config (DAO takes precedence) |
+
+### Security considerations
+
+- Only the contract admin can call `set_dao` / `set_flat_fee_dao`.
+- The DAO contract is invoked via `env.invoke_contract` — it must implement the expected interface (`get_attestation_fee_config` / `get_attestation_flat_fee_config`).
+- If the DAO contract panics or returns an unexpected type, the attestation transaction will revert. Operators should validate DAO contracts before registering them.
+- The DAO address is stored in instance storage and persists across ledgers until updated.
+
 ## Security Properties
 
 - **Admin-gated**: All fee and tier configuration requires admin authorization
