@@ -1060,7 +1060,7 @@ fn test_duplicate_identical_items_in_batch() {
         1,
     );
 
-    let mut items = Vec::new(&env);
+    let mut items: Vec<BatchAttestationItem> = Vec::new(&env);
     items.push_back(item.clone());
     items.push_back(item); // Identical clone
 
@@ -1076,7 +1076,7 @@ fn test_duplicate_across_batch_calls() {
     let business = Address::generate(&env);
 
     // First batch submission
-    let mut items1 = Vec::new(&env);
+    let mut items1: Vec<BatchAttestationItem> = Vec::new(&env);
     items1.push_back(create_batch_item(
         &env,
         &business,
@@ -1088,7 +1088,7 @@ fn test_duplicate_across_batch_calls() {
     client.submit_attestations_batch(&items1);
 
     // Second batch submission with same (business, period)
-    let mut items2 = Vec::new(&env);
+    let mut items2: Vec<BatchAttestationItem> = Vec::new(&env);
     items2.push_back(create_batch_item(
         &env,
         &business,
@@ -1107,7 +1107,7 @@ fn test_distinct_periods_for_business_in_batch_succeed() {
     let (env, client) = setup();
     let business = Address::generate(&env);
 
-    let mut items = Vec::new(&env);
+    let mut items: Vec<BatchAttestationItem> = Vec::new(&env);
     items.push_back(create_batch_item(
         &env,
         &business,
