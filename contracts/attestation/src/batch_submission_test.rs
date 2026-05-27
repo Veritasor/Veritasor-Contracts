@@ -97,7 +97,7 @@ fn test_batch_submit_single_item() {
     let (env, client) = setup();
     let business = Address::generate(&env);
 
-    let mut items = Vec::new(&env);
+    let mut items = soroban_sdk::Vec::new(&env);
     items.push_back(create_batch_item(
         &env,
         &business,
