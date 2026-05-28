@@ -27,17 +27,19 @@ use crate::access_control::ROLE_ADMIN;
 use crate::events::{
     AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent,
     BusinessApprovedEvent, BusinessReactivatedEvent, BusinessRegisteredEvent,
-    BusinessSuspendedEvent, FeeConfigChangedEvent, KeyRotationCancelledEvent,
-    KeyRotationConfirmedEvent, KeyRotationEmergencyEvent, KeyRotationProposedEvent,
-    PauseChangedEvent, RateLimitConfigChangedEvent, RoleChangedEvent,
+    BusinessSuspendedEvent, FeeConfigChangedEvent, FlatFeeConfigChangedEvent,
+    KeyRotationCancelledEvent, KeyRotationConfirmedEvent, KeyRotationEmergencyEvent,
+    KeyRotationProposedEvent, PauseChangedEvent, ProofHashUpdatedEvent,
+    RateLimitConfigChangedEvent, RoleChangedEvent,
     TOPIC_ATTESTATION_MIGRATED, TOPIC_ATTESTATION_REVOKED, TOPIC_ATTESTATION_SUBMITTED,
     TOPIC_BIZ_APPROVED, TOPIC_BIZ_REACTIVATE, TOPIC_BIZ_REGISTERED, TOPIC_BIZ_SUSPENDED,
-    TOPIC_FEE_CONFIG, TOPIC_KEY_ROTATION_CANCELLED, TOPIC_KEY_ROTATION_CONFIRMED,
-    TOPIC_KEY_ROTATION_EMERGENCY, TOPIC_KEY_ROTATION_PROPOSED, TOPIC_PAUSED, TOPIC_RATE_LIMIT,
-    TOPIC_ROLE_GRANTED, TOPIC_ROLE_REVOKED, TOPIC_UNPAUSED, EVENT_SCHEMA_VERSION,
+    TOPIC_FEE_CONFIG, TOPIC_FLAT_FEE_CONFIG, TOPIC_KEY_ROTATION_CANCELLED,
+    TOPIC_KEY_ROTATION_CONFIRMED, TOPIC_KEY_ROTATION_EMERGENCY, TOPIC_KEY_ROTATION_PROPOSED,
+    TOPIC_PAUSED, TOPIC_PROOF_HASH_UPDATED, TOPIC_RATE_LIMIT, TOPIC_ROLE_GRANTED,
+    TOPIC_ROLE_REVOKED, TOPIC_UNPAUSED, EVENT_SCHEMA_VERSION,
 };
 use soroban_sdk::testutils::{Address as _, Events as _};
-use soroban_sdk::{symbol_short, Address, BytesN, Env, IntoVal, String, TryFromVal};
+use soroban_sdk::{symbol_short, Address, BytesN, Env, String, Symbol, TryFromVal};
 
 // ════════════════════════════════════════════════════════════════════
 //  Test helpers
@@ -60,7 +62,6 @@ fn submit_default(
     env: &Env,
     business: &Address,
     period: &String,
-    nonce: u64,
 ) {
     let root = BytesN::from_array(env, &[1u8; 32]);
     client.submit_attestation(
@@ -69,9 +70,9 @@ fn submit_default(
         &root,
         &1_700_000_000u64,
         &1u32,
+        &0i128,
         &None,
         &None,
-        &nonce,
     );
 }
 
@@ -119,16 +120,15 @@ fn test_multiple_attestations_emit_multiple_events() {
     for i in 1u64..=5 {
         let period = String::from_str(&env, &alloc::format!("2026-0{}", i));
         let root = BytesN::from_array(&env, &[i as u8; 32]);
-        let nonce = client.get_replay_nonce(&business, &crate::NONCE_CHANNEL_BUSINESS);
         client.submit_attestation(
             &business,
             &period,
             &root,
             &(1_700_000_000u64 + i),
             &1u32,
+            &0i128,
             &None,
             &None,
-            &nonce,
         );
     }
 
@@ -389,6 +389,53 @@ fn test_fee_config_changed_disabled_state() {
 }
 
 // ════════════════════════════════════════════════════════════════════
+//  8b. Schema Snapshot — FlatFeeConfigChangedEvent
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_flat_fee_config_changed_schema_snapshot() {
+    let (env, _client, _admin) = setup();
+    let token = Address::generate(&env);
+    let collector = Address::generate(&env);
+    let changed_by = Address::generate(&env);
+
+    crate::events::emit_flat_fee_config_changed(
+        &env, &token, &collector, 500i128, true, &changed_by,
+    );
+
+    let (_cid, topics, data) = env.events().all().last().unwrap();
+    assert_eq!(topics.len(), 1);
+    assert_eq!(
+        Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+        TOPIC_FLAT_FEE_CONFIG,
+    );
+
+    let ev = FlatFeeConfigChangedEvent::try_from_val(&env, &data).unwrap();
+    assert_eq!(ev.token, token);
+    assert_eq!(ev.collector, collector);
+    assert_eq!(ev.amount, 500i128);
+    assert!(ev.enabled);
+    assert_eq!(ev.changed_by, changed_by);
+}
+
+#[test]
+fn test_flat_fee_config_changed_disabled_zero_amount() {
+    let (env, _client, _admin) = setup();
+    let token = Address::generate(&env);
+    let collector = Address::generate(&env);
+    let changed_by = Address::generate(&env);
+
+    crate::events::emit_flat_fee_config_changed(
+        &env, &token, &collector, 0i128, false, &changed_by,
+    );
+
+    let (_cid, _topics, data) = env.events().all().last().unwrap();
+    let ev = FlatFeeConfigChangedEvent::try_from_val(&env, &data).unwrap();
+    assert_eq!(ev.amount, 0);
+    assert!(!ev.enabled);
+}
+
+// ════════════════════════════════════════════════════════════════════
 //  9. Schema Snapshot — RateLimitConfigChangedEvent (all fields)
 // ════════════════════════════════════════════════════════════════════
 
@@ -616,7 +663,7 @@ fn test_revoke_attestation_emits_event() {
     let (env, client, admin) = setup();
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
-    submit_default(&client, &env, &business, &period, 0);
+    submit_default(&client, &env, &business, &period);
 
     let reason = String::from_str(&env, "fraudulent data detected");
     client.revoke_attestation(&admin, &business, &period, &reason, &1u64);
@@ -629,10 +676,10 @@ fn test_migrate_attestation_emits_event() {
     let (env, client, admin) = setup();
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
-    submit_default(&client, &env, &business, &period, 0);
+    submit_default(&client, &env, &business, &period);
     let new_root = BytesN::from_array(&env, &[2u8; 32]);
 
-    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32, &1u64);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
 
     assert!(!env.events().all().is_empty());
 }
@@ -642,7 +689,7 @@ fn test_grant_role_emits_event() {
     let (env, client, admin) = setup();
     let user = Address::generate(&env);
 
-    client.grant_role(&admin, &user, &ROLE_ADMIN, &1u64);
+    client.grant_role(&admin, &user, &ROLE_ADMIN);
 
     assert!(!env.events().all().is_empty());
 }
@@ -652,8 +699,8 @@ fn test_revoke_role_emits_event() {
     let (env, client, admin) = setup();
     let user = Address::generate(&env);
 
-    client.grant_role(&admin, &user, &ROLE_ADMIN, &1u64);
-    client.revoke_role(&admin, &user, &ROLE_ADMIN, &2u64);
+    client.grant_role(&admin, &user, &ROLE_ADMIN);
+    client.revoke_role(&admin, &user, &ROLE_ADMIN);
 
     assert!(!env.events().all().is_empty());
 }
@@ -661,15 +708,15 @@ fn test_revoke_role_emits_event() {
 #[test]
 fn test_pause_emits_event() {
     let (env, client, admin) = setup();
-    client.pause(&admin, &1u64);
+    client.pause(&admin);
     assert!(!env.events().all().is_empty());
 }
 
 #[test]
 fn test_unpause_emits_event() {
     let (env, client, admin) = setup();
-    client.pause(&admin, &1u64);
-    client.unpause(&admin, &2u64);
+    client.pause(&admin);
+    client.unpause(&admin);
     assert!(!env.events().all().is_empty());
 }
 
@@ -693,11 +740,11 @@ fn test_duplicate_attestation_panics_no_double_event() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
 
-    submit_default(&client, &env, &business, &period, 0);
+    submit_default(&client, &env, &business, &period);
     let events_after_first = env.events().all().len();
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        submit_default(&client, &env, &business, &period, 1);
+        submit_default(&client, &env, &business, &period);
     }));
 
     assert!(result.is_err(), "expected duplicate submission to panic");
@@ -713,13 +760,13 @@ fn test_migrate_same_version_panics_no_event() {
     let (env, client, admin) = setup();
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
-    submit_default(&client, &env, &business, &period, 0);
+    submit_default(&client, &env, &business, &period);
     let new_root = BytesN::from_array(&env, &[2u8; 32]);
 
     let events_before_migration = env.events().all().len();
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.migrate_attestation(&admin, &business, &period, &new_root, &1u32, &1u64);
+        client.migrate_attestation(&admin, &business, &period, &new_root, &1u32);
     }));
 
     assert!(result.is_err(), "expected same-version migration to panic");
@@ -738,11 +785,11 @@ fn test_migrate_lower_version_panics() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
     client.submit_attestation(
-        &business, &period, &root, &1_700_000_000u64, &5u32, &None, &None, &0u64,
+        &business, &period, &root, &1_700_000_000u64, &5u32, &0i128, &None, &None,
     );
     let new_root = BytesN::from_array(&env, &[2u8; 32]);
     // Version 3 < 5 — must panic
-    client.migrate_attestation(&admin, &business, &period, &new_root, &3u32, &1u64);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &3u32);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -762,7 +809,7 @@ fn test_is_revoked_true_after_revocation() {
     let (env, client, admin) = setup();
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
-    submit_default(&client, &env, &business, &period, 0);
+    submit_default(&client, &env, &business, &period);
 
     let reason = String::from_str(&env, "policy violation");
     client.revoke_attestation(&admin, &business, &period, &reason, &1u64);
@@ -777,7 +824,7 @@ fn test_revoked_attestation_fails_verify() {
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
     client.submit_attestation(
-        &business, &period, &root, &1_700_000_000u64, &1u32, &None, &None, &0u64,
+        &business, &period, &root, &1_700_000_000u64, &1u32, &0i128, &None, &None,
     );
 
     assert!(client.verify_attestation(&business, &period, &root));
@@ -891,9 +938,9 @@ fn test_events_are_ordered_chronologically() {
     let period2 = String::from_str(&env, "2026-02");
     let period3 = String::from_str(&env, "2026-03");
 
-    submit_default(&client, &env, &business, &period1, 0);
-    submit_default(&client, &env, &business, &period2, 1);
-    submit_default(&client, &env, &business, &period3, 2);
+    submit_default(&client, &env, &business, &period1);
+    submit_default(&client, &env, &business, &period2);
+    submit_default(&client, &env, &business, &period3);
 
     let events = env.events().all();
 
@@ -922,15 +969,15 @@ fn test_multiple_migrations_emit_incremental_events() {
     let root_v3 = BytesN::from_array(&env, &[3u8; 32]);
 
     client.submit_attestation(
-        &business, &period, &root_v1, &1_700_000_000u64, &1u32, &None, &None, &0u64,
+        &business, &period, &root_v1, &1_700_000_000u64, &1u32, &0i128, &None, &None,
     );
     let count_after_submit = env.events().all().len();
 
-    client.migrate_attestation(&admin, &business, &period, &root_v2, &2u32, &1u64);
+    client.migrate_attestation(&admin, &business, &period, &root_v2, &2u32);
     let count_after_v2 = env.events().all().len();
     assert!(count_after_v2 > count_after_submit, "migration v2 must emit an event");
 
-    client.migrate_attestation(&admin, &business, &period, &root_v3, &3u32, &2u64);
+    client.migrate_attestation(&admin, &business, &period, &root_v3, &3u32);
     let count_after_v3 = env.events().all().len();
     assert!(count_after_v3 > count_after_v2, "migration v3 must emit an event");
 
@@ -942,29 +989,26 @@ fn test_multiple_migrations_emit_incremental_events() {
 }
 
 #[test]
-fn test_replay_nonce_prevents_duplicate_submission_event() {
+fn test_duplicate_period_rejected_no_extra_event() {
+    // Verifies that a second submission for the same business+period panics (duplicate rule)
+    // and does not emit an additional att_sub event.
     let (env, client, _admin) = setup();
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
-    let nonce = client.get_replay_nonce(&business, &crate::NONCE_CHANNEL_BUSINESS);
 
-    client.submit_attestation(
-        &business, &period, &root, &1_700_000_000u64, &1u32, &None, &None, &nonce,
-    );
+    submit_default(&client, &env, &business, &period);
     let events_after_first = env.events().all().len();
 
-    // Attempting to use the same nonce again should panic — ensuring one event per submission.
-    let result = std::panic::catch_unwind(|| {
-        // We can't call the client in this context so we just verify the nonce advanced.
-    });
-    let _ = result;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        submit_default(&client, &env, &business, &period);
+    }));
 
-    // Nonce must have incremented — the next valid nonce is different.
-    let next_nonce = client.get_replay_nonce(&business, &crate::NONCE_CHANNEL_BUSINESS);
-    assert_ne!(nonce, next_nonce, "nonce should advance after a valid submission");
-    // No new events were emitted by the nonce check itself.
-    assert_eq!(env.events().all().len(), events_after_first);
+    assert!(result.is_err(), "duplicate period submission must panic");
+    assert_eq!(
+        env.events().all().len(),
+        events_after_first,
+        "duplicate rejection must not emit an extra event",
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -984,6 +1028,7 @@ fn test_all_topic_symbols_are_distinct() {
         TOPIC_PAUSED,
         TOPIC_UNPAUSED,
         TOPIC_FEE_CONFIG,
+        TOPIC_FLAT_FEE_CONFIG,
         TOPIC_RATE_LIMIT,
         TOPIC_KEY_ROTATION_PROPOSED,
         TOPIC_KEY_ROTATION_CONFIRMED,
@@ -993,6 +1038,7 @@ fn test_all_topic_symbols_are_distinct() {
         TOPIC_BIZ_APPROVED,
         TOPIC_BIZ_SUSPENDED,
         TOPIC_BIZ_REACTIVATE,
+        TOPIC_PROOF_HASH_UPDATED,
     ];
 
     for i in 0..topics.len() {
@@ -1006,6 +1052,6 @@ fn test_all_topic_symbols_are_distinct() {
     }
 
     // Explicitly verify count to catch any future additions.
-    assert_eq!(topics.len(), 17, "expected 17 distinct topic symbols");
+    assert_eq!(topics.len(), 19, "expected 19 distinct topic symbols");
     let _ = env; // env required for Address::generate in other tests
 }

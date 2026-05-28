@@ -127,7 +127,7 @@ impl AttestationContract {
         base_fee: i128,
         enabled: bool,
     ) {
-        dynamic_fees::require_admin(&env);
+        let admin = dynamic_fees::require_admin(&env);
         assert!(base_fee >= 0, "base_fee must be non-negative");
         let config = FeeConfig {
             token,
@@ -136,6 +136,14 @@ impl AttestationContract {
             enabled,
         };
         dynamic_fees::set_fee_config(&env, &config);
+        events::emit_fee_config_changed(
+            &env,
+            &config.token,
+            &config.collector,
+            config.base_fee,
+            config.enabled,
+            &admin,
+        );
     }
 
     pub fn set_tier_discount(env: Env, tier: u32, discount_bps: u32) {
@@ -154,8 +162,18 @@ impl AttestationContract {
     }
 
     pub fn set_fee_enabled(env: Env, enabled: bool) {
-        dynamic_fees::require_admin(&env);
+        let admin = dynamic_fees::require_admin(&env);
         dynamic_fees::set_fee_enabled(&env, enabled);
+        if let Some(config) = dynamic_fees::get_fee_config(&env) {
+            events::emit_fee_config_changed(
+                &env,
+                &config.token,
+                &config.collector,
+                config.base_fee,
+                config.enabled,
+                &admin,
+            );
+        }
     }
 
     pub fn configure_flat_fee(
@@ -165,7 +183,7 @@ impl AttestationContract {
         amount: i128,
         enabled: bool,
     ) {
-        dynamic_fees::require_admin(&env);
+        let admin = dynamic_fees::require_admin(&env);
         let config = FlatFeeConfig {
             token,
             collector,
@@ -173,6 +191,14 @@ impl AttestationContract {
             enabled,
         };
         fees::set_flat_fee_config(&env, &config);
+        events::emit_flat_fee_config_changed(
+            &env,
+            &config.token,
+            &config.collector,
+            config.amount,
+            config.enabled,
+            &admin,
+        );
     }
 
     pub fn set_attestor_staking_contract(env: Env, caller: Address, staking_contract: Address) {
@@ -1033,6 +1059,10 @@ impl AttestationContract {
 mod batch_submission_test;
 #[cfg(test)]
 mod dao_override_test;
+#[cfg(test)]
+mod events_test;
+#[cfg(test)]
+mod property_test;
 #[cfg(test)]
 mod test;
 #[cfg(test)]

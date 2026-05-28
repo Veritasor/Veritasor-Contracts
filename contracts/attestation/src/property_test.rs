@@ -309,10 +309,10 @@ fn prop_data_integrity_and_counter_monotonicity() {
             "case {idx} [{period_str}]: initial count must be 0"
         );
 
-        client.submit_attestation(&business, &period, &root, &timestamp, &version, &None, &None, &0u64);
+        client.submit_attestation(&business, &period, &root, &timestamp, &version, &0i128, &None, &None);
 
         // P4: Every field must round-trip exactly.
-        let (got_root, got_ts, got_ver, got_fee, _, _, _) = client
+        let (got_root, got_ts, got_ver, got_fee, _, _) = client
             .get_attestation(&business, &period)
             .unwrap_or_else(|| {
                 panic!("case {idx} [{period_str}]: attestation must exist after submit")
@@ -341,7 +341,7 @@ fn prop_data_integrity_and_counter_monotonicity() {
 
         // P5 continued: second submit (different period) increments to 2.
         let period2 = String::from_str(&env, &std::format!("{period_str}-v2"));
-        client.submit_attestation(&business, &period2, &root, &timestamp, &version, &None, &None, &0u64);
+        client.submit_attestation(&business, &period2, &root, &timestamp, &version, &0i128, &None, &None);
         assert_eq!(
             client.get_business_count(&business),
             2,
@@ -392,9 +392,9 @@ fn prop_verify_consistency() {
             &submitted_root,
             &1_700_000_000,
             &1,
+            &0i128,
             &None,
             &None,
-            &0u64,
         );
 
         // After submit: correct root → true, wrong roots → false.
@@ -439,7 +439,7 @@ fn prop_revocation_permanence() {
         let period = String::from_str(&env, "2026-01");
         let submitted_root = BytesN::from_array(&env, &sub_bytes);
 
-        client.submit_attestation(&business, &period, &submitted_root, &1_000_000, &1, &None, &None, &0u64);
+        client.submit_attestation(&business, &period, &submitted_root, &1_000_000, &1, &0i128, &None, &None);
 
         // Sanity: verifies before revocation.
         assert!(
@@ -502,9 +502,9 @@ fn prop_duplicate_attestation_panics() {
             let business = Address::generate(&env);
             let period = String::from_str(&env, &period_owned);
             let root = BytesN::from_array(&env, &[1u8; 32]);
-            client.submit_attestation(&business, &period, &root, &1_000_000, &1, &None, &None, &0u64);
+            client.submit_attestation(&business, &period, &root, &1_000_000, &1, &0i128, &None, &None);
             // Second call for the same (business, period) must panic.
-            client.submit_attestation(&business, &period, &root, &2_000_000, &2, &None, &None, &0u64);
+            client.submit_attestation(&business, &period, &root, &2_000_000, &2, &0i128, &None, &None);
         });
 
         let err = result.expect_err(&std::format!(
@@ -546,8 +546,8 @@ fn prop_migration_succeeds_for_increasing_version() {
         let old_root = BytesN::from_array(&env, &[1u8; 32]);
         let new_root = BytesN::from_array(&env, &[2u8; 32]);
 
-        client.submit_attestation(&business, &period, &old_root, &1_000_000, &old_ver, &None, &None);
-        client.migrate_attestation(&admin, &business, &period, &new_root, &new_ver, &0u64);
+        client.submit_attestation(&business, &period, &old_root, &1_000_000, &old_ver, &0i128, &None, &None);
+        client.migrate_attestation(&admin, &business, &period, &new_root, &new_ver);
 
         let (got_root, _, got_ver, _, _, _) = client.get_attestation(&business, &period).unwrap();
         assert_eq!(
@@ -585,8 +585,8 @@ fn prop_migration_panics_for_non_increasing_version() {
             let period = String::from_str(&env, "2026-01");
             let old_root = BytesN::from_array(&env, &[1u8; 32]);
             let new_root = BytesN::from_array(&env, &[2u8; 32]);
-            client.submit_attestation(&business, &period, &old_root, &1_000_000, &old_ver, &None, &None, &0u64);
-            client.migrate_attestation(&admin_addr, &business, &period, &new_root, &bad_new_ver, &0u64);
+            client.submit_attestation(&business, &period, &old_root, &1_000_000, &old_ver, &0i128, &None, &None);
+            client.migrate_attestation(&admin_addr, &business, &period, &new_root, &bad_new_ver);
         });
 
         let err = result.expect_err(&std::format!(
@@ -789,8 +789,8 @@ fn prop_business_isolation() {
     let root_a = BytesN::from_array(&env, &[1u8; 32]);
     let root_b = BytesN::from_array(&env, &[2u8; 32]);
 
-    client.submit_attestation(&biz_a, &period, &root_a, &1_000, &1, &None, &None, &0u64);
-    client.submit_attestation(&biz_b, &period, &root_b, &2_000, &2, &None, &None, &0u64);
+    client.submit_attestation(&biz_a, &period, &root_a, &1_000, &1, &0i128, &None, &None);
+    client.submit_attestation(&biz_b, &period, &root_b, &2_000, &2, &0i128, &None, &None);
 
     // biz_c has no attestation.
     assert!(
@@ -808,8 +808,8 @@ fn prop_business_isolation() {
     );
 
     // biz_a and biz_b have independent data.
-    let (a_root, _, a_ver, _, _, _, _) = client.get_attestation(&biz_a, &period).unwrap();
-    let (b_root, _, b_ver, _, _, _, _) = client.get_attestation(&biz_b, &period).unwrap();
+    let (a_root, _, a_ver, _, _, _) = client.get_attestation(&biz_a, &period).unwrap();
+    let (b_root, _, b_ver, _, _, _) = client.get_attestation(&biz_b, &period).unwrap();
     assert_eq!(a_root, root_a, "biz_a root must match what was submitted");
     assert_eq!(b_root, root_b, "biz_b root must match what was submitted");
     assert_ne!(a_ver, b_ver, "versions were different and must differ");
@@ -867,11 +867,11 @@ fn prop_pause_blocks_all_submissions() {
             let client = AttestationContractClient::new(&env, &contract_id);
             let admin = Address::generate(&env);
             client.initialize(&admin, &0u64);
-            client.pause(&client.get_admin(), &0u64);
+            client.pause(&client.get_admin());
             let business = Address::generate(&env);
             let period = String::from_str(&env, &period_owned);
             let root = BytesN::from_array(&env, &[1u8; 32]);
-            client.submit_attestation(&business, &period, &root, &1_000, &1, &None, &None, &0u64);
+            client.submit_attestation(&business, &period, &root, &1_000, &1, &0i128, &None, &None);
         });
 
         let err = result.expect_err(&std::format!(
@@ -894,11 +894,11 @@ fn prop_unpause_restores_submission() {
     let period = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.pause(&client.get_admin(), &0u64);
-    client.unpause(&client.get_admin(), &0u64);
+    client.pause(&client.get_admin());
+    client.unpause(&client.get_admin());
 
     // Must succeed after unpause.
-    client.submit_attestation(&business, &period, &root, &1_000, &1, &None, &None, &0u64);
+    client.submit_attestation(&business, &period, &root, &1_000, &1, &0i128, &None, &None);
     assert!(
         client.get_attestation(&business, &period).is_some(),
         "attestation must exist after unpause + submit"
@@ -957,7 +957,7 @@ fn prop_fee_quote_matches_actual_charge() {
         for i in 0..vol_threshold {
             let warm_period = String::from_str(&env, &std::format!("WARM-{i:05}"));
             let warm_root = BytesN::from_array(&env, &[i as u8; 32]);
-            client.submit_attestation(&business, &warm_period, &warm_root, &1, &1, &None, &None);
+            client.submit_attestation(&business, &warm_period, &warm_root, &1, &1, &0i128, &None, &None);
         }
 
         // Capture quote and balance immediately before the test submission.
@@ -966,7 +966,7 @@ fn prop_fee_quote_matches_actual_charge() {
 
         let test_period = String::from_str(&env, "TEST-FINAL");
         let test_root = BytesN::from_array(&env, &[99u8; 32]);
-        client.submit_attestation(&business, &test_period, &test_root, &1_000_000, &1, &None, &None);
+        client.submit_attestation(&business, &test_period, &test_root, &1_000_000, &1, &0i128, &None, &None);
 
         let after = token_balance(&env, &token_addr, &business);
         let charged = before - after;
@@ -978,7 +978,7 @@ fn prop_fee_quote_matches_actual_charge() {
         );
 
         // P14-b: fee_paid field in the stored attestation record also matches.
-        let (_, _, _, fee_in_record, _, _, _) = client.get_attestation(&business, &test_period).unwrap();
+        let (_, _, _, fee_in_record, _, _) = client.get_attestation(&business, &test_period).unwrap();
         assert_eq!(
             fee_in_record, quote,
             "stored fee_paid must equal the pre-submit quote"
@@ -1176,7 +1176,7 @@ fn prop_tier_upgrade_fee_monotonicity() {
     let (env, client, _admin, token_addr, _collector) = setup_with_fees(base_fee);
 
     for &(tier_level, discount_bps) in TIER_MONOTONICITY_DISCOUNTS {
-        client.set_tier_discount(&client.get_admin(), &tier_level, &discount_bps);
+        client.set_tier_discount(&tier_level, &discount_bps);
     }
 
     let business = Address::generate(&env);
@@ -1185,7 +1185,7 @@ fn prop_tier_upgrade_fee_monotonicity() {
     let mut prev_quote = i128::MAX;
 
     for &(tier_level, discount_bps) in TIER_MONOTONICITY_DISCOUNTS {
-        client.set_business_tier(&client.get_admin(), &business, &tier_level);
+        client.set_business_tier(&business, &tier_level);
         let quote = client.get_fee_quote(&business);
 
         // P21: Quote must be ≤ previous quote.
@@ -1240,7 +1240,7 @@ fn prop_volume_bracket_crossing_fee_monotonicity() {
         for &d in VOLUME_BRACKET_DISCOUNTS { v.push_back(d); }
         v
     };
-    client.set_volume_brackets(&client.get_admin(), &soroban_thresholds, &soroban_discounts);
+    client.set_volume_brackets(&soroban_thresholds, &soroban_discounts);
 
     let business = Address::generate(&env);
     let total_submissions = VOLUME_BRACKET_THRESHOLDS.last().copied().unwrap_or(0) + 5;
@@ -1261,7 +1261,7 @@ fn prop_volume_bracket_crossing_fee_monotonicity() {
         while submission_idx < target_count {
             let period = String::from_str(&env, &std::format!("VOL-MONO-{submission_idx:05}"));
             let root = BytesN::from_array(&env, &[(submission_idx % 256) as u8; 32]);
-            client.submit_attestation(&business, &period, &root, &1_000_000, &1, &None, &None);
+            client.submit_attestation(&business, &period, &root, &1_000_000, &1, &0i128, &None, &None);
             submission_idx += 1;
         }
 
@@ -1293,7 +1293,7 @@ fn prop_sequential_stored_fees_non_increasing() {
     // Brackets: ≥3 → 10%, ≥8 → 25%, ≥15 → 40%.
     let soroban_thresholds = vec![&env, 3u64, 8u64, 15u64];
     let soroban_discounts  = vec![&env, 1_000u32, 2_500u32, 4_000u32];
-    client.set_volume_brackets(&client.get_admin(), &soroban_thresholds, &soroban_discounts);
+    client.set_volume_brackets(&soroban_thresholds, &soroban_discounts);
 
     let business = Address::generate(&env);
     mint(&env, &token_addr, &business, base_fee * 30);
@@ -1303,9 +1303,9 @@ fn prop_sequential_stored_fees_non_increasing() {
     for i in 0u64..20 {
         let period = String::from_str(&env, &std::format!("SEQ-{i:04}"));
         let root = BytesN::from_array(&env, &[(i % 256) as u8; 32]);
-        client.submit_attestation(&business, &period, &root, &1_000_000, &1, &None, &None);
+        client.submit_attestation(&business, &period, &root, &1_000_000, &1, &0i128, &None, &None);
 
-        let (_, _, _, fee_paid, _, _, _) = client.get_attestation(&business, &period).unwrap();
+        let (_, _, _, fee_paid, _, _) = client.get_attestation(&business, &period).unwrap();
 
         // P23: Each record's fee_paid ≤ previous record's fee_paid.
         assert!(
@@ -1354,13 +1354,13 @@ fn prop_combined_tier_volume_fee_monotonicity() {
         let (env, client, _admin, _token_addr, _collector) = setup_with_fees(base_fee);
         let business = Address::generate(&env);
 
-        client.set_tier_discount(&client.get_admin(), &1u32, &tier_bps);
-        client.set_business_tier(&client.get_admin(), &business, &1u32);
+        client.set_tier_discount(&1u32, &tier_bps);
+        client.set_business_tier(&business, &1u32);
 
         if vol_bps > 0 {
             let soroban_thresholds = vec![&env, 0u64];
             let soroban_discounts  = vec![&env, vol_bps];
-            client.set_volume_brackets(&client.get_admin(), &soroban_thresholds, &soroban_discounts);
+            client.set_volume_brackets(&soroban_thresholds, &soroban_discounts);
         }
 
         let quote   = client.get_fee_quote(&business);
@@ -1502,8 +1502,8 @@ fn prop_tier_assignment_cannot_inflate_fee() {
     mint(&env, &token_addr, &business, base_fee * 10);
 
     for discount_bps in (0u32..=10_000).step_by(500) {
-        client.set_tier_discount(&client.get_admin(), &99u32, &discount_bps);
-        client.set_business_tier(&client.get_admin(), &business, &99u32);
+        client.set_tier_discount(&99u32, &discount_bps);
+        client.set_business_tier(&business, &99u32);
         let quote = client.get_fee_quote(&business);
         assert!(
             quote <= base_fee,
@@ -1527,25 +1527,25 @@ fn prop_fee_toggle_determinism() {
     let (env, client, _admin, _token_addr, _collector) = setup_with_fees(base_fee);
     let business = Address::generate(&env);
 
-    client.set_tier_discount(&client.get_admin(), &1u32, &2_000u32);
-    client.set_business_tier(&client.get_admin(), &business, &1u32);
+    client.set_tier_discount(&1u32, &2_000u32);
+    client.set_business_tier(&business, &1u32);
 
     let soroban_thresholds = vec![&env, 0u64];
     let soroban_discounts  = vec![&env, 1_000u32];
-    client.set_volume_brackets(&client.get_admin(), &soroban_thresholds, &soroban_discounts);
+    client.set_volume_brackets(&soroban_thresholds, &soroban_discounts);
 
     // Expected fee: 1_000_000 × 0.80 × 0.90 = 720_000
     let expected_fee = compute_fee(base_fee, 2_000, 1_000);
 
     for cycle in 0..5u32 {
-        client.set_fee_enabled(&client.get_admin(), &true);
+        client.set_fee_enabled(&true);
         let enabled_quote = client.get_fee_quote(&business);
         assert_eq!(
             enabled_quote, expected_fee,
             "cycle={cycle}: enabled quote={enabled_quote} != expected={expected_fee}"
         );
 
-        client.set_fee_enabled(&client.get_admin(), &false);
+        client.set_fee_enabled(&false);
         let disabled_quote = client.get_fee_quote(&business);
         assert_eq!(
             disabled_quote, 0,
@@ -1566,7 +1566,7 @@ fn prop_zero_threshold_volume_bracket_applies_immediately() {
 
     let soroban_thresholds = vec![&env, 0u64];
     let soroban_discounts  = vec![&env, 3_000u32]; // 30% off
-    client.set_volume_brackets(&client.get_admin(), &soroban_thresholds, &soroban_discounts);
+    client.set_volume_brackets(&soroban_thresholds, &soroban_discounts);
 
     let business = Address::generate(&env);
     let expected = compute_fee(base_fee, 0, 3_000); // 700_000
@@ -1582,7 +1582,7 @@ fn prop_zero_threshold_volume_bracket_applies_immediately() {
     let before = token_balance(&env, &token_addr, &business);
     let period = String::from_str(&env, "ZERO-THRESH");
     let root   = BytesN::from_array(&env, &[77u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1_000_000, &1, &None, &None);
+    client.submit_attestation(&business, &period, &root, &1_000_000, &1, &0i128, &None, &None);
     let after = token_balance(&env, &token_addr, &business);
     assert_eq!(
         before - after, expected,
@@ -1601,12 +1601,12 @@ fn prop_tier_reassignment_no_state_leakage() {
 
     let tiers: &[(u32, u32)] = &[(0, 0), (1, 1_000), (2, 5_000), (3, 10_000)];
     for &(tier, disc) in tiers {
-        client.set_tier_discount(&client.get_admin(), &tier, &disc);
+        client.set_tier_discount(&tier, &disc);
     }
 
     // Cycle through tiers in arbitrary order; settle on tier 2.
     for &t in &[3u32, 1, 0, 2, 3, 0, 1, 2] {
-        client.set_business_tier(&client.get_admin(), &business, &t);
+        client.set_business_tier(&business, &t);
     }
 
     let final_quote = client.get_fee_quote(&business);
@@ -1649,21 +1649,21 @@ fn prop_regression_docs_worked_example() {
     // Contract layer: reproduce the docs scenario end-to-end.
     let (env, client, _admin, token_addr, _collector) = setup_with_fees(1_000_000);
 
-    client.set_tier_discount(&client.get_admin(), &1u32, &2_000u32); // 20%
+    client.set_tier_discount(&1u32, &2_000u32); // 20%
 
     let soroban_thresholds = vec![&env, 10u64];
     let soroban_discounts  = vec![&env, 1_000u32]; // 10%
-    client.set_volume_brackets(&client.get_admin(), &soroban_thresholds, &soroban_discounts);
+    client.set_volume_brackets(&soroban_thresholds, &soroban_discounts);
 
     let business = Address::generate(&env);
-    client.set_business_tier(&client.get_admin(), &business, &1u32);
+    client.set_business_tier(&business, &1u32);
     mint(&env, &token_addr, &business, 1_000_000 * 25);
 
     // Submit 12 attestations → count = 12 (≥10 bracket active).
     for i in 0u64..12 {
         let period = String::from_str(&env, &std::format!("DOC-EX-{i:03}"));
         let root   = BytesN::from_array(&env, &[(i % 256) as u8; 32]);
-        client.submit_attestation(&business, &period, &root, &1_700_000_000, &1, &None, &None);
+        client.submit_attestation(&business, &period, &root, &1_700_000_000, &1, &0i128, &None, &None);
     }
 
     let quote = client.get_fee_quote(&business);
@@ -1680,13 +1680,13 @@ fn prop_get_fee_quote_is_idempotent() {
     let base_fee: i128 = 750_000;
     let (env, client, _admin, _token_addr, _collector) = setup_with_fees(base_fee);
 
-    client.set_tier_discount(&client.get_admin(), &1u32, &1_500u32);
+    client.set_tier_discount(&1u32, &1_500u32);
     let business = Address::generate(&env);
-    client.set_business_tier(&client.get_admin(), &business, &1u32);
+    client.set_business_tier(&business, &1u32);
 
     let soroban_thresholds = vec![&env, 0u64];
     let soroban_discounts  = vec![&env, 1_000u32];
-    client.set_volume_brackets(&client.get_admin(), &soroban_thresholds, &soroban_discounts);
+    client.set_volume_brackets(&soroban_thresholds, &soroban_discounts);
 
     let first_quote = client.get_fee_quote(&business);
 
@@ -1738,21 +1738,21 @@ fn prop_regression_protocol_revenue_determinism() {
     let base_fee: i128 = 1_000_000;
     let (env, client, _admin, token_addr, collector) = setup_with_fees(base_fee);
 
-    client.set_tier_discount(&client.get_admin(), &0u32, &0u32);
-    client.set_tier_discount(&client.get_admin(), &1u32, &1_500u32); // 15%
-    client.set_tier_discount(&client.get_admin(), &2u32, &3_000u32); // 30%
+    client.set_tier_discount(&0u32, &0u32);
+    client.set_tier_discount(&1u32, &1_500u32); // 15%
+    client.set_tier_discount(&2u32, &3_000u32); // 30%
 
     let soroban_thresholds = vec![&env, 5u64, 10u64];
     let soroban_discounts  = vec![&env, 500u32, 1_000u32];
-    client.set_volume_brackets(&client.get_admin(), &soroban_thresholds, &soroban_discounts);
+    client.set_volume_brackets(&soroban_thresholds, &soroban_discounts);
 
     let biz_standard     = Address::generate(&env);
     let biz_professional = Address::generate(&env);
     let biz_enterprise   = Address::generate(&env);
 
-    client.set_business_tier(&client.get_admin(), &biz_standard,     &0u32);
-    client.set_business_tier(&client.get_admin(), &biz_professional, &1u32);
-    client.set_business_tier(&client.get_admin(), &biz_enterprise,   &2u32);
+    client.set_business_tier(&biz_standard,     &0u32);
+    client.set_business_tier(&biz_professional, &1u32);
+    client.set_business_tier(&biz_enterprise,   &2u32);
 
     let mint_amount = base_fee * 20;
     for biz in [&biz_standard, &biz_professional, &biz_enterprise] {
@@ -1767,7 +1767,7 @@ fn prop_regression_protocol_revenue_determinism() {
         ] {
             let period = String::from_str(&env, &std::format!("{prefix}-{i:03}"));
             let root   = BytesN::from_array(&env, &[(i % 256) as u8; 32]);
-            client.submit_attestation(biz, &period, &root, &1_700_000_000, &1, &None, &None);
+            client.submit_attestation(biz, &period, &root, &1_700_000_000, &1, &0i128, &None, &None);
         }
     }
 

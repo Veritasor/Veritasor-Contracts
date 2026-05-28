@@ -298,3 +298,170 @@ fn test_migrate_attestation_preserves_fee_and_optional_fields() {
     assert_eq!(stored_proof, proof_hash);
     assert_eq!(stored_expiry, expiry);
 }
+
+// ── Fee configuration events ───────────────────────────────────────
+
+#[test]
+fn test_configure_fees_emits_fee_config_changed_event() {
+    let (env, client, admin, _) = setup();
+    let token = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    client.configure_fees(&token, &collector, &1_000i128, &true);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    let topics = last.1.clone();
+
+    assert_eq!(topics.len(), 1);
+    assert_eq!(
+        soroban_sdk::Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+        symbol_short!("fee_cfg"),
+        "configure_fees must emit a FeeConfigChanged event"
+    );
+
+    let ev = events::FeeConfigChangedEvent::try_from_val(&env, &last.2).unwrap();
+    assert_eq!(ev.token, token);
+    assert_eq!(ev.collector, collector);
+    assert_eq!(ev.base_fee, 1_000i128);
+    assert!(ev.enabled);
+    assert_eq!(ev.changed_by, admin);
+}
+
+#[test]
+fn test_configure_fees_event_matches_stored_config() {
+    let (env, client, _admin, _) = setup();
+    let token = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    client.configure_fees(&token, &collector, &500i128, &false);
+
+    let stored = client.get_fee_config().unwrap();
+    let ev = events::FeeConfigChangedEvent::try_from_val(
+        &env,
+        &env.events().all().last().unwrap().2,
+    )
+    .unwrap();
+
+    assert_eq!(ev.token, stored.token);
+    assert_eq!(ev.collector, stored.collector);
+    assert_eq!(ev.base_fee, stored.base_fee);
+    assert_eq!(ev.enabled, stored.enabled);
+}
+
+#[test]
+fn test_set_fee_enabled_emits_fee_config_changed_event() {
+    let (env, client, admin, _) = setup();
+    let token = Address::generate(&env);
+    let collector = Address::generate(&env);
+    client.configure_fees(&token, &collector, &200i128, &true);
+
+    client.set_fee_enabled(&false);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    let topics = last.1.clone();
+
+    assert_eq!(topics.len(), 1);
+    assert_eq!(
+        soroban_sdk::Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+        symbol_short!("fee_cfg"),
+        "set_fee_enabled must emit a FeeConfigChanged event"
+    );
+
+    let ev = events::FeeConfigChangedEvent::try_from_val(&env, &last.2).unwrap();
+    assert_eq!(ev.token, token);
+    assert_eq!(ev.collector, collector);
+    assert_eq!(ev.base_fee, 200i128);
+    assert!(!ev.enabled);
+    assert_eq!(ev.changed_by, admin);
+}
+
+#[test]
+fn test_set_fee_enabled_event_reflects_persisted_state() {
+    let (env, client, _admin, _) = setup();
+    let token = Address::generate(&env);
+    let collector = Address::generate(&env);
+    client.configure_fees(&token, &collector, &100i128, &false);
+
+    client.set_fee_enabled(&true);
+
+    let ev = events::FeeConfigChangedEvent::try_from_val(
+        &env,
+        &env.events().all().last().unwrap().2,
+    )
+    .unwrap();
+    let stored = client.get_fee_config().unwrap();
+
+    assert_eq!(ev.enabled, stored.enabled);
+    assert_eq!(ev.base_fee, stored.base_fee);
+}
+
+#[test]
+fn test_set_fee_enabled_no_config_emits_no_extra_event() {
+    // When no FeeConfig exists, set_fee_enabled is a no-op and must not emit.
+    let (env, client, _admin, _) = setup();
+
+    client.set_fee_enabled(&true);
+
+    // The only event present should be from initialize (role_gr), not fee_cfg.
+    for (_cid, topics, _data) in env.events().all().iter() {
+        if topics.len() > 0 {
+            let sym =
+                soroban_sdk::Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
+            assert_ne!(
+                sym,
+                symbol_short!("fee_cfg"),
+                "set_fee_enabled with no config must not emit a fee_cfg event"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_configure_flat_fee_emits_flat_fee_config_changed_event() {
+    let (env, client, admin, _) = setup();
+    let token = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    client.configure_flat_fee(&token, &collector, &250i128, &true);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    let topics = last.1.clone();
+
+    assert_eq!(topics.len(), 1);
+    assert_eq!(
+        soroban_sdk::Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+        symbol_short!("ff_cfg"),
+        "configure_flat_fee must emit a FlatFeeConfigChanged event"
+    );
+
+    let ev = events::FlatFeeConfigChangedEvent::try_from_val(&env, &last.2).unwrap();
+    assert_eq!(ev.token, token);
+    assert_eq!(ev.collector, collector);
+    assert_eq!(ev.amount, 250i128);
+    assert!(ev.enabled);
+    assert_eq!(ev.changed_by, admin);
+}
+
+#[test]
+fn test_configure_flat_fee_event_matches_stored_config() {
+    let (env, client, _admin, _) = setup();
+    let token = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    client.configure_flat_fee(&token, &collector, &750i128, &false);
+
+    let stored = client.get_flat_fee_config().unwrap();
+    let ev = events::FlatFeeConfigChangedEvent::try_from_val(
+        &env,
+        &env.events().all().last().unwrap().2,
+    )
+    .unwrap();
+
+    assert_eq!(ev.token, stored.token);
+    assert_eq!(ev.collector, stored.collector);
+    assert_eq!(ev.amount, stored.amount);
+    assert_eq!(ev.enabled, stored.enabled);
+}
