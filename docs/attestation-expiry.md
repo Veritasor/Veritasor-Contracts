@@ -278,10 +278,46 @@ To change expiry, the business must:
 | Data Preservation | Expired attestations remain queryable |
 | Migration | Expiry preserved during attestation migration |
 
+## Monotonic Expiry Invariant
+
+The contract enforces a **monotonic expiry** invariant through the `extend_expiry` function:
+
+- Expiry timestamps can only be **extended** (increased), never reduced.
+- This ensures that once an attestation is valid until a certain time, its validity period cannot be shortened without revocation.
+
+### Extending Expiry
+
+Businesses can extend the expiry of their attestations using `extend_expiry`:
+
+```rust
+pub fn extend_expiry(
+    env: Env,
+    business: Address,
+    period: String,
+    new_expiry: u64,
+)
+```
+
+**Requirements:**
+1. The caller must be the business address (authenticated via `require_auth`).
+2. The attestation must exist (panics if not found).
+3. The `new_expiry` must be **strictly greater** than the current expiry.
+4. The `new_expiry` must be **strictly greater** than the attestation timestamp.
+
+**Behavior:**
+- Updates only the expiry field, preserving all other attestation data.
+- Emits an `AttestationExpiryExtended` event.
+- Allows extending from `None` (no expiry) to `Some(expiry)` or extending an existing expiry.
+
+### Use Cases
+
+1. **Renewal**: Extend an attestation's validity period without resubmitting.
+2. **Continuity**: Maintain the same attestation data while extending the deadline.
+3. **Compliance**: Meet regulatory requirements for attestation freshness.
+
 ## Future Enhancements
 
 Potential extensions (not currently implemented):
 - Automatic expiry extension mechanisms
 - Expiry-based fee discounts
 - Batch expiry queries
-- Expiry events

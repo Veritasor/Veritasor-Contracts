@@ -124,6 +124,8 @@ pub const TOPIC_BIZ_APPROVED: Symbol = symbol_short!("biz_apr");
 pub const TOPIC_BIZ_SUSPENDED: Symbol = symbol_short!("biz_sus");
 /// Topic: business reactivated
 pub const TOPIC_BIZ_REACTIVATE: Symbol = symbol_short!("biz_rea");
+/// Topic: proof hash updated
+pub const TOPIC_PROOF_HASH_UPDATED: Symbol = symbol_short!("ph_upd");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -399,6 +401,24 @@ pub struct BusinessReactivatedEvent {
     pub reactivated_by: Address,
 }
 
+/// Normalized payload for `ProofHashUpdated` events.
+///
+/// Emitted when an attestation's proof hash is updated by an admin.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ProofHashUpdatedEvent {
+    /// Business address whose attestation was updated.
+    pub business: Address,
+    /// Period identifier of the attestation.
+    pub period: String,
+    /// Old proof hash value.
+    pub old_proof_hash: Option<BytesN<32>>,
+    /// New proof hash value.
+    pub new_proof_hash: Option<BytesN<32>>,
+    /// Address that performed the update.
+    pub updated_by: Address,
+}
+
 // ════════════════════════════════════════════════════════════════════
 //  Event Emission Functions
 //
@@ -532,6 +552,22 @@ pub fn emit_attestation_migrated(
         .publish((TOPIC_ATTESTATION_MIGRATED, business.clone()), event);
 }
 
+/// Normalized payload for `AttestationExpiryExtended` events.
+///
+/// Emitted when a business extends the expiry timestamp of an attestation.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AttestationExpiryExtendedEvent {
+    /// Business address that owns the attestation.
+    pub business: Address,
+    /// Period identifier of the attestation.
+    pub period: String,
+    /// Previous expiry timestamp (may be `None` if previously unset).
+    pub old_expiry: Option<u64>,
+    /// New expiry timestamp.
+    pub new_expiry: u64,
+}
+
 /// Normalized payload for `MultiPeriodIssued` events.
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -546,8 +582,42 @@ pub struct MultiPeriodIssuedEvent {
     pub merkle_root: BytesN<32>,
 }
 
+/// Topic: attestation expiry extended
+pub const TOPIC_ATTESTATION_EXPIRY_EXTENDED: Symbol = symbol_short!("att_exp");
 /// Topic: multi-period attestation issued
 pub const TOPIC_MULTI_PERIOD_ISSUED: Symbol = symbol_short!("mul_iss");
+
+/// Emit an `AttestationExpiryExtended` event.
+///
+/// Call this after the attestation expiry has been updated.
+///
+/// # Arguments
+///
+/// * `env`        – Soroban execution environment.
+/// * `business`   – Business address that owns the attestation.
+/// * `period`     – Period identifier of the attestation.
+/// * `old_expiry` – Previous expiry timestamp (may be `None` if previously unset).
+/// * `new_expiry` – New expiry timestamp.
+///
+/// # Events
+///
+/// Publishes `(att_exp, business)` → `AttestationExpiryExtendedEvent`.
+pub fn emit_attestation_expiry_extended(
+    env: &Env,
+    business: &Address,
+    period: &String,
+    old_expiry: Option<u64>,
+    new_expiry: u64,
+) {
+    let event = AttestationExpiryExtendedEvent {
+        business: business.clone(),
+        period: period.clone(),
+        old_expiry,
+        new_expiry,
+    };
+    env.events()
+        .publish((TOPIC_ATTESTATION_EXPIRY_EXTENDED, business.clone()), event);
+}
 
 /// Emit a `MultiPeriodIssued` event.
 pub fn emit_multi_period_issued(
@@ -919,4 +989,37 @@ pub fn emit_business_reactivated(env: &Env, business: &Address, reactivated_by: 
     };
     env.events()
         .publish((TOPIC_BIZ_REACTIVATE, business.clone()), event);
+}
+
+/// Emit a `ProofHashUpdated` event.
+///
+/// # Arguments
+///
+/// * `env`            – Soroban execution environment.
+/// * `business`       – Business address whose attestation was updated.
+/// * `period`         – Period identifier of the attestation.
+/// * `old_proof_hash` – Old proof hash value.
+/// * `new_proof_hash` – New proof hash value.
+/// * `updated_by`     – Address that performed the update.
+///
+/// # Events
+///
+/// Publishes `(ph_upd, business)` → `ProofHashUpdatedEvent`.
+pub fn emit_proof_hash_updated(
+    env: &Env,
+    business: &Address,
+    period: &String,
+    old_proof_hash: &Option<BytesN<32>>,
+    new_proof_hash: &Option<BytesN<32>>,
+    updated_by: &Address,
+) {
+    let event = ProofHashUpdatedEvent {
+        business: business.clone(),
+        period: period.clone(),
+        old_proof_hash: old_proof_hash.clone(),
+        new_proof_hash: new_proof_hash.clone(),
+        updated_by: updated_by.clone(),
+    };
+    env.events()
+        .publish((TOPIC_PROOF_HASH_UPDATED, business.clone()), event);
 }
