@@ -52,7 +52,8 @@ fn test_set_business_tier_at_max_accepted() {
 fn test_set_business_tier_above_max_panics() {
     let t = setup();
     let biz = Address::generate(&t.env);
-    t.client.set_business_tier(&biz, &(dynamic_fees::MAX_TIER + 1));
+    t.client
+        .set_business_tier(&biz, &(dynamic_fees::MAX_TIER + 1));
 }
 
 #[test]
@@ -75,7 +76,8 @@ fn test_set_tier_discount_at_max_tier_accepted() {
 #[should_panic(expected = "tier exceeds MAX_TIER")]
 fn test_set_tier_discount_above_max_panics() {
     let t = setup();
-    t.client.set_tier_discount(&(dynamic_fees::MAX_TIER + 1), &5_000);
+    t.client
+        .set_tier_discount(&(dynamic_fees::MAX_TIER + 1), &5_000);
 }
 
 #[test]
@@ -90,7 +92,8 @@ fn test_set_tier_discount_u32_max_panics() {
 #[should_panic(expected = "tier exceeds MAX_TIER")]
 fn test_tier_checked_before_discount_bps() {
     let t = setup();
-    t.client.set_tier_discount(&(dynamic_fees::MAX_TIER + 1), &10_001);
+    t.client
+        .set_tier_discount(&(dynamic_fees::MAX_TIER + 1), &10_001);
 }
 
 /// discount_bps > 10 000 is still rejected when tier is valid.

@@ -154,8 +154,7 @@ fn get_attestation_while_paused() {
     );
     client.pause(&admin);
 
-    let (stored_root, _, stored_ver, _, _, _) =
-        client.get_attestation(&business, &period).unwrap();
+    let (stored_root, _, stored_ver, _, _, _) = client.get_attestation(&business, &period).unwrap();
     assert_eq!(stored_root, root);
     assert_eq!(stored_ver, 1u32);
 }

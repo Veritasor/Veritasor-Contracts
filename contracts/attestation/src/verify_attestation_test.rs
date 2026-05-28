@@ -67,12 +67,7 @@ fn setup() -> Setup<'static> {
 }
 
 /// Submit a single-period attestation and return the root that was stored.
-fn submit(
-    s: &Setup,
-    business: &Address,
-    period_str: &str,
-    root_byte: u8,
-) -> BytesN<32> {
+fn submit(s: &Setup, business: &Address, period_str: &str, root_byte: u8) -> BytesN<32> {
     let period = String::from_str(&s.env, period_str);
     let root = BytesN::from_array(&s.env, &[root_byte; 32]);
     s.client.submit_attestation(
