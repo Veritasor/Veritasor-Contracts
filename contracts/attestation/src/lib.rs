@@ -153,6 +153,18 @@ impl AttestationContract {
         dynamic_fees::set_volume_brackets(&env, &thresholds, &discounts);
     }
 
+    /// Returns the configured volume brackets as two parallel vectors: `(thresholds, discounts)`.
+    ///
+    /// `thresholds[i]` is the minimum cumulative attestation count to enter bracket `i`;
+    /// `discounts[i]` is the corresponding discount in basis points (0–10 000).
+    /// Both vectors are empty when no brackets have been configured.
+    pub fn get_volume_brackets(env: Env) -> (Vec<u64>, Vec<u32>) {
+        (
+            dynamic_fees::get_volume_thresholds(&env),
+            dynamic_fees::get_volume_discounts_vec(&env),
+        )
+    }
+
     pub fn set_fee_enabled(env: Env, enabled: bool) {
         dynamic_fees::require_admin(&env);
         dynamic_fees::set_fee_enabled(&env, enabled);
@@ -567,19 +579,12 @@ impl AttestationContract {
             timestamp,
             version,
             fee,
-            proof_hash.clone(),
-            expiry,
+            proof_hash,
+            Some(new_expiry),
         );
         env.storage().instance().set(&key, &data);
 
-        events::emit_proof_hash_updated(
-            &env,
-            &business,
-            &period,
-            &old_proof_hash,
-            &proof_hash,
-            &caller,
-        );
+        events::emit_attestation_expiry_extended(&env, &business, &period, old_expiry, new_expiry);
     }
 
     pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
@@ -589,6 +594,42 @@ impl AttestationContract {
 
     pub fn get_proof_hash(env: Env, business: Address, period: String) -> Option<BytesN<32>> {
         Self::get_attestation(env, business, period).and_then(|data| data.4)
+    }
+
+    pub fn update_proof_hash(
+        env: Env,
+        caller: Address,
+        business: Address,
+        period: String,
+        new_proof_hash: Option<BytesN<32>>,
+    ) {
+        access_control::require_admin(&env, &caller);
+
+        let key = DataKey::Attestation(business.clone(), period.clone());
+        let (merkle_root, timestamp, version, fee, old_proof_hash, expiry): AttestationData = env
+            .storage()
+            .instance()
+            .get(&key)
+            .expect("attestation not found");
+
+        let data: AttestationData = (
+            merkle_root,
+            timestamp,
+            version,
+            fee,
+            new_proof_hash.clone(),
+            expiry,
+        );
+        env.storage().instance().set(&key, &data);
+
+        events::emit_proof_hash_updated(
+            &env,
+            &business,
+            &period,
+            &old_proof_hash,
+            &new_proof_hash,
+            &caller,
+        );
     }
 
     pub fn get_attestation_for_period(
@@ -1037,10 +1078,58 @@ impl AttestationContract {
 
 // ── Test Modules ──
 #[cfg(test)]
+mod access_control_test;
+#[cfg(test)]
+mod anomaly_test;
+#[cfg(test)]
+mod attestor_staking_integration_test;
+#[cfg(test)]
 mod batch_submission_test;
 #[cfg(test)]
-mod tier_bounds_test;
+mod dao_override_test;
+#[cfg(test)]
+mod dispute_test;
+#[cfg(test)]
+mod dynamic_fees_test;
+#[cfg(test)]
+mod events_test;
+#[cfg(test)]
+mod expiry_test;
+#[cfg(test)]
+mod extend_expiry_test;
+#[cfg(test)]
+mod extended_metadata_test;
+#[cfg(test)]
+mod fee_admin_auth_test;
+#[cfg(test)]
+mod fees_test;
+#[cfg(test)]
+mod gas_benchmark_test;
+#[cfg(test)]
+mod key_rotation_test;
+#[cfg(test)]
+mod multi_period_test;
+#[cfg(test)]
+mod multisig_test;
+#[cfg(test)]
+mod pause_test;
+#[cfg(test)]
+mod proof_hash_test;
+#[cfg(test)]
+mod proof_hash_update_test;
+#[cfg(test)]
+mod property_test;
+#[cfg(test)]
+mod query_pagination_test;
+#[cfg(test)]
+mod rate_limit_test;
+#[cfg(test)]
+mod registry_test;
+#[cfg(test)]
+mod revocation_test;
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod tier_bounds_test;
 #[cfg(test)]
 mod verify_attestation_test;
