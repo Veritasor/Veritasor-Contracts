@@ -1053,7 +1053,14 @@ fn test_batch_at_max_size_accepted() {
         let period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
         let mut root = [0u8; 32];
         root[0] = i as u8;
-        items.push_back(create_batch_item(&env, &business, &std::format!("2026-{:02}", i + 1), &root, 1_700_000_000, 1));
+        items.push_back(create_batch_item(
+            &env,
+            &business,
+            &std::format!("2026-{:02}", i + 1),
+            &root,
+            1_700_000_000,
+            1,
+        ));
     }
 
     client.submit_attestations_batch(&items);
@@ -1070,7 +1077,14 @@ fn test_batch_one_over_max_size_rejected() {
     for i in 0..=MAX_BATCH_SIZE {
         let mut root = [0u8; 32];
         root[0] = i as u8;
-        items.push_back(create_batch_item(&env, &business, &std::format!("2026-{:02}", i + 1), &root, 1_700_000_000, 1));
+        items.push_back(create_batch_item(
+            &env,
+            &business,
+            &std::format!("2026-{:02}", i + 1),
+            &root,
+            1_700_000_000,
+            1,
+        ));
     }
 
     client.submit_attestations_batch(&items);

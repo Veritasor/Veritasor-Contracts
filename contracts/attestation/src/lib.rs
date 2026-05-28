@@ -54,7 +54,10 @@ pub use dispute::{
     Dispute, DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType, OptionalResolution,
 };
 pub use dynamic_fees::{compute_fee, DataKey, FeeConfig};
-pub use events::{AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent, ProofHashUpdatedEvent};
+pub use events::{
+    AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent,
+    ProofHashUpdatedEvent,
+};
 pub use fees::{collect_flat_fee, FlatFeeConfig};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
 pub use rate_limit::RateLimitConfig;
@@ -539,12 +542,7 @@ impl AttestationContract {
         );
     }
 
-    pub fn extend_expiry(
-        env: Env,
-        business: Address,
-        period: String,
-        new_expiry: u64,
-    ) {
+    pub fn extend_expiry(env: Env, business: Address, period: String, new_expiry: u64) {
         business.require_auth();
 
         let key = DataKey::Attestation(business.clone(), period.clone());
@@ -853,11 +851,7 @@ impl AttestationContract {
     }
 
     /// Return all dispute IDs associated with a specific attestation.
-    pub fn get_disputes_by_attestation(
-        env: Env,
-        business: Address,
-        period: String,
-    ) -> Vec<u64> {
+    pub fn get_disputes_by_attestation(env: Env, business: Address, period: String) -> Vec<u64> {
         dispute::get_dispute_ids_by_attestation(&env, &business, &period)
     }
 
@@ -1034,8 +1028,8 @@ mod batch_submission_test;
 #[cfg(test)]
 mod pause_test;
 #[cfg(test)]
-mod tier_bounds_test;
-#[cfg(test)]
 mod test;
+#[cfg(test)]
+mod tier_bounds_test;
 #[cfg(test)]
 mod verify_attestation_test;
