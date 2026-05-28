@@ -567,19 +567,12 @@ impl AttestationContract {
             timestamp,
             version,
             fee,
-            proof_hash.clone(),
-            expiry,
+            proof_hash,
+            Some(new_expiry),
         );
         env.storage().instance().set(&key, &data);
 
-        events::emit_proof_hash_updated(
-            &env,
-            &business,
-            &period,
-            &old_proof_hash,
-            &proof_hash,
-            &caller,
-        );
+        events::emit_attestation_expiry_extended(&env, &business, &period, old_expiry, new_expiry);
     }
 
     pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
@@ -1038,6 +1031,8 @@ impl AttestationContract {
 // ── Test Modules ──
 #[cfg(test)]
 mod batch_submission_test;
+#[cfg(test)]
+mod pause_test;
 #[cfg(test)]
 mod tier_bounds_test;
 #[cfg(test)]
