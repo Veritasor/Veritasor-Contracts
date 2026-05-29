@@ -43,6 +43,7 @@ fn non_admin_caller_is_rejected() {
         &merkle_root,
         &1000u64,
         &1u32,
+        &0i128,
         &Some(proof_hash),
         &None,
     );
@@ -84,6 +85,7 @@ fn get_proof_hash_reflects_new_value_after_update() {
         &merkle_root,
         &1000u64,
         &1u32,
+        &0i128,
         &Some(proof_hash.clone()),
         &None,
     );
@@ -118,6 +120,7 @@ fn other_fields_unchanged_after_update() {
         &merkle_root,
         &timestamp,
         &version,
+        &0i128,
         &Some(proof_hash),
         &None,
     );
@@ -150,6 +153,7 @@ fn can_update_to_none_proof_hash() {
         &merkle_root,
         &1000u64,
         &1u32,
+        &0i128,
         &Some(proof_hash),
         &None,
     );
@@ -177,6 +181,7 @@ fn can_update_from_none_to_some_proof_hash() {
         &merkle_root,
         &1000u64,
         &1u32,
+        &0i128,
         &None,
         &None,
     );
