@@ -755,3 +755,131 @@ fn suspension_does_not_corrupt_other_registry_fields() {
     // Only status changed.
     assert_eq!(record.status, BusinessStatus::Suspended);
 }
+
+// ========================= submit_attestation registry gate =========================
+
+fn make_root(env: &Env, byte: u8) -> BytesN<32> {
+    BytesN::from_array(env, &[byte; 32])
+}
+
+fn submit(ctx: &Ctx, business: &Address, period: &str) {
+    ctx.client.submit_attestation(
+        business,
+        &soroban_sdk::String::from_str(&ctx.env, period),
+        &make_root(&ctx.env, 0xAA),
+        &1_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+}
+
+/// Suspended business is rejected by submit_attestation.
+#[test]
+#[should_panic(expected = "business is suspended")]
+fn submit_attestation_rejects_suspended_business() {
+    let ctx = Ctx::new();
+    let business = ctx.suspended();
+    submit(&ctx, &business, "2024-01");
+}
+
+/// Active (registered) business is accepted by submit_attestation.
+#[test]
+fn submit_attestation_accepts_active_business() {
+    let ctx = Ctx::new();
+    let business = ctx.active();
+    submit(&ctx, &business, "2024-01");
+    assert!(ctx
+        .client
+        .get_attestation(
+            &business,
+            &soroban_sdk::String::from_str(&ctx.env, "2024-01")
+        )
+        .is_some());
+}
+
+/// Unregistered business is accepted (backward compatibility).
+#[test]
+fn submit_attestation_accepts_unregistered_business() {
+    let ctx = Ctx::new();
+    let business = Address::generate(&ctx.env);
+    submit(&ctx, &business, "2024-01");
+    assert!(ctx
+        .client
+        .get_attestation(
+            &business,
+            &soroban_sdk::String::from_str(&ctx.env, "2024-01")
+        )
+        .is_some());
+}
+
+/// Reactivated business can submit again after suspension.
+#[test]
+fn submit_attestation_accepts_reactivated_business() {
+    let ctx = Ctx::new();
+    let business = ctx.suspended();
+    ctx.client.reactivate_business(&ctx.admin, &business);
+    submit(&ctx, &business, "2024-01");
+    assert!(ctx
+        .client
+        .get_attestation(
+            &business,
+            &soroban_sdk::String::from_str(&ctx.env, "2024-01")
+        )
+        .is_some());
+}
+
+// ========================= submit_attestations_batch registry gate =========================
+
+fn batch_item(
+    env: &Env,
+    business: &Address,
+    period: &str,
+) -> BatchAttestationItem {
+    BatchAttestationItem {
+        business: business.clone(),
+        period: soroban_sdk::String::from_str(env, period),
+        merkle_root: make_root(env, 0xBB),
+        timestamp: 1_000_000u64,
+        version: 1u32,
+        proof_hash: None,
+        expiry_timestamp: None,
+    }
+}
+
+/// Batch containing a suspended business is rejected.
+#[test]
+#[should_panic(expected = "business is suspended")]
+fn batch_rejects_suspended_business() {
+    let ctx = Ctx::new();
+    let suspended = ctx.suspended();
+    let mut items = Vec::new(&ctx.env);
+    items.push_back(batch_item(&ctx.env, &suspended, "2024-01"));
+    ctx.client.submit_attestations_batch(&items);
+}
+
+/// Batch with all active/unregistered businesses succeeds.
+#[test]
+fn batch_accepts_active_and_unregistered_businesses() {
+    let ctx = Ctx::new();
+    let active = ctx.active();
+    let unregistered = Address::generate(&ctx.env);
+    let mut items = Vec::new(&ctx.env);
+    items.push_back(batch_item(&ctx.env, &active, "2024-01"));
+    items.push_back(batch_item(&ctx.env, &unregistered, "2024-01"));
+    ctx.client.submit_attestations_batch(&items);
+}
+
+/// Mixed batch: one active, one suspended — entire batch is rejected.
+#[test]
+#[should_panic(expected = "business is suspended")]
+fn batch_rejects_if_any_business_is_suspended() {
+    let ctx = Ctx::new();
+    let active = ctx.active();
+    let suspended = ctx.suspended();
+    let mut items = Vec::new(&ctx.env);
+    items.push_back(batch_item(&ctx.env, &active, "2024-01"));
+    items.push_back(batch_item(&ctx.env, &suspended, "2024-02"));
+    ctx.client.submit_attestations_batch(&items);
+}

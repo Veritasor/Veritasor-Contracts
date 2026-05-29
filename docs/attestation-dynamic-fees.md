@@ -57,9 +57,12 @@ Businesses are assigned to tiers by the contract admin. Tiers are identified by 
 | 0    | Standard     | 0% (default for all businesses) |
 | 1    | Professional | 10–20%                          |
 | 2    | Enterprise   | 30–50%                          |
-| 3+   | Custom       | Admin-defined                   |
+| 3–9  | Custom       | Admin-defined                   |
 
-The scheme is open-ended — any `u32` tier level can be configured with a discount.
+**Tier bounds:** valid tier indices are `0` through `MAX_TIER` (currently **9**, inclusive). Both
+`set_business_tier` and `set_tier_discount` reject any value above `MAX_TIER` with a runtime
+panic, ensuring that misconfiguration is caught at write time rather than silently yielding a
+zero-discount (full-fee) result for an unconfigured tier slot.
 
 Unassigned businesses default to tier 0.
 

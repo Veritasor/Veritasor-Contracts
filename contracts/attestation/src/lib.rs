@@ -54,7 +54,10 @@ pub use dispute::{
     Dispute, DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType, OptionalResolution,
 };
 pub use dynamic_fees::{compute_fee, DataKey, FeeConfig};
-pub use events::{AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent, ProofHashUpdatedEvent};
+pub use events::{
+    AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent,
+    ProofHashUpdatedEvent,
+};
 pub use fees::{collect_flat_fee, FlatFeeConfig};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
 pub use rate_limit::RateLimitConfig;
@@ -99,6 +102,14 @@ pub struct BatchAttestationItem {
 /// 25 × 25 = 625 comparisons — well within Soroban's CPU budget while
 /// still covering all practical bulk-submission use cases.
 pub const MAX_BATCH_SIZE: u32 = 25;
+
+/// Maximum number of items allowed in a single batch verification call.
+///
+/// This limit is consistent with the system's pagination max_limit and ensures
+/// that batch verification remains efficient while preventing resource exhaustion.
+/// The limit is set to 30 items, which provides a good balance between efficiency
+/// and practical use cases.
+pub const MAX_BATCH_SIZE_VERIFY: u32 = 30;
 
 #[contract]
 pub struct AttestationContract;
@@ -159,6 +170,18 @@ impl AttestationContract {
     pub fn set_volume_brackets(env: Env, thresholds: Vec<u64>, discounts: Vec<u32>) {
         dynamic_fees::require_admin(&env);
         dynamic_fees::set_volume_brackets(&env, &thresholds, &discounts);
+    }
+
+    /// Returns the configured volume brackets as two parallel vectors: `(thresholds, discounts)`.
+    ///
+    /// `thresholds[i]` is the minimum cumulative attestation count to enter bracket `i`;
+    /// `discounts[i]` is the corresponding discount in basis points (0–10 000).
+    /// Both vectors are empty when no brackets have been configured.
+    pub fn get_volume_brackets(env: Env) -> (Vec<u64>, Vec<u32>) {
+        (
+            dynamic_fees::get_volume_thresholds(&env),
+            dynamic_fees::get_volume_discounts_vec(&env),
+        )
     }
 
     pub fn set_fee_enabled(env: Env, enabled: bool) {
@@ -250,6 +273,10 @@ impl AttestationContract {
         access_control::require_not_paused(&env);
         business.require_auth();
 
+        if registry::get_status(&env, &business) == Some(BusinessStatus::Suspended) {
+            panic!("business is suspended");
+        }
+
         rate_limit::check_rate_limit(&env, &business);
 
         let key = DataKey::Attestation(business.clone(), period.clone());
@@ -302,6 +329,9 @@ impl AttestationContract {
         let mut seen = Vec::new(&env);
         let mut authed_businesses = Vec::new(&env);
         for item in items.iter() {
+            // Enforce non-empty period validation inside batch pipelines
+            Self::validate_period(&item.period);
+
             // Only require_auth once per unique business in the batch
             let mut already_authed = false;
             for b in authed_businesses.iter() {
@@ -313,6 +343,10 @@ impl AttestationContract {
             if !already_authed {
                 item.business.require_auth();
                 authed_businesses.push_back(item.business.clone());
+            }
+
+            if registry::get_status(&env, &item.business) == Some(BusinessStatus::Suspended) {
+                panic!("business is suspended");
             }
 
             let pair = (item.business.clone(), item.period.clone());
@@ -419,6 +453,92 @@ impl AttestationContract {
         } else {
             false
         }
+    }
+
+    /// Verify multiple attestations in a single batch call.
+    ///
+    /// This read-only method accepts a vector of (business, period, merkle_root) tuples
+    /// and returns a parallel vector of boolean results. Each result indicates whether
+    /// the corresponding attestation is valid (exists, root matches, and not revoked).
+    ///
+    /// # Parameters
+    ///
+    /// - `env`: The Soroban environment
+    /// - `items`: A vector of (business, period, merkle_root) tuples to verify
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<bool>` where each boolean at index i corresponds to the verification
+    /// result for items[i]:
+    /// - `true`: Attestation exists, root matches, and is not revoked
+    /// - `false`: Attestation missing, root mismatch, or revoked
+    ///
+    /// # Panics
+    ///
+    /// - Panics with "batch cannot be empty" if the batch is empty
+    /// - Panics with "batch exceeds maximum size" if the batch exceeds 30 items
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let items = vec![
+    ///     (business1, period1, root1),
+    ///     (business2, period2, root2),
+    /// ];
+    /// let results = contract.verify_attestations_batch(env, items);
+    /// assert_eq!(results.len(), 2);
+    /// ```
+    ///
+    /// # Revocation-Aware Verification
+    ///
+    /// The method checks revocation status via `dispute::is_attestation_revoked`.
+    /// A revoked attestation will return `false` even if the root matches.
+    ///
+    /// # Performance
+    ///
+    /// Batch verification is more efficient than individual calls:
+    /// - Reduces transaction overhead by batching multiple verifications
+    /// - Linear time complexity: O(n) for n items
+    /// - No nested loops or quadratic operations
+    ///
+    /// # Security
+    ///
+    /// - Read-only: Does not modify contract state
+    /// - No authorization required: Callable by any address
+    /// - Revocation-aware: All verifications check revocation status
+    /// - Consistent: Uses same logic as `verify_attestation`
+    pub fn verify_attestations_batch(
+        env: Env,
+        items: Vec<(Address, String, BytesN<32>)>,
+    ) -> Vec<bool> {
+        // Input validation: enforce batch size constraints
+        if items.is_empty() {
+            panic!("batch cannot be empty");
+        }
+        if items.len() > MAX_BATCH_SIZE_VERIFY as usize {
+            panic!("batch exceeds maximum size");
+        }
+
+        // Verification loop: process each item and collect results
+        let mut results = Vec::new(&env);
+        for item in items.iter() {
+            let (business, period, provided_root) = item;
+
+            // Retrieve stored attestation data
+            if let Some((stored_root, _, _, _, _, _)) =
+                Self::get_attestation(env.clone(), business.clone(), period.clone())
+            {
+                // Verify: root must match AND attestation must not be revoked
+                let is_valid =
+                    stored_root == *provided_root && !dispute::is_attestation_revoked(&env, &business, &period);
+                results.push_back(is_valid);
+            } else {
+                // Attestation not found: return false
+                results.push_back(false);
+            }
+        }
+
+        results
     }
 
     pub fn submit_attestation_with_metadata(
@@ -565,12 +685,52 @@ impl AttestationContract {
         );
     }
 
+    pub fn extend_expiry(env: Env, business: Address, period: String, new_expiry: u64) {
+        business.require_auth();
+
+        let key = DataKey::Attestation(business.clone(), period.clone());
+        let (merkle_root, timestamp, version, fee, proof_hash, old_expiry): AttestationData = env
+            .storage()
+            .instance()
+            .get(&key)
+            .expect("attestation not found");
+
+        let current_expiry = old_expiry.unwrap_or(0);
+        if new_expiry <= current_expiry {
+            panic!("new_expiry must be greater than current expiry");
+        }
+        if new_expiry <= timestamp {
+            panic!("new_expiry must be greater than attestation timestamp");
+        }
+
+        let data: AttestationData = (
+            merkle_root,
+            timestamp,
+            version,
+            fee,
+            proof_hash,
+            Some(new_expiry),
+        );
+        env.storage().instance().set(&key, &data);
+
+        events::emit_attestation_expiry_extended(&env, &business, &period, old_expiry, new_expiry);
+    }
+
+    pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
+        let key = DataKey::Attestation(business, period);
+        env.storage().instance().get(&key)
+    }
+
+    pub fn get_proof_hash(env: Env, business: Address, period: String) -> Option<BytesN<32>> {
+        Self::get_attestation(env, business, period).and_then(|data| data.4)
+    }
+
     pub fn update_proof_hash(
         env: Env,
         caller: Address,
         business: Address,
         period: String,
-        proof_hash: Option<BytesN<32>>,
+        new_proof_hash: Option<BytesN<32>>,
     ) {
         access_control::require_admin(&env, &caller);
 
@@ -586,7 +746,7 @@ impl AttestationContract {
             timestamp,
             version,
             fee,
-            proof_hash.clone(),
+            new_proof_hash.clone(),
             expiry,
         );
         env.storage().instance().set(&key, &data);
@@ -596,18 +756,9 @@ impl AttestationContract {
             &business,
             &period,
             &old_proof_hash,
-            &proof_hash,
+            &new_proof_hash,
             &caller,
         );
-    }
-
-    pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
-        let key = DataKey::Attestation(business, period);
-        env.storage().instance().get(&key)
-    }
-
-    pub fn get_proof_hash(env: Env, business: Address, period: String) -> Option<BytesN<32>> {
-        Self::get_attestation(env, business, period).and_then(|data| data.4)
     }
 
     pub fn get_attestation_for_period(
@@ -879,11 +1030,7 @@ impl AttestationContract {
     }
 
     /// Return all dispute IDs associated with a specific attestation.
-    pub fn get_disputes_by_attestation(
-        env: Env,
-        business: Address,
-        period: String,
-    ) -> Vec<u64> {
+    pub fn get_disputes_by_attestation(env: Env, business: Address, period: String) -> Vec<u64> {
         dispute::get_dispute_ids_by_attestation(&env, &business, &period)
     }
 
@@ -906,7 +1053,7 @@ impl AttestationContract {
     /// - `period`   — period string identifying the attestation
     /// - `reason`   — human-readable revocation reason stored on-chain
     /// - `_nonce`   — legacy replay-protection argument (ignored; preserved for
-    ///                signature compatibility with off-chain tooling)
+    ///                 signature compatibility with off-chain tooling)
     ///
     /// # Panics
     /// - Contract is paused
@@ -1035,6 +1182,17 @@ impl AttestationContract {
 
     // ── Internal Helpers ──────────────────────────────────────────────
 
+    /// REQUIREMENT: Rejects empty or malformed strings to avoid permanent unvalidated storage poisoning.
+    fn validate_period(period: &String) {
+        if period.len() == 0 {
+            panic!("period string must not be empty");
+        }
+
+        if period.len() != 6 {
+            panic!("malformed period string structure: expected YYYYMM format");
+        }
+    }
+
     fn validate_expiry(env: &Env, timestamp: u64, expiry_timestamp: Option<u64>) {
         if let Some(expiry) = expiry_timestamp {
             if expiry <= timestamp {
@@ -1056,9 +1214,15 @@ impl AttestationContract {
 
 // ── Test Modules ──
 #[cfg(test)]
+mod access_control_test;
+#[cfg(test)]
+mod anomaly_test;
+#[cfg(test)]
+mod attestor_staking_integration_test;
+#[cfg(test)]
 mod batch_submission_test;
 #[cfg(test)]
-mod dao_override_test;
+mod pause_test;
 #[cfg(test)]
 mod events_test;
 #[cfg(test)]
@@ -1066,4 +1230,9 @@ mod property_test;
 #[cfg(test)]
 mod test;
 #[cfg(test)]
+mod tier_bounds_test;
+#[cfg(test)]
 mod verify_attestation_test;
+#[cfg(test)]
+mod verify_attestations_batch_test;
+

@@ -552,6 +552,22 @@ pub fn emit_attestation_migrated(
         .publish((TOPIC_ATTESTATION_MIGRATED, business.clone()), event);
 }
 
+/// Normalized payload for `AttestationExpiryExtended` events.
+///
+/// Emitted when a business extends the expiry timestamp of an attestation.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AttestationExpiryExtendedEvent {
+    /// Business address that owns the attestation.
+    pub business: Address,
+    /// Period identifier of the attestation.
+    pub period: String,
+    /// Previous expiry timestamp (may be `None` if previously unset).
+    pub old_expiry: Option<u64>,
+    /// New expiry timestamp.
+    pub new_expiry: u64,
+}
+
 /// Normalized payload for `MultiPeriodIssued` events.
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -566,8 +582,42 @@ pub struct MultiPeriodIssuedEvent {
     pub merkle_root: BytesN<32>,
 }
 
+/// Topic: attestation expiry extended
+pub const TOPIC_ATTESTATION_EXPIRY_EXTENDED: Symbol = symbol_short!("att_exp");
 /// Topic: multi-period attestation issued
 pub const TOPIC_MULTI_PERIOD_ISSUED: Symbol = symbol_short!("mul_iss");
+
+/// Emit an `AttestationExpiryExtended` event.
+///
+/// Call this after the attestation expiry has been updated.
+///
+/// # Arguments
+///
+/// * `env`        – Soroban execution environment.
+/// * `business`   – Business address that owns the attestation.
+/// * `period`     – Period identifier of the attestation.
+/// * `old_expiry` – Previous expiry timestamp (may be `None` if previously unset).
+/// * `new_expiry` – New expiry timestamp.
+///
+/// # Events
+///
+/// Publishes `(att_exp, business)` → `AttestationExpiryExtendedEvent`.
+pub fn emit_attestation_expiry_extended(
+    env: &Env,
+    business: &Address,
+    period: &String,
+    old_expiry: Option<u64>,
+    new_expiry: u64,
+) {
+    let event = AttestationExpiryExtendedEvent {
+        business: business.clone(),
+        period: period.clone(),
+        old_expiry,
+        new_expiry,
+    };
+    env.events()
+        .publish((TOPIC_ATTESTATION_EXPIRY_EXTENDED, business.clone()), event);
+}
 
 /// Emit a `MultiPeriodIssued` event.
 pub fn emit_multi_period_issued(

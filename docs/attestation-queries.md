@@ -79,3 +79,22 @@ The pagination cursor is designed for stability across concurrent modifications:
 3. **Deterministic ordering:** Results are returned in the same order as the input periods list.
 4. **Idempotent queries:** Calling with the same parameters always returns the same results (assuming no state changes between calls).
 
+
+## Business registry gate
+
+`submit_attestation` and `submit_attestations_batch` enforce the business registry status before accepting a submission.
+
+| Registry state | Allowed to submit? |
+|----------------|--------------------|
+| Not registered | ✅ Yes (backward compatible) |
+| Registered — `Active` | ✅ Yes |
+| Registered — `Pending` | ✅ Yes (not yet approved, treated as unblocked) |
+| Registered — `Suspended` | ❌ No — panics with `"business is suspended"` |
+
+The check is performed after `require_auth` and before any storage writes or fee collection, so a suspended business is rejected without side effects.
+
+**Batch behaviour:** In `submit_attestations_batch` the check runs during the validation phase (before any writes). If any business in the batch is `Suspended`, the entire batch is rejected atomically.
+
+**Reactivation:** An admin can call `reactivate_business` to move a business from `Suspended` back to `Active`, after which submissions are accepted again.
+
+**Security note:** The gate uses `registry::get_status` (returns `Option<BusinessStatus>`) rather than `registry::is_active` so that the `Suspended` case is explicit and cannot be confused with an unregistered address returning `false`.
