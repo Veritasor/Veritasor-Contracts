@@ -121,6 +121,24 @@ fn test_compute_fee_zero_base() {
 }
 
 #[test]
+#[should_panic(expected = "base_fee must be non-negative")]
+fn test_compute_fee_negative_base_panics() {
+    compute_fee(-1, 0, 0);
+}
+
+#[test]
+fn test_compute_fee_large_base_full_discount() {
+    let base_fee = i128::MAX;
+    assert_eq!(compute_fee(base_fee, 10_000, 0), 0);
+}
+
+#[test]
+fn test_compute_fee_large_base_combined_full_discounts() {
+    let base_fee = i128::MAX;
+    assert_eq!(compute_fee(base_fee, 10_000, 10_000), 0);
+}
+
+#[test]
 fn test_flat_fee_no_discounts() {
     let t = setup_with_fees(1_000_000);
     let business = Address::generate(&t.env);

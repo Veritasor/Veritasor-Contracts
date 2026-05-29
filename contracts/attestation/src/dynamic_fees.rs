@@ -44,6 +44,8 @@
 //! 2. **Integrity**: Discounts are capped at 10,000 bps (100%).
 //! 3. **Consistency**: Volume thresholds must be strictly ascending to ensure
 //!    deterministic bracket selection.
+//! 4. **Arithmetic safety**: `compute_fee` panics on negative `base_fee` or
+//!    any intermediate overflow, and enforces the result in `[0, base_fee]`.
 
 use soroban_sdk::{contracttype, token, Address, Env, Symbol, Val, Vec};
 
@@ -359,9 +361,20 @@ fn get_effective_fee_config(env: &Env) -> Option<FeeConfig> {
 /// - **Bounds**: The result is always in the range `[0, base_fee]`.
 /// - **Rounding**: Truncates toward zero.
 pub fn compute_fee(base_fee: i128, tier_discount_bps: u32, volume_discount_bps: u32) -> i128 {
+    assert!(base_fee >= 0, "base_fee must be non-negative");
     let tier_factor = 10_000i128 - tier_discount_bps as i128;
     let vol_factor = 10_000i128 - volume_discount_bps as i128;
-    base_fee * tier_factor * vol_factor / 100_000_000i128
+    let product = base_fee
+        .checked_mul(tier_factor)
+        .expect("fee overflow: base_fee * tier_factor")
+        .checked_mul(vol_factor)
+        .expect("fee overflow: base_fee * tier_factor * vol_factor");
+    let fee = product
+        .checked_div(100_000_000i128)
+        .expect("fee overflow: divide by scale");
+    assert!(fee >= 0, "fee must be non-negative");
+    assert!(fee <= base_fee, "fee exceeds base_fee");
+    fee
 }
 
 /// Collect the fee: transfer tokens from `business` to the fee collector.
