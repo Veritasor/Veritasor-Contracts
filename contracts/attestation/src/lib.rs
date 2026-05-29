@@ -236,6 +236,10 @@ impl AttestationContract {
         access_control::require_not_paused(&env);
         business.require_auth();
 
+        // Enforce period validation check
+        Self::validate_period(&period);
+
+        // Keep the main branch rate limit check intact
         rate_limit::check_rate_limit(&env, &business);
 
         let key = DataKey::Attestation(business.clone(), period.clone());
@@ -288,6 +292,9 @@ impl AttestationContract {
         let mut seen = Vec::new(&env);
         let mut authed_businesses = Vec::new(&env);
         for item in items.iter() {
+            // Enforce non-empty period validation inside batch pipelines
+            Self::validate_period(&item.period);
+
             // Only require_auth once per unique business in the batch
             let mut already_authed = false;
             for b in authed_businesses.iter() {
@@ -928,7 +935,7 @@ impl AttestationContract {
     /// - `period`   — period string identifying the attestation
     /// - `reason`   — human-readable revocation reason stored on-chain
     /// - `_nonce`   — legacy replay-protection argument (ignored; preserved for
-    ///                signature compatibility with off-chain tooling)
+    ///                 signature compatibility with off-chain tooling)
     ///
     /// # Panics
     /// - Contract is paused
@@ -1056,6 +1063,17 @@ impl AttestationContract {
     }
 
     // ── Internal Helpers ──────────────────────────────────────────────
+
+    /// REQUIREMENT: Rejects empty or malformed strings to avoid permanent unvalidated storage poisoning.
+    fn validate_period(period: &String) {
+        if period.len() == 0 {
+            panic!("period string must not be empty");
+        }
+
+        if period.len() != 6 {
+            panic!("malformed period string structure: expected YYYYMM format");
+        }
+    }
 
     fn validate_expiry(env: &Env, timestamp: u64, expiry_timestamp: Option<u64>) {
         if let Some(expiry) = expiry_timestamp {
