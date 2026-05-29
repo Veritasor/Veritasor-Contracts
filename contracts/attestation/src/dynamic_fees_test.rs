@@ -544,3 +544,142 @@ fn test_get_volume_brackets_round_trip() {
     assert_eq!(got_thresholds, thresholds);
     assert_eq!(got_discounts, discounts);
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  set_volume_brackets validation tests (issue #329)
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_volume_brackets_empty_vectors_accepted() {
+    // Empty vectors should be accepted (no brackets = no volume discount)
+    let t = setup_with_fees(1_000_000);
+    let thresholds = vec![&t.env];
+    let discounts = vec![&t.env];
+    t.client.set_volume_brackets(&thresholds, &discounts);
+
+    let business = Address::generate(&t.env);
+    assert_eq!(t.client.get_fee_quote(&business), 1_000_000);
+}
+
+#[test]
+fn test_volume_brackets_single_bracket() {
+    // Single bracket should work correctly
+    let t = setup_with_fees(1_000_000);
+    let thresholds = vec![&t.env, 10u64];
+    let discounts = vec![&t.env, 2_000u32];
+    t.client.set_volume_brackets(&thresholds, &discounts);
+
+    let business = Address::generate(&t.env);
+    mint(&t.env, &t.token_addr, &business, 100_000_000);
+
+    // Before reaching threshold: full price
+    for i in 1..=10 {
+        assert_eq!(t.client.get_fee_quote(&business), 1_000_000);
+        submit(&t.client, &t.env, &business, i);
+    }
+
+    // After reaching threshold: 20% discount
+    assert_eq!(t.client.get_fee_quote(&business), 800_000);
+}
+
+#[test]
+#[should_panic(expected = "thresholds must be strictly ascending")]
+fn test_volume_brackets_equal_adjacent_thresholds_panics() {
+    // Equal adjacent thresholds should be rejected (not strictly ascending)
+    let t = setup_with_fees(1_000_000);
+    let thresholds = vec![&t.env, 5u64, 5u64, 10u64];
+    let discounts = vec![&t.env, 500u32, 1_000u32, 1_500u32];
+    t.client.set_volume_brackets(&thresholds, &discounts);
+}
+
+#[test]
+#[should_panic(expected = "thresholds must be strictly ascending")]
+fn test_volume_brackets_equal_first_two_thresholds_panics() {
+    // Equal first two thresholds should be rejected
+    let t = setup_with_fees(1_000_000);
+    let thresholds = vec![&t.env, 10u64, 10u64];
+    let discounts = vec![&t.env, 500u32, 1_000u32];
+    t.client.set_volume_brackets(&thresholds, &discounts);
+}
+
+#[test]
+fn test_volume_brackets_exact_10000_bps_accepted() {
+    // 10,000 bps (100%) should be accepted (boundary case)
+    let t = setup_with_fees(1_000_000);
+    let thresholds = vec![&t.env, 5u64];
+    let discounts = vec![&t.env, 10_000u32]; // Exactly 100%
+    t.client.set_volume_brackets(&thresholds, &discounts);
+
+    let business = Address::generate(&t.env);
+    mint(&t.env, &t.token_addr, &business, 10_000_000);
+
+    // Before threshold: full price
+    assert_eq!(t.client.get_fee_quote(&business), 1_000_000);
+    submit(&t.client, &t.env, &business, 1);
+
+    // After threshold: 100% discount = free
+    assert_eq!(t.client.get_fee_quote(&business), 0);
+}
+
+#[test]
+fn test_volume_brackets_multiple_valid_discounts() {
+    // All discounts at boundary (10,000 bps) should be accepted
+    let t = setup_with_fees(1_000_000);
+    let thresholds = vec![&t.env, 5u64, 10u64, 20u64];
+    let discounts = vec![&t.env, 10_000u32, 10_000u32, 10_000u32];
+    t.client.set_volume_brackets(&thresholds, &discounts);
+
+    let business = Address::generate(&t.env);
+    // Should not panic and brackets should be set
+    let (got_thresholds, got_discounts) = t.client.get_volume_brackets();
+    assert_eq!(got_thresholds, thresholds);
+    assert_eq!(got_discounts, discounts);
+}
+
+#[test]
+#[should_panic(expected = "discount cannot exceed 10 000 bps")]
+fn test_volume_brackets_second_discount_over_limit_panics() {
+    // Second discount exceeding limit should be rejected
+    let t = setup_with_fees(1_000_000);
+    let thresholds = vec![&t.env, 5u64, 10u64];
+    let discounts = vec![&t.env, 500u32, 10_001u32];
+    t.client.set_volume_brackets(&thresholds, &discounts);
+}
+
+#[test]
+#[should_panic(expected = "discount cannot exceed 10 000 bps")]
+fn test_volume_brackets_last_discount_over_limit_panics() {
+    // Last discount exceeding limit should be rejected
+    let t = setup_with_fees(1_000_000);
+    let thresholds = vec![&t.env, 5u64, 10u64, 20u64];
+    let discounts = vec![&t.env, 500u32, 1_000u32, 10_001u32];
+    t.client.set_volume_brackets(&thresholds, &discounts);
+}
+
+#[test]
+fn test_volume_brackets_zero_discounts_accepted() {
+    // Zero discounts should be accepted (valid configuration)
+    let t = setup_with_fees(1_000_000);
+    let thresholds = vec![&t.env, 5u64, 10u64];
+    let discounts = vec![&t.env, 0u32, 0u32];
+    t.client.set_volume_brackets(&thresholds, &discounts);
+
+    let business = Address::generate(&t.env);
+    mint(&t.env, &t.token_addr, &business, 100_000_000);
+
+    // Should always charge full price (0% discount)
+    for i in 1..=15 {
+        assert_eq!(t.client.get_fee_quote(&business), 1_000_000);
+        submit(&t.client, &t.env, &business, i);
+    }
+}
+
+#[test]
+#[should_panic(expected = "thresholds must be strictly ascending")]
+fn test_volume_brackets_descending_thresholds_rejected() {
+    // Descending thresholds should be rejected
+    let t = setup_with_fees(1_000_000);
+    let thresholds = vec![&t.env, 10u64, 5u64, 1u64];
+    let discounts = vec![&t.env, 500u32, 1_000u32, 1_500u32];
+    t.client.set_volume_brackets(&thresholds, &discounts);
+}
