@@ -517,3 +517,30 @@ fn test_max_discount_combinations() {
     assert_eq!(t.client.get_fee_quote(&biz_combined), 0);
 }
 
+
+#[test]
+fn test_get_volume_brackets_empty() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &0u64);
+
+    let (thresholds, discounts) = client.get_volume_brackets();
+    assert_eq!(thresholds.len(), 0);
+    assert_eq!(discounts.len(), 0);
+}
+
+#[test]
+fn test_get_volume_brackets_round_trip() {
+    let t = setup_with_fees(1_000_000);
+
+    let thresholds = vec![&t.env, 5u64, 10u64, 50u64];
+    let discounts = vec![&t.env, 500u32, 1_500u32, 3_000u32];
+    t.client.set_volume_brackets(&thresholds, &discounts);
+
+    let (got_thresholds, got_discounts) = t.client.get_volume_brackets();
+    assert_eq!(got_thresholds, thresholds);
+    assert_eq!(got_discounts, discounts);
+}
