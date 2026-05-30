@@ -13,6 +13,10 @@ doctest = false
 soroban-sdk = "22.0"
 veritasor-common = { path = "../common" }
 
+[features]
+# Enables legacy integration test modules that target APIs still in flux.
+full-tests = []
+
 [dev-dependencies]
 soroban-sdk = { version = "22.0", features = ["testutils"] }
 proptest    = { version = "=1.8.0", default-features = false, features = ["std"] }

@@ -336,12 +336,10 @@ fn test_configure_fees_event_matches_stored_config() {
 
     client.configure_fees(&token, &collector, &500i128, &false);
 
+    let ev =
+        events::FeeConfigChangedEvent::try_from_val(&env, &env.events().all().last().unwrap().2)
+            .unwrap();
     let stored = client.get_fee_config().unwrap();
-    let ev = events::FeeConfigChangedEvent::try_from_val(
-        &env,
-        &env.events().all().last().unwrap().2,
-    )
-    .unwrap();
 
     assert_eq!(ev.token, stored.token);
     assert_eq!(ev.collector, stored.collector);
@@ -386,11 +384,9 @@ fn test_set_fee_enabled_event_reflects_persisted_state() {
 
     client.set_fee_enabled(&true);
 
-    let ev = events::FeeConfigChangedEvent::try_from_val(
-        &env,
-        &env.events().all().last().unwrap().2,
-    )
-    .unwrap();
+    let ev =
+        events::FeeConfigChangedEvent::try_from_val(&env, &env.events().all().last().unwrap().2)
+            .unwrap();
     let stored = client.get_fee_config().unwrap();
 
     assert_eq!(ev.enabled, stored.enabled);
@@ -407,8 +403,7 @@ fn test_set_fee_enabled_no_config_emits_no_extra_event() {
     // The only event present should be from initialize (role_gr), not fee_cfg.
     for (_cid, topics, _data) in env.events().all().iter() {
         if topics.len() > 0 {
-            let sym =
-                soroban_sdk::Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
+            let sym = soroban_sdk::Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
             assert_ne!(
                 sym,
                 symbol_short!("fee_cfg"),
@@ -453,15 +448,90 @@ fn test_configure_flat_fee_event_matches_stored_config() {
 
     client.configure_flat_fee(&token, &collector, &750i128, &false);
 
-    let stored = client.get_flat_fee_config().unwrap();
     let ev = events::FlatFeeConfigChangedEvent::try_from_val(
         &env,
         &env.events().all().last().unwrap().2,
     )
     .unwrap();
+    let stored = client.get_flat_fee_config().unwrap();
 
     assert_eq!(ev.token, stored.token);
     assert_eq!(ev.collector, stored.collector);
     assert_eq!(ev.amount, stored.amount);
     assert_eq!(ev.enabled, stored.enabled);
+}
+
+// ── get_fee_quote_detailed (issue #324) ─────────────────────────────
+
+fn deploy_token_for_quote(env: &Env) -> Address {
+    let token_admin = Address::generate(env);
+    env.register_stellar_asset_contract_v2(token_admin)
+        .address()
+        .clone()
+}
+
+#[test]
+fn test_fee_quote_detailed_all_zeros_when_fees_disabled() {
+    let (env, client, _admin, _) = setup();
+    let business = Address::generate(&env);
+    let token = deploy_token_for_quote(&env);
+    let collector = Address::generate(&env);
+
+    client.configure_flat_fee(&token, &collector, &500, &false);
+    client.configure_fees(&token, &collector, &1_000, &false);
+
+    let breakdown = client.get_fee_quote_detailed(&business);
+    assert_eq!(breakdown, (0, 0, 0, 0, 0));
+    assert_eq!(client.get_fee_quote(&business), 0);
+}
+
+#[test]
+fn test_fee_quote_detailed_only_flat_fee_enabled() {
+    let (env, client, _admin, _) = setup();
+    let business = Address::generate(&env);
+    let token = deploy_token_for_quote(&env);
+    let collector = Address::generate(&env);
+
+    client.configure_flat_fee(&token, &collector, &350, &true);
+
+    let (base_fee, tier_bps, vol_bps, dynamic_fee, flat_fee) =
+        client.get_fee_quote_detailed(&business);
+
+    assert_eq!(base_fee, 0);
+    assert_eq!(tier_bps, 0);
+    assert_eq!(vol_bps, 0);
+    assert_eq!(dynamic_fee, 0);
+    assert_eq!(flat_fee, 350);
+    assert_eq!(dynamic_fee + flat_fee, client.get_fee_quote(&business));
+}
+
+#[test]
+fn test_fee_quote_detailed_both_fees_enabled_sum_matches_quote() {
+    let (env, client, _admin, _) = setup();
+    let business = Address::generate(&env);
+    let flat_collector = Address::generate(&env);
+    let dyn_collector = Address::generate(&env);
+
+    let flat_token = deploy_token_for_quote(&env);
+    let dyn_token = deploy_token_for_quote(&env);
+    soroban_sdk::token::StellarAssetClient::new(&env, &flat_token).mint(&business, &10_000);
+    soroban_sdk::token::StellarAssetClient::new(&env, &dyn_token).mint(&business, &10_000);
+
+    client.configure_flat_fee(&flat_token, &flat_collector, &200, &true);
+    client.configure_fees(&dyn_token, &dyn_collector, &1_000_000, &true);
+    client.set_tier_discount(&1, &2_000);
+    client.set_business_tier(&business, &1);
+
+    let breakdown = client.get_fee_quote_detailed(&business);
+    let quote = client.get_fee_quote(&business);
+
+    let (base_fee, tier_bps, vol_bps, dynamic_fee, flat_fee) = breakdown;
+
+    assert_eq!(base_fee, 1_000_000);
+    assert_eq!(tier_bps, 2_000);
+    assert_eq!(vol_bps, 0);
+    assert_eq!(dynamic_fee, 800_000);
+    assert_eq!(flat_fee, 200);
+    assert_eq!(dynamic_fee + flat_fee, quote);
+    assert_eq!(quote, 800_200);
 }
