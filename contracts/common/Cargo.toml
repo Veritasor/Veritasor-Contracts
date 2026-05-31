@@ -17,3 +17,4 @@ veritasor-attestation = { path = "../attestation" }
 veritasor-integration-registry = { path = "../integration-registry" }
 veritasor-attestation-snapshot = { path = "../attestation-snapshot" }
 veritasor-aggregated-attestations = { path = "../aggregated-attestations" }
+veritasor-protocol-dao = { path = "../protocol-dao" }

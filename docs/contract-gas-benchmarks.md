@@ -401,6 +401,37 @@ Planned improvements to the benchmark system:
 - [Soroban Testing Guide](https://developers.stellar.org/docs/build/smart-contracts/getting-started/testing)
 - [Stellar CLI Documentation](https://developers.stellar.org/docs/tools/stellar-cli)
 
+
+## Threshold Regression Tests
+
+In addition to benchmarks, dedicated regression tests enforce hard cost ceilings. These tests fail if any operation exceeds 150% of its documented target, catching regressions before they reach production.
+
+### Regression Test Coverage
+
+| Test | Operation | CPU Threshold | Memory Threshold |
+|------|-----------|--------------|-----------------|
+| `regression_submit_attestation_no_fee_threshold` | submit (no fee) | < 750,000 | < 15,000 |
+| `regression_submit_attestation_with_fee_threshold` | submit (with fee) | < 1,500,000 | < 30,000 |
+| `regression_revoke_attestation_threshold` | revoke | < 450,000 | < 12,000 |
+| `regression_migrate_attestation_threshold` | migrate | < 600,000 | < 15,000 |
+| `regression_get_attestation_threshold` | get | < 150,000 | < 4,500 |
+| `regression_grant_role_threshold` | grant_role | < 375,000 | < 10,500 |
+| `regression_is_revoked_active_threshold` | is_revoked (active) | < 300,000 | < 7,500 |
+| `regression_is_revoked_after_revoke_threshold` | is_revoked (revoked) | < 375,000 | < 9,000 |
+
+### Running Regression Tests
+```bash
+cd contracts/attestation
+cargo test regression -- --nocapture
+```
+
+### Adversarial and Edge Cases Covered
+
+- Revocation followed by is_revoked check (worst-case read path)
+- Migration version enforcement (new version must exceed old)
+- Fee collection path with token mint and transfer overhead
+- Role grant requiring admin bootstrap via initialize
+
 ## Changelog
 
 ### 2026-02-22

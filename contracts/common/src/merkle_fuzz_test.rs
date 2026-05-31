@@ -40,8 +40,8 @@
 use soroban_sdk::{Bytes, BytesN, Env, Vec as SorobanVec};
 
 use crate::merkle::{
-    build_merkle_tree, generate_proof, hash_leaf, verify_proof, MerkleError, MerkleProof,
-    MerkleTree,
+    build_merkle_tree, compute_root, generate_proof, hash_leaf, verify_proof, MerkleError,
+    MerkleProof, MerkleTree, MAX_TREE_DEPTH,
 };
 
 /// Seed for deterministic fuzz testing (CI-friendly)
@@ -99,6 +99,20 @@ fn generate_random_tree(env: &Env, rng: &mut SeededRng) -> MerkleTree {
 
     for _ in 0..leaf_count {
         leaves.push_back(generate_random_leaf(env, rng));
+    }
+
+    build_merkle_tree(env, &leaves).unwrap()
+}
+
+/// Build a deterministic tree shape for edge-branch assertions.
+fn build_sequential_tree(env: &Env, leaf_count: u32) -> MerkleTree {
+    let mut leaves = SorobanVec::new(env);
+
+    for i in 0..leaf_count {
+        let mut data = Bytes::new(env);
+        data.push_back(i as u8);
+        data.push_back((i.wrapping_mul(17)) as u8);
+        leaves.push_back(hash_leaf(env, &data));
     }
 
     build_merkle_tree(env, &leaves).unwrap()
@@ -262,6 +276,77 @@ fn fuzz_malformed_proofs_rejected() {
     // Log the results for visibility
     // Note: In a real fuzzing campaign, we'd want most to be rejected
     // but for this simple test, we just verify no panics occur
+}
+
+/// Test: Proofs with more than [`MAX_TREE_DEPTH`] steps are rejected (DoS / malformed).
+#[test]
+fn fuzz_verify_proof_rejects_excessive_path_depth() {
+    let env = Env::default();
+    let mut path = SorobanVec::new(&env);
+    let mut proof = SorobanVec::new(&env);
+    let sample = hash_leaf(&env, &Bytes::from_array(&env, &[0xab_u8; 32]));
+    for _ in 0..(MAX_TREE_DEPTH + 1) {
+        path.push_back(false);
+        proof.push_back(sample.clone());
+    }
+    let bad = MerkleProof {
+        leaf: sample,
+        proof,
+        path,
+    };
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    assert_eq!(
+        verify_proof(&env, &root, &bad).unwrap_err(),
+        MerkleError::MaxDepthExceeded
+    );
+}
+
+/// Test: Valid trees never emit proofs longer than [`MAX_TREE_DEPTH`].
+#[test]
+fn fuzz_generated_proof_depth_bounded() {
+    let env = Env::default();
+    let tree = build_sequential_tree(&env, 8);
+    for i in 0..tree.leaves.len() {
+        let p = generate_proof(&env, &tree, i).unwrap();
+        assert!(p.proof.len() <= MAX_TREE_DEPTH);
+        assert_eq!(p.proof.len(), p.path.len());
+    }
+}
+
+/// Test: Mismatched proof and path lengths are rejected as malformed input.
+#[test]
+fn fuzz_mismatched_proof_path_lengths_rejected() {
+    let env = Env::default();
+    let mut rng = SeededRng::new(FUZZ_SEED);
+
+    for leaf_count in [2u32, 3, 5, 8] {
+        let tree = build_sequential_tree(&env, leaf_count);
+        let leaf_idx = rng.range_u32(tree.leaves.len());
+        let valid_proof = generate_proof(&env, &tree, leaf_idx).unwrap();
+
+        let mut missing_path = valid_proof.clone();
+        if !missing_path.path.is_empty() {
+            missing_path.path.pop_back();
+        } else {
+            missing_path.proof.push_back(valid_proof.leaf.clone());
+        }
+
+        let mut extra_path = valid_proof.clone();
+        extra_path.path.push_back(rng.next_bool());
+
+        assert_eq!(
+            verify_proof(&env, &tree.root, &missing_path).unwrap_err(),
+            MerkleError::MalformedInput,
+            "short path must be rejected for tree size {}",
+            leaf_count
+        );
+        assert_eq!(
+            verify_proof(&env, &tree.root, &extra_path).unwrap_err(),
+            MerkleError::MalformedInput,
+            "extra path element must be rejected for tree size {}",
+            leaf_count
+        );
+    }
 }
 
 /// Test: Tree with single leaf works correctly
@@ -456,6 +541,41 @@ fn fuzz_power_of_two_minus_one() {
     }
 }
 
+/// Test: Odd-width branches duplicate the final leaf and still verify.
+#[test]
+fn fuzz_odd_branch_self_sibling_edges() {
+    let env = Env::default();
+
+    for size in [3u32, 5, 9] {
+        let tree = build_sequential_tree(&env, size);
+        let last_index = size - 1;
+        let proof = generate_proof(&env, &tree, last_index).unwrap();
+
+        assert!(
+            !proof.proof.is_empty(),
+            "odd-width tree of size {} should generate at least one branch step",
+            size
+        );
+        assert_eq!(
+            proof.proof.get(0).unwrap(),
+            proof.leaf,
+            "last leaf should self-duplicate at the first odd-width branch for tree size {}",
+            size
+        );
+        assert_eq!(
+            proof.path.get(0).unwrap(),
+            false,
+            "duplicated odd-width branch should keep the leaf on the left for tree size {}",
+            size
+        );
+        assert!(
+            verify_proof(&env, &tree.root, &proof).unwrap(),
+            "self-duplicated branch proof must verify for tree size {}",
+            size
+        );
+    }
+}
+
 /// Test: Adversarial input - all zeros
 #[test]
 fn fuzz_all_zeros_leaf() {
@@ -539,6 +659,42 @@ fn fuzz_proof_consistency() {
 
         // Both should have generated the same leaf hash
         assert_eq!(proof1.leaf, proof2.leaf);
+    }
+}
+
+/// Test: compute_root matches the root stored in the full tree.
+#[test]
+fn fuzz_compute_root_matches_built_tree_root() {
+    let env = Env::default();
+    let mut rng = SeededRng::new(FUZZ_SEED);
+
+    for _ in 0..8 {
+        let tree = generate_random_tree(&env, &mut rng);
+        let computed = compute_root(&env, &tree.leaves).unwrap();
+        assert_eq!(
+            computed, tree.root,
+            "compute_root must match build_merkle_tree root for all fuzzed trees"
+        );
+    }
+}
+
+/// Test: Proof verification is deterministic across repeated calls on edge branches.
+#[test]
+fn fuzz_edge_branch_verification_is_deterministic() {
+    let env = Env::default();
+
+    for size in [2u32, 3, 4, 5, 8, 9] {
+        let tree = build_sequential_tree(&env, size);
+        for index in [0u32, size / 2, size - 1] {
+            let proof = generate_proof(&env, &tree, index).unwrap();
+            let first = verify_proof(&env, &tree.root, &proof).unwrap();
+            let second = verify_proof(&env, &tree.root, &proof).unwrap();
+            assert_eq!(
+                first, second,
+                "verification must be deterministic for tree size {} index {}",
+                size, index
+            );
+        }
     }
 }
 

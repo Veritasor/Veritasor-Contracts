@@ -131,29 +131,58 @@ fn settle(
     period: String,
     attested_revenue: i128
 )
+
+fn settle_multi(
+    env: Env,
+    agreement_id: u64,
+    periods: Vec<String>,
+    revenues: Vec<i128>
+)
 ```
 
-Settle revenue for a period: verify attestation, calculate repayment, prevent double-spending, transfer funds.
+Settle revenue for one or more periods. `settle` is a convenience wrapper for a single-period `settle_multi`.
 
 **Invariants Enforced**:
 - Agreement must be active (status == 0)
-- Attestation must exist for (business, period)
-- Attestation must not be revoked
-- No prior settlement must exist for this (agreement_id, period)
-- Double-spending protection via commitment tracking
+- Attestations must exist for all provided (business, period) pairs
+- No attestation in the batch must be revoked
+- No prior settlement must exist for any period in the batch
+- Double-spending protection via commitment tracking for each period
 
 **Repayment Calculation**:
+For `settle_multi`, revenue and agreement terms are aggregated across all $N$ periods:
 ```
-repayment = min(
-    (attested_revenue * revenue_share_bps) / 10000,
-    max_repayment_amount
-)
+total_revenue = sum(revenues)
+agg_threshold = min_revenue_threshold * N
+agg_cap = max_repayment_amount * N
 
-if attested_revenue < min_revenue_threshold:
+if total_revenue >= agg_threshold:
+    repayment = min(
+        (total_revenue * revenue_share_bps) / 10000,
+        agg_cap
+    )
+else:
     repayment = 0
 ```
 
-If `repayment > 0`, transfers `repayment` tokens from business to lender.
+If `repayment > 0`, transfers `repayment` tokens from business to lender. Individual settlement records and commitments are stored for each period, with the total repayment distributed across them.
+
+## Multi-Period Netting
+
+The `settle_multi` function enables **netting**, which allows a business to offset losses (negative revenue) in one period against gains in another within the same settlement batch. 
+
+### Netting Example
+- **Agreement**: 10% share, 100k threshold, 500k cap.
+- **Period 1**: 200k revenue.
+- **Period 2**: -50k revenue (e.g., due to returns).
+- **Batch Result**:
+    - Total Revenue: 150k.
+    - Aggregated Threshold: 200k (2 periods * 100k).
+    - Since 150k < 200k, the total repayment is 0. 
+    - Without netting, Period 1 would have triggered a 20k repayment.
+
+### Accounting
+To maintain compatibility with single-period queries, `settle_multi` creates a `SettlementRecord` for each period in the batch. The total repayment is distributed equally across these records (with any remainder added to the final record).
 
 ### Status Management
 
@@ -190,6 +219,25 @@ fn get_admin(env: Env) -> Address
 2. Attestation not revoked (via `is_revoked`)
 
 Fail if either check fails.
+
+### 2.5. Single Settlement Token Per Business-Period
+
+**Invariant**: A business and attestation period cannot be settled across multiple token contracts.
+
+**Mechanism**: The first successful settlement for `(business, period)` records the agreement token. Later settlements for the same business-period must use that same token address or they fail.
+
+**Rationale**: Revenue attestations do not include FX conversion logic in this contract. Rejecting cross-token settlement prevents the same attested revenue from being repaid in multiple currencies.
+
+### 2.5. Multi-Currency Rejection
+
+**Invariant**: Once a business-period has been settled in one token, another agreement cannot reuse that same attestation period with a different token.
+
+**Mechanism**: Settlement stores the first token seen for `(business, period)` and rejects any later settlement attempt with a different token.
+
+**Expected Behavior**:
+- Same-token agreements may settle independently.
+- Different-token agreements for the same business-period are rejected.
+- Failed cross-token attempts do not create settlement records or commitment entries for the rejected agreement.
 
 ### 3. Authorization
 
@@ -229,6 +277,8 @@ The contract includes comprehensive tests:
 ### Security Invariants
 - `test_settle_double_spending_prevention`: Verify commitment prevents re-settlement
 - `test_settle_inactive_agreement`: Verify cannot settle completed/defaulted agreements
+- `test_settle_rejects_multi_currency_for_same_business_period`: Verify cross-token reuse of the same business-period is rejected without partial state
+- `test_settle_allows_same_currency_across_multiple_agreements`: Verify same-token agreements remain supported for the same business-period
 
 ### Repayment Logic
 - `test_settle_below_minimum_revenue`: Verify minimum revenue threshold
@@ -345,6 +395,7 @@ After deployment, call `initialize` with admin address before any other operatio
 - Attestation contract is secure and non-malicious
 - Token contract follows Soroban token standard
 - Admin wallet is secure
+- No FX conversion is performed inside settlement; token address is the only on-chain currency discriminator enforced here
 
 ### External Dependencies
 - [Soroban SDK](https://github.com/stellar/rs-soroban-sdk)

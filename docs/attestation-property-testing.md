@@ -326,6 +326,61 @@ Does the function under test require a Soroban Env?
 
 ---
 
+## Protocol Simulation Deterministic Seed Control
+
+The protocol simulation harness in `contracts/protocol-simulation/src/lib.rs`
+now exposes explicit deterministic seed control so integration tests and
+off-chain orchestrators can reproduce the exact same scenario ordering and
+derived seed material across runs.
+
+### Contract guarantees
+
+- `initialize()` installs a zeroed default seed control state.
+- `set_deterministic_seed()` is admin-only, increments the seed `generation`,
+  and resets the per-generation `next_sequence` counter to `0`.
+- `preview_next_seed()` is read-only and returns the exact
+  `ScenarioSeedRecord` that the next scenario creation would persist.
+- Every scenario stores a `ScenarioSeedRecord` keyed by scenario id, including:
+  `generation`, `sequence`, and the SHA-256-derived `derived_seed`.
+
+### Derivation inputs
+
+The contract derives each scenario seed from a canonical XDR payload containing:
+
+- root seed
+- seed generation
+- per-generation sequence
+- scenario id
+- scenario name
+- business, lender, attestor, and token addresses
+
+This means reproducibility depends on both the configured seed and the exact
+scenario ordering. Re-running the same scenario with the same seed but a
+different sequence produces a different derived seed by design.
+
+### Security notes
+
+- Seed rotation is privileged because it changes the reproducibility surface for
+  all future simulations.
+- Generation increments on every seed update, even if the raw 32-byte seed is
+  unchanged. This prevents replay collisions after reseeding.
+- Scenario ids remain monotonic and scenario seed records are immutable once
+  written, so off-chain verification can audit ordering behavior directly.
+
+### Test coverage added
+
+`contracts/protocol-simulation/src/test.rs` now covers:
+
+- default seed control initialization
+- admin and non-admin seed rotation paths
+- preview-to-execution equality
+- deterministic replay across fresh environments
+- ordering-sensitive seed changes
+- reseeding with the same raw seed but a new generation
+- multi-period scenario seed persistence
+
+---
+
 ## References
 
 - [proptest documentation](https://proptest-rs.github.io/proptest/proptest/index.html)

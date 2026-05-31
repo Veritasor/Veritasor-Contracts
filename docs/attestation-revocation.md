@@ -1,56 +1,45 @@
-# Attestation Revocation Support
+# Attestation Revocation Authorization Flow
 
 ## Overview
 
-The Veritasor attestation contract provides comprehensive revocation support that allows businesses and authorized protocol administrators to invalidate previously submitted revenue attestations while maintaining a complete audit trail. This feature ensures data integrity and regulatory compliance without compromising historical transparency.
+The attestation contract supports revoking a previously submitted attestation without deleting the original record. The implementation separates immutable attestation payloads from revocation metadata, applies explicit authorization checks before state changes, and preserves queryability for audits and dispute handling.
 
-## Features
+The authorization guard is implemented in `contracts/attestation/src/dispute.rs` and consumed by the contract entrypoints in `contracts/attestation/src/lib.rs`.
 
-### ✅ **Revocation Authority**
-- **Business Owners**: Can revoke their own attestations
-- **Protocol Administrators**: Can revoke any attestation for system integrity
-- **Role-Based Access**: Strict authorization checks prevent unauthorized revocations
+## Authorization Model
 
-### ✅ **Audit Trail Preservation**
-- **Data Integrity**: Original attestation data is never deleted
-- **Revocation Metadata**: Stores who revoked, when, and why
-- **Event Emissions**: Clear, indexable events for off-chain tracking
+An attestation revocation is allowed only when all of the following are true:
 
-### ✅ **Comprehensive Querying**
-- **Status Checks**: Fast revocation status queries
-- **Detailed Information**: Complete revocation metadata retrieval
-- **Batch Operations**: Efficient bulk attestation status queries
+1. The contract is not paused.
+2. The target attestation exists.
+3. The target attestation is not already revoked.
+4. The caller authenticated successfully.
+5. The caller is either:
+   - the business whose attestation is being revoked, or
+   - the protocol administrator.
 
-## Architecture
+The initializer now grants the configured admin the `ROLE_ADMIN` bitmap in addition to storing the canonical admin address. That keeps the access-control bitmap aligned with the contract admin state for future admin-gated flows.
 
-### Storage Model
+## Storage Layout
 
-Revocation uses a separate storage key to maintain data separation and preserve the original attestation:
+Revocation is stored separately from the attestation payload.
 
 ```rust
-// Original attestation data (preserved)
-DataKey::Attestation(business, period) -> (merkle_root, timestamp, version, fee_paid)
+DataKey::Attestation(business, period)
+    -> (merkle_root, timestamp, version, fee_paid, proof_hash, expiry_timestamp)
 
-// Revocation metadata (added when revoked)
-DataKey::Revoked(business, period) -> (revoked_by, timestamp, reason)
+DataKey::Revoked(business, period)
+    -> (revoked_by, revoked_at, reason)
 ```
 
-### Authorization Matrix
+This design provides two security properties:
 
-| Role | Can Revoke Own | Can Revoke Others | Notes |
-|------|----------------|-------------------|-------|
-| Business Owner | ✅ | ❌ | Only own attestations |
-| Protocol Admin | ✅ | ✅ | All attestations |
-| Attestor | ❌ | ❌ | Submit-only role |
-| Operator | ❌ | ❌ | Operational role only |
+1. Revocation does not destroy or mutate the original attestation payload.
+2. Replay of the same revocation intent is rejected because the revoked marker is a one-way state transition.
 
-## API Reference
+## Public Contract Surface
 
-### Core Revocation Methods
-
-#### `revoke_attestation`
-
-Revokes an attestation with detailed audit information.
+### Revoke an attestation
 
 ```rust
 pub fn revoke_attestation(
@@ -59,38 +48,32 @@ pub fn revoke_attestation(
     business: Address,
     period: String,
     reason: String,
+    nonce: u64,
 )
 ```
 
-**Parameters:**
-- `caller`: Address performing the revocation (must be ADMIN or business owner)
-- `business`: Business address whose attestation is being revoked
-- `period`: Period identifier of the attestation to revoke
-- `reason`: Human-readable reason for revocation (audit trail)
+Behavior:
 
-**Authorization:**
-- Caller must have ADMIN role OR be the business owner
-- Contract must not be paused
-- Attestation must exist and not already be revoked
+1. Validates authorization and contract state.
+2. Stores `(caller, ledger_timestamp, reason)` under `DataKey::Revoked`.
+3. Emits `AttestationRevokedEvent`.
 
-**Events:**
-- Emits `AttestationRevokedEvent` with full revocation details
+Failure cases:
 
-#### `is_revoked`
+1. `attestation not found`
+2. `attestation already revoked`
+3. `caller must be ADMIN or the business owner`
+4. `contract is paused`
 
-Check if an attestation has been revoked.
+### Check revocation status
 
 ```rust
 pub fn is_revoked(env: Env, business: Address, period: String) -> bool
 ```
 
-**Returns:**
-- `true` if attestation exists and is revoked
-- `false` if attestation doesn't exist or is not revoked
+Returns `true` when revocation metadata exists for the requested attestation key.
 
-#### `get_revocation_info`
-
-Get detailed revocation information.
+### Load revocation metadata
 
 ```rust
 pub fn get_revocation_info(
@@ -100,47 +83,40 @@ pub fn get_revocation_info(
 ) -> Option<(Address, u64, String)>
 ```
 
-**Returns:**
-- `Some((revoked_by, timestamp, reason))` if revoked
-- `None` if not revoked or doesn't exist
+Returns `(revoked_by, revoked_at, reason)` when the attestation has been revoked.
 
-#### `get_attestation_with_status`
-
-Get attestation data with revocation status in one call.
+### Load attestation plus status
 
 ```rust
 pub fn get_attestation_with_status(
     env: Env,
     business: Address,
     period: String,
-) -> Option<((BytesN<32>, u64, u32, i128), Option<(Address, u64, String)>)>
+) -> Option<(
+    (BytesN<32>, u64, u32, i128, Option<BytesN<32>>, Option<u64>),
+    Option<(Address, u64, String)>,
+)>
 ```
 
-**Returns:**
-- `Some((attestation_data, revocation_info))` if attestation exists
-- `None` if attestation doesn't exist
+Returns the original attestation payload together with optional revocation metadata.
 
-#### `get_business_attestations`
-
-Batch query for multiple attestations with status.
+### Batch status query
 
 ```rust
 pub fn get_business_attestations(
     env: Env,
     business: Address,
     periods: Vec<String>,
-) -> Vec<(String, Option<(BytesN<32>, u64, u32, i128)>, Option<(Address, u64, String)>)>
+) -> Vec<(
+    String,
+    Option<(BytesN<32>, u64, u32, i128, Option<BytesN<32>>, Option<u64>)>,
+    Option<(Address, u64, String)>,
+)>
 ```
 
-**Returns:**
-- Vector of `(period, attestation_data, revocation_info)` tuples
-- Efficient for audit and reporting operations
+The returned vector preserves the input order of `periods`, including holes where an attestation is missing.
 
-### Verification Methods
-
-#### `verify_attestation`
-
-Verify attestation authenticity and active status.
+### Verification helper
 
 ```rust
 pub fn verify_attestation(
@@ -151,153 +127,74 @@ pub fn verify_attestation(
 ) -> bool
 ```
 
-**Returns:**
-- `true` if attestation exists, is not revoked, and merkle root matches
-- `false` otherwise
+Returns `true` only when:
 
-## Event Schema
+1. the attestation exists,
+2. the stored merkle root matches the supplied root, and
+3. the attestation is not revoked.
 
-### AttestationRevokedEvent
+## Finality Rule
+
+Revocation is terminal for mutation paths. The contract now rejects migration of a revoked attestation with `attestation revoked`.
+
+That prevents a revoked record from being silently replaced after the revocation marker has already been observed by indexers or downstream consumers.
+
+## Event Emission
+
+Revocation emits the existing structured event:
 
 ```rust
 pub struct AttestationRevokedEvent {
-    pub business: Address,      // Business whose attestation was revoked
-    pub period: String,         // Period identifier
-    pub revoked_by: Address,    // Who performed the revocation
-    pub reason: String,         // Reason for revocation
+    pub business: Address,
+    pub period: String,
+    pub revoked_by: Address,
+    pub reason: String,
 }
 ```
 
-**Event Topic:** `att_rev` (symbol_short)
-
-**Event Filtering:**
-- By business: `(att_rev, business_address)`
-- By period: Search event data for period string
-- By revoker: Search event data for revoked_by address
-
-## Usage Examples
-
-### Basic Revocation by Business Owner
+Topic:
 
 ```rust
-use soroban_sdk::{Address, String, BytesN};
-
-let business = Address::generate(&env);
-let period = String::from_str(&env, "2026-02");
-let reason = String::from_str(&env, "Data correction needed");
-
-// Business owner revokes their own attestation
-contract.revoke_attestation(
-    business.clone(),  // caller
-    business.clone(),  // business
-    period,
-    reason,
-);
+(att_rev, business)
 ```
 
-### Administrative Revocation
+## Security Notes
 
-```rust
-let admin = Address::generate(&env);
-let business = Address::generate(&env);
-let period = String::from_str(&env, "2026-03");
-let reason = String::from_str(&env, "Compliance requirement");
+### Authorization
 
-// Admin revokes any attestation
-contract.revoke_attestation(
-    admin,      // caller (must have ADMIN role)
-    business,   // target business
-    period,     // target period
-    reason,     // revocation reason
-);
-```
+1. Revocation always requires `require_auth()`.
+2. Authorization is explicit and local to the revocation guard instead of being inferred from downstream writes.
+3. The protocol admin is recognized from both the canonical admin address and the `ROLE_ADMIN` bitmap.
 
-### Checking Revocation Status
+### Replay and Ordering
 
-```rust
-// Simple status check
-let is_revoked = contract.is_revoked(business, period);
+1. Replaying a revocation against the same `(business, period)` pair fails because `DataKey::Revoked` can be written only once successfully.
+2. Query batching preserves caller-specified ordering, including missing periods.
+3. Migration-before-revocation remains allowed.
+4. Migration-after-revocation is rejected to preserve finality.
 
-// Detailed revocation information
-if let Some((revoked_by, timestamp, reason)) = contract.get_revocation_info(business, period) {
-    println!("Revoked by {:?} at {:?} because: {:?}", revoked_by, timestamp, reason);
-}
-```
+### Auditability
 
-### Comprehensive Status Query
+1. The original attestation payload remains intact after revocation.
+2. Revocation reason and actor are persisted on chain.
+3. A structured event is emitted for off-chain indexing.
 
-```rust
-// Get attestation data and revocation status in one call
-if let Some((attestation_data, revocation_info)) = contract.get_attestation_with_status(business, period) {
-    let (merkle_root, timestamp, version, fee_paid) = attestation_data;
-    
-    match revocation_info {
-        Some((revoked_by, revocation_timestamp, reason)) => {
-            println!("Attestation is revoked: {:?}", reason);
-        }
-        None => {
-            println!("Attestation is active");
-        }
-    }
-}
-```
+## Test Coverage
 
-### Batch Audit Query
+The targeted revocation suite covers:
 
-```rust
-let periods = vec![
-    String::from_str(&env, "2026-01"),
-    String::from_str(&env, "2026-02"),
-    String::from_str(&env, "2026-03"),
-];
+1. Admin authorization path
+2. Business-owner authorization path
+3. Unauthorized caller rejection
+4. Missing-attestation rejection
+5. Replay and double-revocation rejection
+6. Empty-reason boundary behavior
+7. Batch query ordering and missing-period handling
+8. Revocation event emission
+9. Pause-gated rejection
+10. Revocation finality against post-revocation migration
+11. End-to-end migration then revocation flow
 
-let results = contract.get_business_attestations(business, periods);
-
-for (period, attestation_data, revocation_info) in results {
-    match (attestation_data, revocation_info) {
-        (Some(data), Some(revocation)) => {
-            println!("{}: Revoked attestation", period);
-        }
-        (Some(data), None) => {
-            println!("{}: Active attestation", period);
-        }
-        (None, _) => {
-            println!("{}: No attestation found", period);
-        }
-    }
-}
-```
-
-## Security Considerations
-
-### Authorization Security
-
-1. **Role Validation**: Only ADMIN or business owners can revoke
-2. **Authentication**: All revocation calls require `require_auth()`
-3. **Pause Protection**: Revocations blocked when contract is paused
-
-### Data Integrity
-
-1. **Immutable Original Data**: Attestation data is never modified
-2. **Audit Trail**: Complete revocation metadata is stored
-3. **Event Logging**: All revocations emit structured events
-
-### Edge Case Handling
-
-1. **Double Revocation**: Prevented with explicit check
-2. **Non-existent Attestations**: Rejected with clear error
-3. **Empty Reasons**: Allowed (flexible audit requirements)
-
-## Testing Coverage
-
-### Unit Tests
-
-- ✅ Admin revocation authority
-- ✅ Business owner revocation authority
-- ✅ Unauthorized revocation rejection
-- ✅ Double revocation prevention
-- ✅ Non-existent attestation handling
-- ✅ Data preservation verification
 - ✅ Event emission validation
 - ✅ Pause state handling
 
@@ -370,14 +267,17 @@ for (period, attestation_data, revocation_info) in results {
 ### Common Issues
 
 **"caller must be ADMIN or the business owner"**
+
 - Verify caller has appropriate role
 - Check that caller address matches business address for self-revocation
 
 **"attestation already revoked"**
+
 - Check revocation status before attempting revocation
 - Use `is_revoked()` to verify current state
 
 **"attestation not found"**
+
 - Verify business address and period are correct
 - Check if attestation was successfully submitted
 

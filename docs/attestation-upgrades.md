@@ -4,7 +4,72 @@
 
 The Attestation Registry contract provides a stable upgradeability pattern for the Veritasor attestation protocol. It separates contract address discovery from contract implementation, enabling controlled upgrades while maintaining a stable interface for callers.
 
-## Architecture
+## Duplicate-Key Protection
+
+### Overview
+
+The registry enforces that each `(attester, key)` pair can only be registered once. This prevents:
+
+- **Replay attacks**: An attester cannot re-submit an attestation for a period already recorded.
+- **Accidental overwrites**: Implementation upgrades cannot silently clobber existing attestation records.
+- **Front-running**: Authorization is required from `attester`, so no third party can pre-occupy a key on behalf of another address.
+
+### Storage
+
+Registered keys are stored in **persistent** storage under `DataKey::AttestationKey(attester, key)`. The value is the ledger timestamp at registration time. Persistent storage survives implementation upgrades, so protection is continuous across the full upgrade lifecycle.
+
+### API
+
+#### Register an Attestation Key
+
+```rust
+pub fn register_attestation_key(env: Env, attester: Address, key: String)
+```
+
+Call this before writing an attestation to the implementation contract.
+
+**Requirements:**
+- Registry must be initialized
+- `attester` must authorize the call
+- `(attester, key)` must not already be registered
+
+**Panics:** `"attestation key already registered"` on duplicate.
+
+#### Check Key Existence
+
+```rust
+pub fn has_attestation_key(env: Env, attester: Address, key: String) -> bool
+```
+
+Returns `true` if the pair is already registered, `false` otherwise (including when the registry is uninitialized).
+
+### Security Assumptions
+
+| Assumption | Enforcement |
+|---|---|
+| Only the attester can claim their own key | `attester.require_auth()` |
+| Keys survive implementation upgrades | Persistent storage |
+| Duplicate submissions are rejected | `has()` check before `set()` |
+| Uninitialized registry rejects writes | `require_initialized()` guard |
+
+### Integration Pattern
+
+```rust
+// 1. Check (optional, for pre-flight)
+if registry.has_attestation_key(&attester, &period) {
+    panic!("already submitted");
+}
+
+// 2. Register key (atomic guard)
+registry.register_attestation_key(&attester, &period);
+
+// 3. Write to implementation
+let impl_addr = registry.get_current_implementation().unwrap();
+let attestation = AttestationContractClient::new(&env, &impl_addr);
+attestation.submit_attestation(&attester, &period, ...);
+```
+
+---
 
 ### Registry Pattern
 
@@ -295,12 +360,13 @@ The registry contract includes comprehensive tests covering:
 - ✅ Query functions (all query methods, uninitialized behavior)
 - ✅ Admin management (transfer, new admin operations)
 - ✅ Edge cases (same implementation, empty data, complex scenarios)
+- ✅ Duplicate-key protection (register, reject duplicate, cross-attester isolation, persistence across upgrades)
 
 **Test Coverage: 95%+**
 
 Run tests:
 ```bash
-cargo test --package veritasor-attestation-registry
+cargo test -p veritasor-attestation-registry
 ```
 
 ### Test Scenarios
@@ -415,3 +481,11 @@ Potential improvements:
 - [Attestation Contract](./README.md#contract-attestation)
 - [Dynamic Fees](./attestation-dynamic-fees.md)
 - [Soroban Documentation](https://soroban.stellar.org/docs)
+
+## Reorg-Resilience and Assumptions
+
+The Attestation Registry is designed to be resilient against blockchain reorgs and out-of-order transaction executions:
+
+1. **Strict Version Monotonicity**: Replayed upgrade transactions will fail because the new version must strictly be greater than the current version.
+2. **Out-of-Order Execution Safety**: If a higher version upgrade (e.g., v3) executes before a delayed lower version upgrade (e.g., v2) due to a reorg, the delayed transaction will safely revert.
+3. **Rollback Determinism**: Following a rollback, the registry safely accepts new higher-version upgrades based on the restored state.

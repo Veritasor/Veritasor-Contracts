@@ -32,13 +32,15 @@ See [docs/offchain-proof-hash.md](docs/offchain-proof-hash.md) for the full spec
 | `set_business_tier(business, tier)`                                                                   | Admin: assign a business to a tier.                                                                                            |
 | `set_volume_brackets(thresholds, discounts)`                                                          | Admin: set volume discount brackets.                                                                                           |
 | `set_fee_enabled(enabled)`                                                                            | Admin: toggle fee collection on/off.                                                                                           |
+| `set_dao(dao)`                                                                                        | Admin: register DAO contract for dynamic fee config override. DAO takes precedence over local config; `None` falls back local. |
+| `set_flat_fee_dao(dao)`                                                                               | Admin: register DAO contract for flat fee config override.                                                                     |
 | `submit_attestation(business, period, merkle_root, timestamp, version, proof_hash, expiry_timestamp)` | Store attestation with optional proof hash and expiry; collects fee if enabled.                                                |
 | `get_attestation(business, period)`                                                                   | Returns `Option<(BytesN<32>, u64, u32, i128, Option<BytesN<32>>, Option<u64>)>` (root, ts, ver, fee_paid, proof_hash, expiry). |
 | `verify_attestation(business, period, merkle_root)`                                                   | Returns `true` if attestation exists and root matches.                                                                         |
 | `get_proof_hash(business, period)`                                                                    | Returns the off-chain proof hash for an attestation, if set.                                                                   |
 | `is_expired(business, period)`                                                                        | Returns `true` if attestation has expired.                                                                                     |
-| `get_fee_config()`                                                                                    | Current fee configuration or None.                                                                                             |
-| `get_fee_quote(business)`                                                                             | Fee the business would pay for its next attestation.                                                                           |
+| `get_fee_config()`                                                                                    | Current local fee configuration or None (ignores DAO override).                                                                |
+| `get_fee_quote(business)`                                                                             | Fee the business would pay for its next attestation (uses effective config — DAO takes precedence over local).                 |
 | `get_business_tier(business)`                                                                         | Tier assigned to a business (0 if unset).                                                                                      |
 | `get_business_count(business)`                                                                        | Cumulative attestation count.                                                                                                  |
 | `get_admin()`                                                                                         | Contract admin address.                                                                                                        |
@@ -66,11 +68,13 @@ See [docs/offchain-proof-hash.md](docs/offchain-proof-hash.md) for the full spec
 | `set_business_tier(business, tier)` | Admin: assign a business to a tier. |
 | `set_volume_brackets(thresholds, discounts)` | Admin: set volume discount brackets. |
 | `set_fee_enabled(enabled)` | Admin: toggle fee collection on/off. |
+| `set_dao(dao)` | Admin: register DAO contract for dynamic fee config override. DAO takes precedence over local config; `None` falls back local. |
+| `set_flat_fee_dao(dao)` | Admin: register DAO contract for flat fee config override. |
 | `submit_attestation(business, period, merkle_root, timestamp, version)` | Store attestation; collects fee if enabled. Business must authorize. |
 | `get_attestation(business, period)` | Returns `Option<(BytesN<32>, u64, u32, i128)>` (root, ts, ver, fee_paid). |
 | `verify_attestation(business, period, merkle_root)` | Returns `true` if attestation exists and root matches. |
-| `get_fee_config()` | Current fee configuration or None. |
-| `get_fee_quote(business)` | Fee the business would pay for its next attestation. |
+| `get_fee_config()` | Current local fee configuration or None (ignores DAO override). |
+| `get_fee_quote(business)` | Fee the business would pay for its next attestation (uses effective config — DAO takes precedence over local). |
 | `get_business_tier(business)` | Tier assigned to a business (0 if unset). |
 | `get_business_count(business)` | Cumulative attestation count. |
 | `get_admin()` | Contract admin address. |
@@ -104,6 +108,35 @@ cargo test
 ```
 
 130+ tests covering core attestation logic, fee calculation arithmetic, tier/volume discounts, combined discounts, fee toggling, access control, input validation, off-chain proof hash correlation, expiry handling, rate limiting, gas benchmarks, and a full economic simulation.
+
+### Coverage
+
+We enforce **≥ 95 % line coverage** on every critical crate individually, using `cargo-llvm-cov`:
+
+| Crate | Why it matters |
+|-------|----------------|
+| `veritasor-attestation` | Core trust primitive — revenue Merkle roots. |
+| `veritasor-attestation-registry` | Upgrade and rollback safety. |
+| `veritasor-attestor-staking` | Economic security (slashing / eligibility). |
+| `veritasor-common` | Shared security utilities (replay protection, Merkle, key rotation). |
+| `veritasor-audit-log` | Tamper-evident audit trail. |
+
+**Quick start**
+
+```bash
+# One-time install
+cargo install cargo-llvm-cov
+
+# Run gates + generate HTML report
+./scripts/coverage.sh
+
+# Gates only (faster)
+./scripts/coverage.sh --quick
+```
+
+On Windows PowerShell use `.\scripts\coverage.ps1` instead.
+
+See [docs/coverage-reporting.md](docs/coverage-reporting.md) for full details, CI setup, and troubleshooting.
 
 ### Gas Benchmarks
 
@@ -160,6 +193,7 @@ veritasor-contracts/
 ### Deploying (Stellar / Soroban CLI)
 
 With [Stellar CLI](https://developers.stellar.org/docs/tools/stellar-cli) and a configured network:
+
 
 ```bash
 stellar contract deploy \

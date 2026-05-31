@@ -29,8 +29,37 @@
 //!
 //! If no `FeeConfig` has been stored, or if `FeeConfig.enabled == false`,
 //! attestations are free — identical to pre-fee behavior.
+//!
+//! ### Rounding and Precision
+//!
+//! Fee calculations use integer arithmetic and **round towards zero** (truncation).
+//! This ensures that fees are never overcharged beyond the calculated basis,
+//! though it may result in a fee of 0 for extremely small `base_fee` values
+//! combined with high discounts.
+//!
+//! ### Security Invariants
+//!
+//! 1. **Authorization**: All configuration changes (`FeeConfig`, `TierDiscount`, `VolumeBrackets`)
+//!    require administrative authority.
+//! 2. **Integrity**: Discounts are capped at 10,000 bps (100%).
+//! 3. **Consistency**: Volume thresholds must be strictly ascending to ensure
+//!    deterministic bracket selection.
+//! 4. **Arithmetic safety**: `compute_fee` panics on negative `base_fee` or
+//!    any intermediate overflow, and enforces the result in `[0, base_fee]`.
 
 use soroban_sdk::{contracttype, token, Address, Env, Symbol, Val, Vec};
+
+// ════════════════════════════════════════════════════════════════════
+//  Tier bounds
+// ════════════════════════════════════════════════════════════════════
+
+/// Maximum supported business tier index (inclusive).
+///
+/// Tiers are 0-indexed: 0 = Standard, 1 = Pro, 2 = Enterprise, …, MAX_TIER = top tier.
+/// Both `set_business_tier` and `set_tier_discount` reject any value above this limit,
+/// preventing silent misconfiguration where a business is placed in an unconfigured tier
+/// that silently yields a 0-discount (full fee).
+pub const MAX_TIER: u32 = 9;
 
 // ════════════════════════════════════════════════════════════════════
 //  Storage types
@@ -77,6 +106,7 @@ pub enum DataKey {
     /// Per-business submission timestamps within the current window.
     /// Stores a `Vec<u64>` of ledger timestamps.
     SubmissionTimestamps(Address),
+    IsPaused,
 }
 
 /// On-chain fee configuration.
@@ -134,6 +164,24 @@ pub fn set_fee_config(env: &Env, config: &FeeConfig) {
     env.storage().instance().set(&DataKey::FeeConfig, config);
 }
 
+pub fn set_fee_enabled(env: &Env, enabled: bool) {
+    if let Some(mut config) = get_fee_config(env) {
+        config.enabled = enabled;
+        set_fee_config(env, &config);
+    }
+}
+
+pub fn set_paused(env: &Env, paused: bool) {
+    env.storage().instance().set(&DataKey::IsPaused, &paused);
+}
+
+pub fn is_paused(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::IsPaused)
+        .unwrap_or(false)
+}
+
 pub fn set_dao(env: &Env, dao: &Address) {
     env.storage().instance().set(&DataKey::Dao, dao);
 }
@@ -155,6 +203,7 @@ pub fn get_tier_discount(env: &Env, tier: u32) -> u32 {
 }
 
 pub fn set_tier_discount(env: &Env, tier: u32, discount_bps: u32) {
+    assert!(tier <= MAX_TIER, "tier exceeds MAX_TIER");
     assert!(discount_bps <= 10_000, "discount cannot exceed 10 000 bps");
     env.storage()
         .instance()
@@ -170,6 +219,7 @@ pub fn get_business_tier(env: &Env, business: &Address) -> u32 {
 }
 
 pub fn set_business_tier(env: &Env, business: &Address, tier: u32) {
+    assert!(tier <= MAX_TIER, "tier exceeds MAX_TIER");
     env.storage()
         .instance()
         .set(&DataKey::BusinessTier(business.clone()), &tier);
@@ -290,7 +340,8 @@ fn get_fee_config_from_dao(env: &Env) -> Option<FeeConfig> {
     })
 }
 
-fn get_effective_fee_config(env: &Env) -> Option<FeeConfig> {
+/// Effective fee config (DAO override takes precedence over local storage).
+pub fn get_effective_fee_config(env: &Env) -> Option<FeeConfig> {
     if let Some(config) = get_fee_config_from_dao(env) {
         return Some(config);
     }
@@ -299,13 +350,32 @@ fn get_effective_fee_config(env: &Env) -> Option<FeeConfig> {
 
 /// Pure-arithmetic fee computation (no storage access).
 ///
+/// The formula applies two independent discount factors to the base fee:
+///
 /// ```text
 /// effective = base_fee × (10 000 − tier_bps) × (10 000 − vol_bps) / 100 000 000
 /// ```
+///
+/// ### Mathematical Properties
+///
+/// - **Commutativity**: The order of tier and volume discounts does not affect the result.
+/// - **Bounds**: The result is always in the range `[0, base_fee]`.
+/// - **Rounding**: Truncates toward zero.
 pub fn compute_fee(base_fee: i128, tier_discount_bps: u32, volume_discount_bps: u32) -> i128 {
+    assert!(base_fee >= 0, "base_fee must be non-negative");
     let tier_factor = 10_000i128 - tier_discount_bps as i128;
     let vol_factor = 10_000i128 - volume_discount_bps as i128;
-    base_fee * tier_factor * vol_factor / 100_000_000i128
+    let product = base_fee
+        .checked_mul(tier_factor)
+        .expect("fee overflow: base_fee * tier_factor")
+        .checked_mul(vol_factor)
+        .expect("fee overflow: base_fee * tier_factor * vol_factor");
+    let fee = product
+        .checked_div(100_000_000i128)
+        .expect("fee overflow: divide by scale");
+    assert!(fee >= 0, "fee must be non-negative");
+    assert!(fee <= base_fee, "fee exceeds base_fee");
+    fee
 }
 
 /// Collect the fee: transfer tokens from `business` to the fee collector.

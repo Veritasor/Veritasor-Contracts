@@ -20,10 +20,8 @@
 //! 5. **Failure Scenarios**: Revocation, disputes, insufficient funds
 
 #![no_std]
+use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, String, Vec};
-
-#[cfg(test)]
-mod test;
 
 // ─── Data Types ─────────────────────────────────────────────────────
 
@@ -33,10 +31,12 @@ pub enum DataKey {
     Admin,
     ScenarioCount,
     Scenario(u64),
+    ScenarioSeed(u64),
     AttestationContract,
     StakingContract,
     SettlementContract,
     LenderContract,
+    SeedControl,
 }
 
 /// Configuration for a simulation scenario
@@ -51,6 +51,34 @@ pub struct ScenarioConfig {
     pub token: Address,
     pub created_at: u64,
     pub status: u32, // 0=pending, 1=running, 2=completed, 3=failed
+}
+
+/// Global deterministic seed configuration for simulation replayability.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeterministicSeedControl {
+    /// Active root seed used for derivation.
+    pub seed: BytesN<32>,
+    /// Monotonic seed generation. Incremented each time the admin updates the root seed.
+    pub generation: u64,
+    /// Next per-scenario sequence number within the current generation.
+    pub next_sequence: u64,
+    /// Ledger timestamp of the latest seed update.
+    pub updated_at: u64,
+}
+
+/// Deterministic seed record stored for each executed scenario.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScenarioSeedRecord {
+    /// Scenario identifier.
+    pub scenario_id: u64,
+    /// Seed generation active when the scenario was created.
+    pub generation: u64,
+    /// Sequence number reserved for this scenario within the generation.
+    pub sequence: u64,
+    /// Derived scenario seed for reproducible orchestration.
+    pub derived_seed: BytesN<32>,
 }
 
 /// Result of a scenario execution
@@ -109,6 +137,21 @@ pub struct MultiPeriodParams {
     pub revenues: Vec<i128>,
 }
 
+/// Canonical deterministic seed derivation payload.
+#[contracttype]
+#[derive(Clone, Debug)]
+struct SeedDerivationInput {
+    pub seed: BytesN<32>,
+    pub generation: u64,
+    pub sequence: u64,
+    pub scenario_id: u64,
+    pub scenario_name: String,
+    pub business: Address,
+    pub lender: Address,
+    pub attestor: Address,
+    pub token: Address,
+}
+
 // ─── Contract Implementation ────────────────────────────────────────
 
 #[contract]
@@ -153,6 +196,15 @@ impl ProtocolSimulationContract {
             .instance()
             .set(&DataKey::LenderContract, &lender_contract);
         env.storage().instance().set(&DataKey::ScenarioCount, &0u64);
+        env.storage().instance().set(
+            &DataKey::SeedControl,
+            &DeterministicSeedControl {
+                seed: Self::zero_seed(&env),
+                generation: 0,
+                next_sequence: 0,
+                updated_at: env.ledger().timestamp(),
+            },
+        );
     }
 
     // ── Configuration Management ────────────────────────────────────
@@ -187,6 +239,28 @@ impl ProtocolSimulationContract {
         env.storage()
             .instance()
             .set(&DataKey::LenderContract, &contract);
+    }
+
+    /// Set the root seed used to derive per-scenario deterministic seeds.
+    ///
+    /// Security notes:
+    /// - Admin authorization is required because changing the seed changes the
+    ///   reproducibility surface for all future scenarios.
+    /// - Each update increments `generation` and resets the per-generation
+    ///   sequence to zero, which prevents ambiguous ordering after rotation.
+    pub fn set_deterministic_seed(env: Env, admin: Address, seed: BytesN<32>) {
+        Self::require_admin(&env, &admin);
+
+        let current = Self::get_seed_control_internal(&env);
+        env.storage().instance().set(
+            &DataKey::SeedControl,
+            &DeterministicSeedControl {
+                seed,
+                generation: current.generation + 1,
+                next_sequence: 0,
+                updated_at: env.ledger().timestamp(),
+            },
+        );
     }
 
     // ── Scenario Orchestration ──────────────────────────────────────
@@ -255,6 +329,27 @@ impl ProtocolSimulationContract {
         params.lender.require_auth();
         params.business.require_auth();
 
+        // Validate financial parameters
+        assert!(params.principal > 0, "principal must be positive");
+        assert!(
+            params.revenue_share_bps <= 10_000,
+            "revenue share basis points must be <= 10000"
+        );
+        assert!(
+            params.min_revenue_threshold >= 0,
+            "min revenue threshold must be non-negative"
+        );
+        assert!(
+            params.max_repayment_amount >= 0,
+            "max repayment amount must be non-negative"
+        );
+
+        // Validate attested revenue against thresholds
+        assert!(
+            attested_revenue >= 0,
+            "attested revenue must be non-negative"
+        );
+
         let scenario_id = Self::create_scenario(
             &env,
             String::from_str(&env, "lender_integration"),
@@ -305,6 +400,9 @@ impl ProtocolSimulationContract {
     ) -> u64 {
         params.attestor.require_auth();
 
+        // Validate staking parameters
+        assert!(params.stake_amount > 0, "stake amount must be positive");
+
         let scenario_id = Self::create_scenario(
             &env,
             String::from_str(&env, "staking_scenario"),
@@ -346,6 +444,7 @@ impl ProtocolSimulationContract {
     pub fn run_multi_period_scenario(env: Env, params: MultiPeriodParams) -> u64 {
         params.business.require_auth();
 
+        // Validate array lengths
         assert!(
             params.periods.len() == params.merkle_roots.len(),
             "periods and merkle_roots length mismatch"
@@ -354,6 +453,24 @@ impl ProtocolSimulationContract {
             params.periods.len() == params.timestamps.len(),
             "periods and timestamps length mismatch"
         );
+        assert!(
+            params.periods.len() == params.revenues.len(),
+            "periods and revenues length mismatch"
+        );
+
+        // Validate reasonable bounds to prevent gas exhaustion
+        assert!(
+            params.periods.len() <= 100,
+            "too many periods: maximum 100 allowed"
+        );
+
+        // Validate timestamp ordering
+        for i in 1..params.timestamps.len() {
+            assert!(
+                params.timestamps.get(i - 1).unwrap() < params.timestamps.get(i).unwrap(),
+                "timestamps must be in chronological order"
+            );
+        }
 
         let scenario_id = Self::create_scenario(
             &env,
@@ -470,6 +587,45 @@ impl ProtocolSimulationContract {
         Self::get_lender_contract(&env)
     }
 
+    /// Return the active deterministic seed configuration.
+    pub fn get_seed_control(env: Env) -> DeterministicSeedControl {
+        Self::get_seed_control_internal(&env)
+    }
+
+    /// Return the stored deterministic seed record for a scenario.
+    pub fn get_scenario_seed(env: Env, scenario_id: u64) -> Option<ScenarioSeedRecord> {
+        env.storage()
+            .instance()
+            .get(&DataKey::ScenarioSeed(scenario_id))
+    }
+
+    /// Preview the derived seed for the next scenario without mutating state.
+    ///
+    /// This is intended for off-chain orchestration and test harnesses that need
+    /// to precompute expected deterministic behavior before submitting a run.
+    pub fn preview_next_seed(
+        env: Env,
+        scenario_name: String,
+        business: Address,
+        lender: Address,
+        attestor: Address,
+        token: Address,
+    ) -> ScenarioSeedRecord {
+        let control = Self::get_seed_control_internal(&env);
+        let scenario_id = Self::get_scenario_count(env.clone());
+
+        Self::build_seed_record(
+            &env,
+            &control,
+            scenario_id,
+            scenario_name,
+            business,
+            lender,
+            attestor,
+            token,
+        )
+    }
+
     /// Get admin address.
     pub fn get_admin(env: Env) -> Address {
         env.storage()
@@ -518,6 +674,17 @@ impl ProtocolSimulationContract {
             .expect("lender contract not set")
     }
 
+    fn get_seed_control_internal(env: &Env) -> DeterministicSeedControl {
+        env.storage()
+            .instance()
+            .get(&DataKey::SeedControl)
+            .expect("seed control not set")
+    }
+
+    fn zero_seed(env: &Env) -> BytesN<32> {
+        BytesN::from_array(env, &[0u8; 32])
+    }
+
     fn create_scenario(
         env: &Env,
         name: String,
@@ -534,7 +701,7 @@ impl ProtocolSimulationContract {
 
         let scenario = ScenarioConfig {
             id: count,
-            name,
+            name: name.clone(),
             business: business.clone(),
             lender: lender.clone(),
             attestor: attestor.clone(),
@@ -550,15 +717,80 @@ impl ProtocolSimulationContract {
             .instance()
             .set(&DataKey::ScenarioCount, &(count + 1));
 
+        let mut control = Self::get_seed_control_internal(env);
+        let seed_record = Self::build_seed_record(
+            env,
+            &control,
+            count,
+            name,
+            business.clone(),
+            lender.clone(),
+            attestor.clone(),
+            token.clone(),
+        );
+        env.storage()
+            .instance()
+            .set(&DataKey::ScenarioSeed(count), &seed_record);
+        control.next_sequence += 1;
+        env.storage()
+            .instance()
+            .set(&DataKey::SeedControl, &control);
+
         count
     }
 
+    fn build_seed_record(
+        env: &Env,
+        control: &DeterministicSeedControl,
+        scenario_id: u64,
+        scenario_name: String,
+        business: Address,
+        lender: Address,
+        attestor: Address,
+        token: Address,
+    ) -> ScenarioSeedRecord {
+        let derivation = SeedDerivationInput {
+            seed: control.seed.clone(),
+            generation: control.generation,
+            sequence: control.next_sequence,
+            scenario_id,
+            scenario_name,
+            business,
+            lender,
+            attestor,
+            token,
+        };
+        let encoded = derivation.to_xdr(env);
+
+        ScenarioSeedRecord {
+            scenario_id,
+            generation: control.generation,
+            sequence: control.next_sequence,
+            derived_seed: env.crypto().sha256(&encoded).into(),
+        }
+    }
+
     fn update_scenario_status(env: &Env, scenario_id: u64, status: u32) {
+        // Validate status range
+        assert!(status <= 3, "invalid status: must be 0-3");
+
         let mut scenario: ScenarioConfig = env
             .storage()
             .instance()
             .get(&DataKey::Scenario(scenario_id))
             .expect("scenario not found");
+
+        // Validate status transitions
+        match (scenario.status, status) {
+            (0, 1) | (1, 2) | (1, 3) | (0, 3) => {
+                // Valid transitions: pending->running, running->completed, running->failed, pending->failed
+            }
+            _ => panic!(
+                "invalid status transition from {} to {}",
+                scenario.status, status
+            ),
+        }
+
         scenario.status = status;
         env.storage()
             .instance()

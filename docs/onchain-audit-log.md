@@ -64,3 +64,43 @@ Entry(2): prev_hash = H1 → hash = H2
 ### Genesis Entry
 
 The first entry uses a zero hash as `prev_hash`.
+
+## Sequence Gap Detection
+
+The audit log relies on a contiguous `seq` range from `0..get_log_count()`. Under normal contract usage, gaps must never appear because `append`:
+
+- reads the current `NextSeq`
+- stores exactly one `Entry(seq)`
+- increments `NextSeq` by one
+- advances `LastHash` to the appended entry
+
+### Test Invariant
+
+The test suite in `contracts/audit-log/src/test.rs` enforces the following service-level invariant:
+
+- every sequence number in `0..get_log_count()` resolves to an entry
+- each entry stores `record.seq == expected_seq`
+- each `prev_hash` matches the previous entry's `entry_hash`
+- `get_last_hash()` matches the scanned chain head after the final entry
+
+### Adversarial Cases Covered
+
+The gap-detection tests simulate storage tampering that cannot occur through the public API but is still important for regression coverage:
+
+- deleting a middle `Entry(seq)` while leaving `NextSeq` unchanged
+- inflating `NextSeq` beyond the highest stored entry
+- forging `LastHash` so the chain head no longer matches stored entries
+
+These cases are expected to fail the invariant checks deterministically.
+
+### Security Assumptions
+
+- The contract does not expose any public method that can delete or reorder entries.
+- Sequence gaps therefore indicate storage corruption, an invalid migration, or an implementation regression.
+- Detection is currently enforced at the test and review layer rather than as an on-chain scan, which keeps append operations O(1).
+
+### Performance Notes
+
+- No on-chain logic changed for this test addition.
+- Gap detection performs an O(n) scan and is used only in tests and review workflows.
+- Append, read, and indexed lookup costs remain unchanged.

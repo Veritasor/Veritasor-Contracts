@@ -257,3 +257,118 @@ fn test_verify_attestation_unchanged_with_metadata() {
 
     assert!(client.verify_attestation(&business, &period, &root));
 }
+
+#[test]
+#[should_panic(expected = "currency code must contain only ASCII alphabetic characters")]
+fn test_currency_code_non_ascii_panics() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    let currency = String::from_str(&env, "€UR");
+
+    client.submit_attestation_with_metadata(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &currency,
+        &true,
+        &0u64,
+    );
+}
+
+#[test]
+#[should_panic(expected = "currency code must contain only ASCII alphabetic characters")]
+fn test_currency_code_numeric_panics() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    let currency = String::from_str(&env, "US1");
+
+    client.submit_attestation_with_metadata(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &currency,
+        &true,
+        &0u64,
+    );
+}
+
+#[test]
+#[should_panic(expected = "currency code must contain only ASCII alphabetic characters")]
+fn test_currency_code_symbol_panics() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    let currency = String::from_str(&env, "U$D");
+
+    client.submit_attestation_with_metadata(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &currency,
+        &true,
+        &0u64,
+    );
+}
+
+#[test]
+#[should_panic(expected = "currency code must contain only ASCII alphabetic characters")]
+fn test_currency_code_whitespace_panics() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    let currency = String::from_str(&env, "US ");
+
+    client.submit_attestation_with_metadata(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &currency,
+        &true,
+        &0u64,
+    );
+}
+
+#[test]
+fn test_metadata_removed_on_revocation() {
+    let (env, client, admin) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+
+    client.submit_attestation_with_metadata(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &String::from_str(&env, "USD"),
+        &true,
+        &0u64,
+    );
+
+    assert!(client.get_attestation_metadata(&business, &period).is_some());
+
+    client.revoke_attestation(
+        &admin,
+        &business,
+        &period,
+        &String::from_str(&env, "test revocation"),
+        &0u64,
+    );
+
+    assert!(client.get_attestation_metadata(&business, &period).is_none());
+}

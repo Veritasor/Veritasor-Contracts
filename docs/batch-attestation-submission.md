@@ -87,10 +87,15 @@ The function will panic (rejecting the entire batch) if:
 
 - The contract is paused
 - The batch is empty
+- The batch exceeds `MAX_BATCH_SIZE` (25 items)
 - Any business address fails to authorize
 - Any (business, period) pair already exists in storage
 - Any (business, period) pair appears multiple times within the batch
 - Any fee collection fails (e.g., insufficient token balance)
+
+#### Batch Size Limit
+
+`MAX_BATCH_SIZE = 25`. The duplicate scan is O(n²) and each item triggers an auth check, so an unbounded batch is a resource-exhaustion vector. At 25 items the validation loop runs at most 625 comparisons, keeping CPU cost predictable. Callers needing more than 25 attestations should split them across multiple transactions.
 
 #### Events
 
@@ -319,3 +324,28 @@ client.submit_attestations_batch(&items);
 
 - [Attestation Dynamic Fees](./attestation-dynamic-fees.md) - Fee calculation details
 - [Attestation Contract README](../README.md) - General contract documentation
+
+## Failure Atomicity — Test Coverage (Issue #127)
+
+### Guarantee
+
+`submit_attestations_batch` enforces **strict all-or-nothing atomicity**:
+if any item fails validation, zero state changes are applied.
+
+### Failure Scenarios Covered
+
+| Test | Conflict Position | Expected Outcome |
+|------|------------------|-----------------|
+| `test_atomicity_failure_at_first_item_rejects_all` | First item | All rejected |
+| `test_atomicity_failure_at_last_item_rejects_all` | Last item | All rejected |
+| `test_atomicity_failure_at_middle_item_rejects_all` | Middle item | All rejected |
+| `test_atomicity_business_count_unchanged_on_failure` | Any failure | Count unchanged |
+| `test_atomicity_in_batch_self_duplicate_rejects_all` | In-batch self-dup | All rejected |
+| `test_atomicity_cross_business_failure_rejects_all` | Cross-business dup | All rejected |
+| `test_atomicity_clean_batch_succeeds_after_failed_batch` | Regression | Clean batch passes |
+
+### Security Assumptions
+
+- Validation always runs **before** the processing phase — no partial commits.
+- Business counts are never incremented on a failed batch.
+- Token fees are never collected on a failed batch.

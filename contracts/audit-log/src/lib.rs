@@ -12,6 +12,9 @@
 
 #![no_std]
 
+#[cfg(test)]
+extern crate std;
+
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, String, Vec};
 use veritasor_common::replay_protection;
@@ -194,7 +197,9 @@ impl AuditLogContract {
 
         env.storage().instance().set(&DataKey::Entry(seq), &record);
         env.storage().instance().set(&DataKey::NextSeq, &(seq + 1));
-        env.storage().instance().set(&DataKey::LastHash, &entry_hash);
+        env.storage()
+            .instance()
+            .set(&DataKey::LastHash, &entry_hash);
 
         let mut actor_seqs: Vec<u64> = env
             .storage()

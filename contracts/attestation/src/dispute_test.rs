@@ -2,8 +2,6 @@ use super::dispute::{DisputeOutcome, DisputeStatus, DisputeType, OptionalResolut
 use super::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, BytesN, Env, String};
-use super::dispute::{DisputeStatus, DisputeType, DisputeOutcome};
-use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String, Vec};
 
 /// Helper: register the contract and return a client with mock auths.
 fn setup() -> (Env, AttestationContractClient<'static>) {
@@ -12,8 +10,7 @@ fn setup() -> (Env, AttestationContractClient<'static>) {
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
-    client.initialize(&Address::generate(&env));
+    client.initialize(&admin, &0u64);
     (env, client)
 }
 
@@ -24,16 +21,7 @@ fn test_open_dispute_success() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-    );
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &None, &0u64);
 
     let challenger = Address::generate(&env);
     let dispute_type = DisputeType::RevenueMismatch;
@@ -54,12 +42,6 @@ fn test_open_dispute_success() {
 
 #[test]
 fn test_open_dispute_no_attestation() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    client.initialize(&admin);
     let (env, client) = setup();
 
     let business = Address::generate(&env);
@@ -70,32 +52,16 @@ fn test_open_dispute_no_attestation() {
 
     let result = client.try_open_dispute(&challenger, &business, &period, &dispute_type, &evidence);
     assert!(result.is_err());
-    assert!(result.is_err());
 }
 
 #[test]
 fn test_duplicate_dispute_prevention() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    client.initialize(&admin);
     let (env, client) = setup();
 
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-    );
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &None, &0u64);
 
     let challenger = Address::generate(&env);
     let dispute_type = DisputeType::RevenueMismatch;
@@ -107,8 +73,6 @@ fn test_duplicate_dispute_prevention() {
     let result =
         client.try_open_dispute(&challenger, &business, &period, &dispute_type, &evidence2);
     assert!(result.is_err());
-
-    assert!(result.is_err());
     
     // Verify first dispute still exists and is unchanged
     let dispute = client.get_dispute(&dispute_id1).unwrap();
@@ -117,27 +81,12 @@ fn test_duplicate_dispute_prevention() {
 
 #[test]
 fn test_dispute_resolution() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    client.initialize(&admin);
     let (env, client) = setup();
 
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-    );
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &None, &0u64);
 
     let challenger = Address::generate(&env);
     let dispute_id = client.open_dispute(
@@ -149,7 +98,6 @@ fn test_dispute_resolution() {
     );
 
     // Resolve dispute
-    let resolver = admin.clone();
     let resolver = Address::generate(&env);
     let outcome = DisputeOutcome::Upheld;
     let notes = String::from_str(&env, "Challenger provided sufficient evidence");
@@ -169,46 +117,24 @@ fn test_dispute_resolution() {
 
 #[test]
 fn test_resolve_nonexistent_dispute() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    client.initialize(&admin);
     let (env, client) = setup();
 
-    let resolver = admin.clone();
+    let resolver = Address::generate(&env);
     let outcome = DisputeOutcome::Rejected;
     let notes = String::from_str(&env, "Test notes");
 
     let result = client.try_resolve_dispute(&1u64, &resolver, &outcome, &notes);
     assert!(result.is_err());
-    assert!(result.is_err());
 }
 
 #[test]
 fn test_resolve_closed_dispute() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    client.initialize(&admin);
     let (env, client) = setup();
 
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-    );
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &None, &0u64);
 
     let challenger = Address::generate(&env);
     let dispute_id = client.open_dispute(
@@ -219,8 +145,6 @@ fn test_resolve_closed_dispute() {
         &String::from_str(&env, "Dispute evidence"),
     );
 
-    let resolver = admin.clone();
-    client.resolve_dispute(&dispute_id, &resolver, &DisputeOutcome::Upheld, &String::from_str(&env, "Notes"));
     let resolver = Address::generate(&env);
     client.resolve_dispute(
         &dispute_id,
@@ -236,32 +160,16 @@ fn test_resolve_closed_dispute() {
         &String::from_str(&env, "Notes"),
     );
     assert!(result.is_err());
-    assert!(result.is_err());
 }
 
 #[test]
 fn test_close_dispute() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    client.initialize(&admin);
     let (env, client) = setup();
 
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-    );
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &None, &0u64);
 
     let challenger = Address::generate(&env);
     let dispute_id = client.open_dispute(
@@ -272,8 +180,6 @@ fn test_close_dispute() {
         &String::from_str(&env, "Dispute evidence"),
     );
 
-    let resolver = admin.clone();
-    client.resolve_dispute(&dispute_id, &resolver, &DisputeOutcome::Upheld, &String::from_str(&env, "Notes"));
     let resolver = Address::generate(&env);
     client.resolve_dispute(
         &dispute_id,
@@ -290,27 +196,12 @@ fn test_close_dispute() {
 
 #[test]
 fn test_close_unresolved_dispute() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    client.initialize(&admin);
     let (env, client) = setup();
 
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-    );
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &None, &0u64);
 
     let challenger = Address::generate(&env);
     let dispute_id = client.open_dispute(
@@ -323,32 +214,16 @@ fn test_close_unresolved_dispute() {
 
     let result = client.try_close_dispute(&dispute_id);
     assert!(result.is_err());
-    assert!(result.is_err());
 }
 
 #[test]
 fn test_get_disputes_by_attestation() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    client.initialize(&admin);
     let (env, client) = setup();
 
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-    );
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &None, &0u64);
 
     // Open multiple disputes for same attestation
     let challenger1 = Address::generate(&env);
@@ -380,12 +255,6 @@ fn test_get_disputes_by_attestation() {
 
 #[test]
 fn test_get_disputes_by_challenger() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    client.initialize(&admin);
     let (env, client) = setup();
 
     let challenger = Address::generate(&env);
@@ -397,27 +266,8 @@ fn test_get_disputes_by_challenger() {
     let period2 = String::from_str(&env, "2026-03");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.submit_attestation(
-        &business1,
-        &period1,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-    );
-    client.submit_attestation(
-        &business2,
-        &period2,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-    );
-    
-    client.submit_attestation(&business1, &period1, &root, &1700000000u64, &1u32, &None, &0u64);
-    client.submit_attestation(&business2, &period2, &root, &1700000000u64, &1u32, &None, &0u64);
+    client.submit_attestation(&business1, &period1, &root, &1700000000u64, &1u32, &None, &None, &0u64);
+    client.submit_attestation(&business2, &period2, &root, &1700000000u64, &1u32, &None, &None, &0u64);
 
     // Open disputes from same challenger
     let dispute_id1 = client.open_dispute(
@@ -446,27 +296,12 @@ fn test_get_disputes_by_challenger() {
 
 #[test]
 fn test_business_vs_lender_dispute_scenario() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    client.initialize(&admin);
     let (env, client) = setup();
 
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-Q1");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-    );
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &0u64);
+    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &None, &0u64);
 
     // Lender challenges the attestation (business vs lender scenario)
     let lender = Address::generate(&env);
@@ -491,25 +326,17 @@ fn test_business_vs_lender_dispute_scenario() {
     // Admin resolves dispute in their favor
     let outcome = DisputeOutcome::Rejected; // Business wins, attestation stands
     let notes = String::from_str(&env, "Audited financial records confirm reported revenue of $100k");
+    let admin = Address::generate(&env);
     client.resolve_dispute(&dispute_id, &admin, &outcome, &notes);
-    let notes = String::from_str(
-        &env,
-        "Audited financial records confirm reported revenue of $100k",
-    );
-    client.resolve_dispute(&dispute_id, &business, &outcome, &notes);
 
     // Verify resolution
     let dispute = client.get_dispute(&dispute_id).unwrap();
     assert_eq!(dispute.status, DisputeStatus::Resolved);
     if let OptionalResolution::Some(ref resolution) = dispute.resolution {
         assert_eq!(resolution.outcome, DisputeOutcome::Rejected);
-        assert_eq!(resolution.resolver, business);
+        assert_eq!(resolution.resolver, admin);
     } else {
         panic!("expected resolution to be Some");
-    {
-        let resolution = dispute.resolution.unwrap();
-        assert_eq!(resolution.outcome, DisputeOutcome::Rejected);
-        assert_eq!(resolution.resolver, admin);
     }
 
     // Close dispute
@@ -520,12 +347,6 @@ fn test_business_vs_lender_dispute_scenario() {
 
 #[test]
 fn test_dispute_lifecycle_complete_flow() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    client.initialize(&admin);
     let (env, client) = setup();
 
     let business = Address::generate(&env);
@@ -533,10 +354,7 @@ fn test_dispute_lifecycle_complete_flow() {
     let root = BytesN::from_array(&env, &[1u8; 32]);
     let timestamp = 1700000000u64;
     let version = 1u32;
-    client.submit_attestation(
-        &business, &period, &root, &timestamp, &version, &None, &None,
-    );
-    client.submit_attestation(&business, &period, &root, &timestamp, &version, &None, &0u64);
+    client.submit_attestation(&business, &period, &root, &timestamp, &version, &None, &None, &0u64);
 
     // Phase 2: Open dispute
     let challenger = Address::generate(&env);
@@ -550,7 +368,7 @@ fn test_dispute_lifecycle_complete_flow() {
     assert_eq!(dispute.business, business);
 
     // Phase 3: Resolve dispute
-    let resolver = admin.clone();
+    let resolver = Address::generate(&env);
     let outcome = DisputeOutcome::Upheld;
     let resolution_notes = String::from_str(&env, "Independent audit confirmed data inconsistency");
     client.resolve_dispute(&dispute_id, &resolver, &outcome, &resolution_notes);
@@ -578,5 +396,4 @@ fn test_dispute_lifecycle_complete_flow() {
     let challenger_disputes = client.get_disputes_by_challenger(&challenger);
     assert_eq!(challenger_disputes.len(), 1);
     assert_eq!(challenger_disputes.get(0), Some(dispute_id));
-}
 }

@@ -1,350 +1,537 @@
 #![cfg(test)]
-
 use super::*;
-use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{Address, BytesN, Env, String, Vec};
-use super::{AttestationContract, AttestationContractClient};
-use soroban_sdk::{testutils::Address as _, Address, BytesN, Env};
-use soroban_sdk::testutils::Events; 
-use soroban_sdk::TryIntoVal;
+use soroban_sdk::testutils::{Address as _, Events, Ledger};
+use soroban_sdk::{symbol_short, Address, BytesN, Env, String, TryFromVal};
 
-/// Helper to generate a dummy 32-byte Merkle root
-fn dummy_root(env: &Env, val: u8) -> BytesN<32> {
-    BytesN::from_array(env, &[val; 32])
+fn setup() -> (Env, AttestationContractClient<'static>, Address, Address) {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &0u64);
+    (env, client, admin, contract_id)
 }
 
-/// Helper to set up the environment, deploy the contract, and initialize it
-fn setup_env_and_contract() -> (Env, AttestationContractClient<'static>, Address) {
+#[test]
+fn test_initialize() {
     let env = Env::default();
-    env.mock_all_auths(); // Bypasses `require_auth` for simplified testing
-
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
 
-    let admin = Address::generate(&env);
-    client.initialize(&admin);
+    client.initialize(&admin, &0u64);
+    assert_eq!(client.get_admin(), admin);
+    assert!(client.has_role(&admin, &ROLE_ADMIN));
+}
 
-    // Disable fees for multi-period logic testing to avoid token mock setup
+#[test]
+#[should_panic(expected = "already initialized")]
+fn test_initialize_twice_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &0u64);
+    client.initialize(&admin, &1u64);
+}
+
+#[test]
+#[should_panic(expected = "contract not initialized")]
+fn test_get_admin_before_initialize_panics() {
+    let env = Env::default();
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+
+    client.get_admin();
+}
+
+#[test]
+#[should_panic(expected = "contract not initialized")]
+fn test_require_admin_backed_call_before_initialize_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
     let token = Address::generate(&env);
     let collector = Address::generate(&env);
-    client.configure_fees(&token, &collector, &0, &false);
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
 
-impl TestEnv {
-    pub fn new() -> Self {
-        let env = Env::default();
-        let contract_id = env.register(AttestationContract, ());
-        let client = AttestationContractClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-
-        env.mock_all_auths();
-        client.initialize(&admin);
-
-        Self { env, client, admin }
-    }
-
-    pub fn submit_attestation(
-        &self,
-        business: Address,
-        period: String,
-        merkle_root: BytesN<32>,
-        timestamp: u64,
-        version: u32,
-    ) {
-        self.client.submit_attestation(
-            &business,
-            &period,
-            &merkle_root,
-            &timestamp,
-            &version,
-            &None,
-            &None,
-        );
-    }
-
-    pub fn revoke_attestation(
-        &self,
-        caller: Address,
-        business: Address,
-        period: String,
-        reason: String,
-    ) {
-        self.client
-            .revoke_attestation(&caller, &business, &period, &reason);
-    }
-
-    pub fn migrate_attestation(
-        &self,
-        caller: Address,
-        business: Address,
-        period: String,
-        new_merkle_root: BytesN<32>,
-        new_version: u32,
-    ) {
-        self.client.migrate_attestation(
-            &caller,
-            &business,
-            &period,
-            &new_merkle_root,
-            &new_version,
-        );
-    }
-
-    pub fn is_revoked(&self, business: Address, period: String) -> bool {
-        self.client.is_revoked(&business, &period)
-    }
-
-    pub fn get_revocation_info(
-        &self,
-        business: Address,
-        period: String,
-    ) -> Option<(Address, u64, String)> {
-        self.client.get_revocation_info(&business, &period)
-    }
-
-    #[allow(clippy::type_complexity)]
-    pub fn get_attestation(
-        &self,
-        business: Address,
-        period: String,
-    ) -> Option<(BytesN<32>, u64, u32, i128, Option<BytesN<32>>, Option<u64>)> {
-        self.client.get_attestation(&business, &period)
-    }
-
-    pub fn get_attestation_with_status(
-        &self,
-        business: Address,
-        period: String,
-    ) -> Option<AttestationWithRevocation> {
-        self.client.get_attestation_with_status(&business, &period)
-    }
-
-    pub fn verify_attestation(
-        &self,
-        business: Address,
-        period: String,
-        merkle_root: &BytesN<32>,
-    ) -> bool {
-        self.client
-            .verify_attestation(&business, &period, merkle_root)
-    }
-
-    pub fn get_business_attestations(
-        &self,
-        business: Address,
-        periods: Vec<String>,
-    ) -> AttestationStatusResult {
-        self.client.get_business_attestations(&business, &periods)
-    }
-
-    pub fn pause(&self, caller: Address) {
-        self.client.pause(&caller);
-    }
+    client.configure_fees(&token, &collector, &100i128, &true);
 }
 
-#[test]
-fn submit_and_get_attestation() {
-    let (env, client) = setup();
+// ── migrate_attestation ────────────────────────────────────────────
 
+#[test]
+fn test_migrate_attestation_success() {
+    let (env, client, admin, _contract_id) = setup();
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    let timestamp = 1_700_000_000u64;
-    let version = 1u32;
-
     client.submit_attestation(
-        &business, &period, &root, &timestamp, &version, &None, &None,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
     );
 
-    let (stored_root, stored_ts, stored_ver, stored_fee, stored_proof, stored_expiry) =
+    let new_root = BytesN::from_array(&env, &[2u8; 32]);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
+
+    let (stored_root, _ts, version, _fee, _proof, _expiry) =
         client.get_attestation(&business, &period).unwrap();
-    assert_eq!(stored_root, root);
-    assert_eq!(stored_ts, timestamp);
-    assert_eq!(stored_ver, version);
-    // No fees configured — fee_paid should be 0.
-    assert_eq!(stored_fee, 0i128);
-    assert_eq!(stored_proof, None);
-    assert_eq!(stored_expiry, None);
-    let business = Address::generate(&env);
-
-    (env, client, business)
+    assert_eq!(stored_root, new_root);
+    assert_eq!(version, 2);
 }
 
 #[test]
-fn test_submit_emits_event() {
-    let (env, client, business) = setup_env_and_contract();
-    let root = dummy_root(&env, 5);
-
-    // 1. Submit the attestation
-    client.submit_multi_period_attestation(&business, &202401, &202406, &root, &1672531200, &1);
-
-    // 2. Fetch all events emitted in the environment
-    let events = env.events().all();
-    assert!(events.len() > 0, "No events were emitted");
-
-    // 3. Grab the most recent event
-    // Soroban events are stored as tuples: (ContractId, Topics, Data)
-    let last_event = events.last().unwrap();
-
-    // Verify the event came from our exact contract
-    assert_eq!(last_event.0, client.address, "Event contract ID mismatch");
-
-    // 4. Decode the data payload: (start_period, end_period, merkle_root)
-    let event_data: (u32, u32, BytesN<32>) = last_event.2.try_into_val(&env).unwrap();
-    
-    // 5. Assert the broadcasted data matches our submission
-    assert_eq!(event_data.0, 202401, "Start period mismatch in event");
-    assert_eq!(event_data.1, 202406, "End period mismatch in event");
-    assert_eq!(event_data.2, root, "Merkle root mismatch in event");
-}
-
-#[test]
-fn test_single_period_attestation() {
-    let (env, client, business) = setup_env_and_contract();
-    let root = dummy_root(&env, 1);
-
+fn test_migrate_attestation_emits_event() {
+    let (env, client, admin, _contract_id) = setup();
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[2u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1_700_000_000u64,
-        &1u32,
-        &None,
-        &None,
-    );
-    // Issue single period (start == end)
-    client.submit_multi_period_attestation(&business, &202401, &202401, &root, &1672531200, &1);
-
-    // Query correct period
-    let attestation = client.get_attestation_for_period(&business, &202401).unwrap();
-    assert_eq!(attestation.merkle_root, root);
-    assert_eq!(attestation.start_period, 202401);
-    assert_eq!(attestation.end_period, 202401);
-
-    // Verify boolean check
-    assert!(client.verify_multi_period_attestation(&business, &202401, &root));
-
-    // Query out of bounds
-    assert!(client.get_attestation_for_period(&business, &202402).is_none());
-}
-
-#[test]
-fn test_multi_period_valid_resolution() {
-    let (env, client, business) = setup_env_and_contract();
-    let root = dummy_root(&env, 1);
-
-    // Issue Q1 attestation (Jan - Mar)
-    client.submit_multi_period_attestation(&business, &202401, &202403, &root, &1672531200, &1);
-
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1_700_000_000u64,
-        &1u32,
-        &None,
-        &None,
-    );
-    // Second submission for the same (business, period) must panic.
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1_700_000_001u64,
-        &1u32,
-        &None,
-        &None,
-    );
-    // Verify all periods within range resolve to the same root
-    assert_eq!(client.get_attestation_for_period(&business, &202401).unwrap().merkle_root, root);
-    assert_eq!(client.get_attestation_for_period(&business, &202402).unwrap().merkle_root, root);
-    assert_eq!(client.get_attestation_for_period(&business, &202403).unwrap().merkle_root, root);
-}
-
-#[test]
-fn test_invalid_range_panics() {
-    let (env, client, business) = setup_env_and_contract();
-    let root = dummy_root(&env, 1);
-
-    // Start > End should fail. We use `try_` to catch the panic safely in tests.
-    let result = client.try_submit_multi_period_attestation(&business, &202405, &202401, &root, &1672531200, &1);
-    
-    assert!(result.is_err(), "Expected panic for start_period > end_period");
-}
-
-    let business = Address::generate(&env);
-    assert_eq!(client.get_business_count(&business), 0);
-
     let root = BytesN::from_array(&env, &[1u8; 32]);
     client.submit_attestation(
         &business,
-        &String::from_str(&env, "2026-01"),
+        &period,
         &root,
-        &1u64,
+        &1_700_000_000u64,
         &1u32,
+        &0i128,
         &None,
         &None,
     );
-    assert_eq!(client.get_business_count(&business), 1);
 
-    let root2 = BytesN::from_array(&env, &[2u8; 32]);
-    client.submit_attestation(
-        &business,
-        &String::from_str(&env, "2026-02"),
-        &root2,
-        &2u64,
-        &1u32,
-        &None,
-        &None,
+    let new_root = BytesN::from_array(&env, &[2u8; 32]);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
+
+    let events = env.events().all();
+    let last_topic = events.last().unwrap().1;
+    assert_eq!(last_topic.len(), 2);
+    assert_eq!(
+        soroban_sdk::Symbol::try_from_val(&env, &last_topic.get(0).unwrap()).unwrap(),
+        symbol_short!("att_mig"),
+        "last event must be an AttestationMigrated event"
     );
-    assert_eq!(client.get_business_count(&business), 2);
-#[test]
-fn test_overlapping_ranges_disallowed() {
-    let (env, client, business) = setup_env_and_contract();
-    let root1 = dummy_root(&env, 1);
-    let root2 = dummy_root(&env, 2);
 
-    // Base attestation: Jan to Jun
-    client.submit_multi_period_attestation(&business, &202401, &202406, &root1, &1672531200, &1);
-
-    // 1. Subset overlap (Mar-Apr)
-    assert!(client.try_submit_multi_period_attestation(&business, &202403, &202404, &root2, &1672531200, &1).is_err());
-
-    // 2. Partial overlap right (May-Aug)
-    assert!(client.try_submit_multi_period_attestation(&business, &202405, &202408, &root2, &1672531200, &1).is_err());
-
-    // 3. Partial overlap left (Dec 2023 - Feb 2024)
-    assert!(client.try_submit_multi_period_attestation(&business, &202312, &202402, &root2, &1672531200, &1).is_err());
-
-    // 4. Exact match overlap
-    assert!(client.try_submit_multi_period_attestation(&business, &202401, &202406, &root2, &1672531200, &1).is_err());
-
-    // Adjacent periods should succeed (no overlap) (Jul - Dec)
-    let result = client.try_submit_multi_period_attestation(&business, &202407, &202412, &root2, &1672531200, &1);
-    assert!(result.is_ok(), "Adjacent periods should not trigger an overlap error");
+    let (stored_root, _ts, version, _fee, _proof, _expiry) =
+        client.get_attestation(&business, &period).unwrap();
+    assert_eq!(stored_root, new_root);
+    assert_eq!(version, 2);
 }
 
 #[test]
-fn test_revocation_impact() {
-    let (env, client, business) = setup_env_and_contract();
-    let root1 = dummy_root(&env, 1);
-    let root2 = dummy_root(&env, 2);
+#[should_panic(expected = "new version must be greater than old version")]
+fn test_migrate_attestation_same_version_panics() {
+    let (env, client, admin, _contract_id) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
 
-    // Issue Jan - Dec
-    client.submit_multi_period_attestation(&business, &202401, &202412, &root1, &1672531200, &1);
-    
-    // Revoke it
-    client.revoke_multi_period_attestation(&business, &root1);
+    let new_root = BytesN::from_array(&env, &[2u8; 32]);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &1u32);
+}
 
-    // 1. Target period should now return None
-    assert!(client.get_attestation_for_period(&business, &202406).is_none());
+#[test]
+#[should_panic(expected = "new version must be greater than old version")]
+fn test_migrate_attestation_lower_version_panics() {
+    let (env, client, admin, _contract_id) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &5u32,
+        &0i128,
+        &None,
+        &None,
+    );
 
-    // 2. Verification should explicitly fail
-    assert!(!client.verify_multi_period_attestation(&business, &202406, &root1));
+    let new_root = BytesN::from_array(&env, &[2u8; 32]);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &3u32);
+}
 
-    // 3. Overlapping ranges should now be allowed since the previous one is revoked
-    let result = client.try_submit_multi_period_attestation(&business, &202405, &202407, &root2, &1672531200, &1);
-    assert!(result.is_ok(), "Overlapping on a revoked attestation should be allowed");
+#[test]
+#[should_panic(expected = "cannot migrate an expired attestation")]
+fn test_migrate_attestation_expired_rejected() {
+    let (env, client, admin, _contract_id) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+
+    env.ledger().set_timestamp(1_000_000);
+    let expiry_timestamp = 2_000_000u64;
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &Some(expiry_timestamp),
+    );
+
+    // Advance ledger past expiry
+    env.ledger().set_timestamp(3_000_000);
+    assert!(client.is_expired(&business, &period));
+
+    let new_root = BytesN::from_array(&env, &[2u8; 32]);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
+}
+
+#[test]
+fn test_migrate_attestation_nonexpired_allowed() {
+    let (env, client, admin, _contract_id) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+
+    env.ledger().set_timestamp(1_000_000);
+    let expiry_timestamp = 5_000_000u64;
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &Some(expiry_timestamp),
+    );
+
+    // Still before expiry
+    env.ledger().set_timestamp(3_000_000);
+
+    let new_root = BytesN::from_array(&env, &[2u8; 32]);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
+
+    let (stored_root, _ts, version, _fee, _proof, _expiry) =
+        client.get_attestation(&business, &period).unwrap();
+    assert_eq!(stored_root, new_root);
+    assert_eq!(version, 2);
+}
+
+#[test]
+#[should_panic(expected = "cannot migrate a revoked attestation")]
+fn test_migrate_attestation_revoked_rejected() {
+    let (env, client, admin, contract_id) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    // Directly write revocation state in storage using contract context
+    env.as_contract(&contract_id, || {
+        let key = DataKey::Revoked(business.clone(), period.clone());
+        env.storage().instance().set(&key, &true);
+    });
+
+    let new_root = BytesN::from_array(&env, &[2u8; 32]);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
+}
+
+#[test]
+#[should_panic(expected = "attestation not found")]
+fn test_migrate_attestation_nonexistent_panics() {
+    let (env, client, admin, _contract_id) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let new_root = BytesN::from_array(&env, &[2u8; 32]);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
+}
+
+#[test]
+fn test_migrate_attestation_preserves_fee_and_optional_fields() {
+    let (env, client, admin, _contract_id) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    let proof_hash = Some(BytesN::from_array(&env, &[42u8; 32]));
+    let expiry = Some(5_000_000_000u64);
+
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &proof_hash,
+        &expiry,
+    );
+
+    let new_root = BytesN::from_array(&env, &[3u8; 32]);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
+
+    let (stored_root, _ts, version, _fee, stored_proof, stored_expiry) =
+        client.get_attestation(&business, &period).unwrap();
+    assert_eq!(stored_root, new_root);
+    assert_eq!(version, 2);
+    assert_eq!(stored_proof, proof_hash);
+    assert_eq!(stored_expiry, expiry);
+}
+
+// ── Fee configuration events ───────────────────────────────────────
+
+#[test]
+fn test_configure_fees_emits_fee_config_changed_event() {
+    let (env, client, admin, _) = setup();
+    let token = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    client.configure_fees(&token, &collector, &1_000i128, &true);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    let topics = last.1.clone();
+
+    assert_eq!(topics.len(), 1);
+    assert_eq!(
+        soroban_sdk::Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+        symbol_short!("fee_cfg"),
+        "configure_fees must emit a FeeConfigChanged event"
+    );
+
+    let ev = events::FeeConfigChangedEvent::try_from_val(&env, &last.2).unwrap();
+    assert_eq!(ev.token, token);
+    assert_eq!(ev.collector, collector);
+    assert_eq!(ev.base_fee, 1_000i128);
+    assert!(ev.enabled);
+    assert_eq!(ev.changed_by, admin);
+}
+
+#[test]
+fn test_configure_fees_event_matches_stored_config() {
+    let (env, client, _admin, _) = setup();
+    let token = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    client.configure_fees(&token, &collector, &500i128, &false);
+
+    let ev =
+        events::FeeConfigChangedEvent::try_from_val(&env, &env.events().all().last().unwrap().2)
+            .unwrap();
+    let stored = client.get_fee_config().unwrap();
+
+    assert_eq!(ev.token, stored.token);
+    assert_eq!(ev.collector, stored.collector);
+    assert_eq!(ev.base_fee, stored.base_fee);
+    assert_eq!(ev.enabled, stored.enabled);
+}
+
+#[test]
+fn test_set_fee_enabled_emits_fee_config_changed_event() {
+    let (env, client, admin, _) = setup();
+    let token = Address::generate(&env);
+    let collector = Address::generate(&env);
+    client.configure_fees(&token, &collector, &200i128, &true);
+
+    client.set_fee_enabled(&false);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    let topics = last.1.clone();
+
+    assert_eq!(topics.len(), 1);
+    assert_eq!(
+        soroban_sdk::Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+        symbol_short!("fee_cfg"),
+        "set_fee_enabled must emit a FeeConfigChanged event"
+    );
+
+    let ev = events::FeeConfigChangedEvent::try_from_val(&env, &last.2).unwrap();
+    assert_eq!(ev.token, token);
+    assert_eq!(ev.collector, collector);
+    assert_eq!(ev.base_fee, 200i128);
+    assert!(!ev.enabled);
+    assert_eq!(ev.changed_by, admin);
+}
+
+#[test]
+fn test_set_fee_enabled_event_reflects_persisted_state() {
+    let (env, client, _admin, _) = setup();
+    let token = Address::generate(&env);
+    let collector = Address::generate(&env);
+    client.configure_fees(&token, &collector, &100i128, &false);
+
+    client.set_fee_enabled(&true);
+
+    let ev =
+        events::FeeConfigChangedEvent::try_from_val(&env, &env.events().all().last().unwrap().2)
+            .unwrap();
+    let stored = client.get_fee_config().unwrap();
+
+    assert_eq!(ev.enabled, stored.enabled);
+    assert_eq!(ev.base_fee, stored.base_fee);
+}
+
+#[test]
+fn test_set_fee_enabled_no_config_emits_no_extra_event() {
+    // When no FeeConfig exists, set_fee_enabled is a no-op and must not emit.
+    let (env, client, _admin, _) = setup();
+
+    client.set_fee_enabled(&true);
+
+    // The only event present should be from initialize (role_gr), not fee_cfg.
+    for (_cid, topics, _data) in env.events().all().iter() {
+        if topics.len() > 0 {
+            let sym = soroban_sdk::Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
+            assert_ne!(
+                sym,
+                symbol_short!("fee_cfg"),
+                "set_fee_enabled with no config must not emit a fee_cfg event"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_configure_flat_fee_emits_flat_fee_config_changed_event() {
+    let (env, client, admin, _) = setup();
+    let token = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    client.configure_flat_fee(&token, &collector, &250i128, &true);
+
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    let topics = last.1.clone();
+
+    assert_eq!(topics.len(), 1);
+    assert_eq!(
+        soroban_sdk::Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+        symbol_short!("ff_cfg"),
+        "configure_flat_fee must emit a FlatFeeConfigChanged event"
+    );
+
+    let ev = events::FlatFeeConfigChangedEvent::try_from_val(&env, &last.2).unwrap();
+    assert_eq!(ev.token, token);
+    assert_eq!(ev.collector, collector);
+    assert_eq!(ev.amount, 250i128);
+    assert!(ev.enabled);
+    assert_eq!(ev.changed_by, admin);
+}
+
+#[test]
+fn test_configure_flat_fee_event_matches_stored_config() {
+    let (env, client, _admin, _) = setup();
+    let token = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    client.configure_flat_fee(&token, &collector, &750i128, &false);
+
+    let ev = events::FlatFeeConfigChangedEvent::try_from_val(
+        &env,
+        &env.events().all().last().unwrap().2,
+    )
+    .unwrap();
+    let stored = client.get_flat_fee_config().unwrap();
+
+    assert_eq!(ev.token, stored.token);
+    assert_eq!(ev.collector, stored.collector);
+    assert_eq!(ev.amount, stored.amount);
+    assert_eq!(ev.enabled, stored.enabled);
+}
+
+// ── get_fee_quote_detailed (issue #324) ─────────────────────────────
+
+fn deploy_token_for_quote(env: &Env) -> Address {
+    let token_admin = Address::generate(env);
+    env.register_stellar_asset_contract_v2(token_admin)
+        .address()
+        .clone()
+}
+
+#[test]
+fn test_fee_quote_detailed_all_zeros_when_fees_disabled() {
+    let (env, client, _admin, _) = setup();
+    let business = Address::generate(&env);
+    let token = deploy_token_for_quote(&env);
+    let collector = Address::generate(&env);
+
+    client.configure_flat_fee(&token, &collector, &500, &false);
+    client.configure_fees(&token, &collector, &1_000, &false);
+
+    let breakdown = client.get_fee_quote_detailed(&business);
+    assert_eq!(breakdown, (0, 0, 0, 0, 0));
+    assert_eq!(client.get_fee_quote(&business), 0);
+}
+
+#[test]
+fn test_fee_quote_detailed_only_flat_fee_enabled() {
+    let (env, client, _admin, _) = setup();
+    let business = Address::generate(&env);
+    let token = deploy_token_for_quote(&env);
+    let collector = Address::generate(&env);
+
+    client.configure_flat_fee(&token, &collector, &350, &true);
+
+    let (base_fee, tier_bps, vol_bps, dynamic_fee, flat_fee) =
+        client.get_fee_quote_detailed(&business);
+
+    assert_eq!(base_fee, 0);
+    assert_eq!(tier_bps, 0);
+    assert_eq!(vol_bps, 0);
+    assert_eq!(dynamic_fee, 0);
+    assert_eq!(flat_fee, 350);
+    assert_eq!(dynamic_fee + flat_fee, client.get_fee_quote(&business));
+}
+
+#[test]
+fn test_fee_quote_detailed_both_fees_enabled_sum_matches_quote() {
+    let (env, client, _admin, _) = setup();
+    let business = Address::generate(&env);
+    let flat_collector = Address::generate(&env);
+    let dyn_collector = Address::generate(&env);
+
+    let flat_token = deploy_token_for_quote(&env);
+    let dyn_token = deploy_token_for_quote(&env);
+    soroban_sdk::token::StellarAssetClient::new(&env, &flat_token).mint(&business, &10_000);
+    soroban_sdk::token::StellarAssetClient::new(&env, &dyn_token).mint(&business, &10_000);
+
+    client.configure_flat_fee(&flat_token, &flat_collector, &200, &true);
+    client.configure_fees(&dyn_token, &dyn_collector, &1_000_000, &true);
+    client.set_tier_discount(&1, &2_000);
+    client.set_business_tier(&business, &1);
+
+    let breakdown = client.get_fee_quote_detailed(&business);
+    let quote = client.get_fee_quote(&business);
+
+    let (base_fee, tier_bps, vol_bps, dynamic_fee, flat_fee) = breakdown;
+
+    assert_eq!(base_fee, 1_000_000);
+    assert_eq!(tier_bps, 2_000);
+    assert_eq!(vol_bps, 0);
+    assert_eq!(dynamic_fee, 800_000);
+    assert_eq!(flat_fee, 200);
+    assert_eq!(dynamic_fee + flat_fee, quote);
+    assert_eq!(quote, 800_200);
 }

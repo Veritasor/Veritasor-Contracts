@@ -46,6 +46,7 @@
 extern crate std;
 
 use super::*;
+use dynamic_fees::compute_fee;
 use proptest::prelude::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
@@ -62,7 +63,7 @@ fn setup() -> (Env, AttestationContractClient<'static>) {
     env.mock_all_auths();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
-    client.initialize(&Address::generate(&env));
+    client.initialize(&Address::generate(&env), &0u64);
     (env, client)
 }
 
@@ -88,7 +89,7 @@ fn setup_with_fees(
     let token_addr = token_contract.address().clone();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
-    client.initialize(&admin);
+    client.initialize(&admin, &0u64);
     client.configure_fees(&token_addr, &collector, &base_fee, &true);
     (env, client, admin, token_addr, collector)
 }
@@ -308,10 +309,12 @@ fn prop_data_integrity_and_counter_monotonicity() {
             "case {idx} [{period_str}]: initial count must be 0"
         );
 
-        client.submit_attestation(&business, &period, &root, &timestamp, &version, &None);
+        client.submit_attestation(
+            &business, &period, &root, &timestamp, &version, &0i128, &None, &None,
+        );
 
         // P4: Every field must round-trip exactly.
-        let (got_root, got_ts, got_ver, got_fee, _) = client
+        let (got_root, got_ts, got_ver, got_fee, _, _) = client
             .get_attestation(&business, &period)
             .unwrap_or_else(|| {
                 panic!("case {idx} [{period_str}]: attestation must exist after submit")
@@ -340,7 +343,9 @@ fn prop_data_integrity_and_counter_monotonicity() {
 
         // P5 continued: second submit (different period) increments to 2.
         let period2 = String::from_str(&env, &std::format!("{period_str}-v2"));
-        client.submit_attestation(&business, &period2, &root, &timestamp, &version, &None);
+        client.submit_attestation(
+            &business, &period2, &root, &timestamp, &version, &0i128, &None, &None,
+        );
         assert_eq!(
             client.get_business_count(&business),
             2,
@@ -391,6 +396,8 @@ fn prop_verify_consistency() {
             &submitted_root,
             &1_700_000_000,
             &1,
+            &0i128,
+            &None,
             &None,
         );
 
@@ -436,7 +443,16 @@ fn prop_revocation_permanence() {
         let period = String::from_str(&env, "2026-01");
         let submitted_root = BytesN::from_array(&env, &sub_bytes);
 
-        client.submit_attestation(&business, &period, &submitted_root, &1_000_000, &1, &None);
+        client.submit_attestation(
+            &business,
+            &period,
+            &submitted_root,
+            &1_000_000,
+            &1,
+            &0i128,
+            &None,
+            &None,
+        );
 
         // Sanity: verifies before revocation.
         assert!(
@@ -445,7 +461,7 @@ fn prop_revocation_permanence() {
         );
 
         let reason = String::from_str(&env, "property-test revocation");
-        client.revoke_attestation(&admin, &business, &period, &reason);
+        client.revoke_attestation(&admin, &business, &period, &reason, &0u64);
 
         // P7: No root whatsoever verifies after revocation.
         for &test_bytes in REVOKE_ROOTS {
@@ -495,13 +511,17 @@ fn prop_duplicate_attestation_panics() {
             env.mock_all_auths();
             let contract_id = env.register(AttestationContract, ());
             let client = AttestationContractClient::new(&env, &contract_id);
-            client.initialize(&Address::generate(&env));
+            client.initialize(&Address::generate(&env), &0u64);
             let business = Address::generate(&env);
             let period = String::from_str(&env, &period_owned);
             let root = BytesN::from_array(&env, &[1u8; 32]);
-            client.submit_attestation(&business, &period, &root, &1_000_000, &1, &None);
+            client.submit_attestation(
+                &business, &period, &root, &1_000_000, &1, &0i128, &None, &None,
+            );
             // Second call for the same (business, period) must panic.
-            client.submit_attestation(&business, &period, &root, &2_000_000, &2, &None);
+            client.submit_attestation(
+                &business, &period, &root, &2_000_000, &2, &0i128, &None, &None,
+            );
         });
 
         let err = result.expect_err(&std::format!(
@@ -543,10 +563,12 @@ fn prop_migration_succeeds_for_increasing_version() {
         let old_root = BytesN::from_array(&env, &[1u8; 32]);
         let new_root = BytesN::from_array(&env, &[2u8; 32]);
 
-        client.submit_attestation(&business, &period, &old_root, &1_000_000, &old_ver, &None);
+        client.submit_attestation(
+            &business, &period, &old_root, &1_000_000, &old_ver, &0i128, &None, &None,
+        );
         client.migrate_attestation(&admin, &business, &period, &new_root, &new_ver);
 
-        let (got_root, _, got_ver, _, _) = client.get_attestation(&business, &period).unwrap();
+        let (got_root, _, got_ver, _, _, _) = client.get_attestation(&business, &period).unwrap();
         assert_eq!(
             got_root, new_root,
             "old={old_ver}, new={new_ver}: root must be updated"
@@ -577,12 +599,14 @@ fn prop_migration_panics_for_non_increasing_version() {
             let contract_id = env.register(AttestationContract, ());
             let client = AttestationContractClient::new(&env, &contract_id);
             let admin_addr = Address::generate(&env);
-            client.initialize(&admin_addr);
+            client.initialize(&admin_addr, &0u64);
             let business = Address::generate(&env);
             let period = String::from_str(&env, "2026-01");
             let old_root = BytesN::from_array(&env, &[1u8; 32]);
             let new_root = BytesN::from_array(&env, &[2u8; 32]);
-            client.submit_attestation(&business, &period, &old_root, &1_000_000, &old_ver, &None);
+            client.submit_attestation(
+                &business, &period, &old_root, &1_000_000, &old_ver, &0i128, &None, &None,
+            );
             client.migrate_attestation(&admin_addr, &business, &period, &new_root, &bad_new_ver);
         });
 
@@ -624,7 +648,7 @@ fn prop_tier_discount_over_bound_panics() {
             env.mock_all_auths();
             let contract_id = env.register(AttestationContract, ());
             let client = AttestationContractClient::new(&env, &contract_id);
-            client.initialize(&Address::generate(&env));
+            client.initialize(&Address::generate(&env), &0u64);
             client.set_tier_discount(&0u32, &discount);
         });
 
@@ -698,7 +722,7 @@ fn prop_volume_brackets_unordered_panics() {
             env.mock_all_auths();
             let contract_id = env.register(AttestationContract, ());
             let client = AttestationContractClient::new(&env, &contract_id);
-            client.initialize(&Address::generate(&env));
+            client.initialize(&Address::generate(&env), &0u64);
             let soroban_t = {
                 let mut v = vec![&env];
                 for &t in &t_clone {
@@ -741,7 +765,7 @@ fn prop_volume_brackets_length_mismatch_panics() {
             env.mock_all_auths();
             let contract_id = env.register(AttestationContract, ());
             let client = AttestationContractClient::new(&env, &contract_id);
-            client.initialize(&Address::generate(&env));
+            client.initialize(&Address::generate(&env), &0u64);
             let soroban_t = {
                 let mut v = vec![&env];
                 for &t in &t_clone {
@@ -786,8 +810,8 @@ fn prop_business_isolation() {
     let root_a = BytesN::from_array(&env, &[1u8; 32]);
     let root_b = BytesN::from_array(&env, &[2u8; 32]);
 
-    client.submit_attestation(&biz_a, &period, &root_a, &1_000, &1, &None);
-    client.submit_attestation(&biz_b, &period, &root_b, &2_000, &2, &None);
+    client.submit_attestation(&biz_a, &period, &root_a, &1_000, &1, &0i128, &None, &None);
+    client.submit_attestation(&biz_b, &period, &root_b, &2_000, &2, &0i128, &None, &None);
 
     // biz_c has no attestation.
     assert!(
@@ -805,8 +829,8 @@ fn prop_business_isolation() {
     );
 
     // biz_a and biz_b have independent data.
-    let (a_root, _, a_ver, _, _) = client.get_attestation(&biz_a, &period).unwrap();
-    let (b_root, _, b_ver, _, _) = client.get_attestation(&biz_b, &period).unwrap();
+    let (a_root, _, a_ver, _, _, _) = client.get_attestation(&biz_a, &period).unwrap();
+    let (b_root, _, b_ver, _, _, _) = client.get_attestation(&biz_b, &period).unwrap();
     assert_eq!(a_root, root_a, "biz_a root must match what was submitted");
     assert_eq!(b_root, root_b, "biz_b root must match what was submitted");
     assert_ne!(a_ver, b_ver, "versions were different and must differ");
@@ -818,7 +842,7 @@ fn prop_business_isolation() {
     // Revoke biz_a only.
     let admin = client.get_admin();
     let reason = String::from_str(&env, "isolation-test");
-    client.revoke_attestation(&admin, &biz_a, &period, &reason);
+    client.revoke_attestation(&admin, &biz_a, &period, &reason, &0u64);
 
     // Revocation of biz_a must not affect biz_b.
     assert!(client.is_revoked(&biz_a, &period), "biz_a must be revoked");
@@ -863,12 +887,12 @@ fn prop_pause_blocks_all_submissions() {
             let contract_id = env.register(AttestationContract, ());
             let client = AttestationContractClient::new(&env, &contract_id);
             let admin = Address::generate(&env);
-            client.initialize(&admin);
-            client.pause(&admin);
+            client.initialize(&admin, &0u64);
+            client.pause(&client.get_admin());
             let business = Address::generate(&env);
             let period = String::from_str(&env, &period_owned);
             let root = BytesN::from_array(&env, &[1u8; 32]);
-            client.submit_attestation(&business, &period, &root, &1_000, &1, &None);
+            client.submit_attestation(&business, &period, &root, &1_000, &1, &0i128, &None, &None);
         });
 
         let err = result.expect_err(&std::format!(
@@ -891,11 +915,11 @@ fn prop_unpause_restores_submission() {
     let period = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.pause(&admin);
-    client.unpause(&admin);
+    client.pause(&client.get_admin());
+    client.unpause(&client.get_admin());
 
     // Must succeed after unpause.
-    client.submit_attestation(&business, &period, &root, &1_000, &1, &None);
+    client.submit_attestation(&business, &period, &root, &1_000, &1, &0i128, &None, &None);
     assert!(
         client.get_attestation(&business, &period).is_some(),
         "attestation must exist after unpause + submit"
@@ -954,7 +978,16 @@ fn prop_fee_quote_matches_actual_charge() {
         for i in 0..vol_threshold {
             let warm_period = String::from_str(&env, &std::format!("WARM-{i:05}"));
             let warm_root = BytesN::from_array(&env, &[i as u8; 32]);
-            client.submit_attestation(&business, &warm_period, &warm_root, &1, &1, &None);
+            client.submit_attestation(
+                &business,
+                &warm_period,
+                &warm_root,
+                &1,
+                &1,
+                &0i128,
+                &None,
+                &None,
+            );
         }
 
         // Capture quote and balance immediately before the test submission.
@@ -963,7 +996,16 @@ fn prop_fee_quote_matches_actual_charge() {
 
         let test_period = String::from_str(&env, "TEST-FINAL");
         let test_root = BytesN::from_array(&env, &[99u8; 32]);
-        client.submit_attestation(&business, &test_period, &test_root, &1_000_000, &1, &None);
+        client.submit_attestation(
+            &business,
+            &test_period,
+            &test_root,
+            &1_000_000,
+            &1,
+            &0i128,
+            &None,
+            &None,
+        );
 
         let after = token_balance(&env, &token_addr, &business);
         let charged = before - after;
@@ -975,10 +1017,879 @@ fn prop_fee_quote_matches_actual_charge() {
         );
 
         // P14-b: fee_paid field in the stored attestation record also matches.
-        let (_, _, _, fee_in_record, _) = client.get_attestation(&business, &test_period).unwrap();
+        let (_, _, _, fee_in_record, _, _) =
+            client.get_attestation(&business, &test_period).unwrap();
         assert_eq!(
             fee_in_record, quote,
             "stored fee_paid must equal the pre-submit quote"
         );
     }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  §K — Fee Monotonicity: Pure Arithmetic Proptest Extensions
+//
+//  Invariant P15: compute_fee is monotonically non-decreasing in base_fee
+//                 (higher base always produces higher-or-equal fee)
+//  Invariant P16: Multiplicative decomposition:
+//                 compute_fee(b, t, v) ≈ compute_fee(b, t, 0)
+//                 × (10_000 − v) / 10_000  (within ±1 integer truncation)
+//  Invariant P17: Discount combination is commutative:
+//                 compute_fee(b, t, v) = compute_fee(b, v, t)
+//  Invariant P18: Additive approximation over-discounts vs. multiplicative:
+//                 compute_fee(b, t+v, 0) ≤ compute_fee(b, t, v) for t+v ≤ 10_000
+//  Invariant P19: Strict monotonicity in base_fee when discounts are partial
+//  Invariant P20: Fee additivity across independent businesses (no cross-state)
+//
+//  Security note: These invariants protect against fee model manipulation
+//  via discount ordering or base-fee inflation attacks.
+// ════════════════════════════════════════════════════════════════════
+
+proptest! {
+    /// P15: Higher base fee produces a fee that is ≥ the fee for a lower base,
+    /// with all discount parameters held constant.
+    ///
+    /// This ensures fee is monotonically non-decreasing in `base_fee`,
+    /// which is essential for protocol revenue predictability.
+    #[test]
+    fn prop_fee_monotone_in_base(
+        base1 in 0i128..=500_000_000i128,
+        extra in 0i128..=500_000_000i128,
+        tier in 0u32..=10_000u32,
+        vol  in 0u32..=10_000u32,
+    ) {
+        let base2 = base1 + extra;
+        let fee1 = compute_fee(base1, tier, vol);
+        let fee2 = compute_fee(base2, tier, vol);
+        prop_assert!(
+            fee2 >= fee1,
+            "fee(base2={base2}) must be ≥ fee(base1={base1}) at tier={tier}, vol={vol}: {fee2} < {fee1}"
+        );
+    }
+
+    /// P16: Multiplicative decomposition holds to within ±1 integer truncation.
+    ///
+    /// The fee formula decomposes as:
+    ///   compute_fee(b, t, v) ≈ compute_fee(b, t, 0) × (10_000 − v) / 10_000
+    ///
+    /// The absolute difference must be at most 1 (integer division truncation).
+    #[test]
+    fn prop_fee_multiplicative_decomposition(
+        base in 1i128..=1_000_000_000i128,
+        tier in 0u32..=10_000u32,
+        vol  in 0u32..=10_000u32,
+    ) {
+        let combined  = compute_fee(base, tier, vol);
+        let tier_only = compute_fee(base, tier, 0);
+        let vol_factor = 10_000i128 - vol as i128;
+        let reconstructed = tier_only * vol_factor / 10_000i128;
+        let diff = (combined - reconstructed).abs();
+        prop_assert!(
+            diff <= 1,
+            "decomposition error={} (combined={}, reconstructed={}) \
+             for base={}, tier={}, vol={}",
+            diff, combined, reconstructed, base, tier, vol
+        );
+    }
+
+    /// P17: The fee formula is symmetric in tier and volume discount axes.
+    ///
+    /// Because (10_000 − t) × (10_000 − v) = (10_000 − v) × (10_000 − t),
+    /// swapping tier_bps and vol_bps must yield the same fee.
+    #[test]
+    fn prop_fee_discount_axis_symmetry(
+        base in 0i128..=1_000_000_000i128,
+        tier in 0u32..=10_000u32,
+        vol  in 0u32..=10_000u32,
+    ) {
+        let fee_tv = compute_fee(base, tier, vol);
+        let fee_vt = compute_fee(base, vol, tier);
+        prop_assert_eq!(
+            fee_tv, fee_vt,
+            "discount axis symmetry failed for base={}, tier={}, vol={}: {} ≠ {}",
+            base, tier, vol, fee_tv, fee_vt
+        );
+    }
+
+    /// P18: Multiplicative compounding preserves more revenue than additive.
+    ///
+    /// Applying t and v bps independently (multiplicative) always produces
+    /// a fee ≥ applying (t + v) bps as a single discount (additive).
+    /// This formally captures the key economic property from the docs.
+    ///
+    ///   compute_fee(b, t+v, 0) ≤ compute_fee(b, t, v)  when t+v ≤ 10_000
+    #[test]
+    fn prop_additive_over_discounts_vs_multiplicative(
+        base  in 1i128..=1_000_000_000i128,
+        tier  in 0u32..5_000u32,
+        vol   in 0u32..5_000u32,
+    ) {
+        let combined_bps = tier + vol;
+        let fee_additive       = compute_fee(base, combined_bps, 0);
+        let fee_multiplicative = compute_fee(base, tier, vol);
+        prop_assert!(
+            fee_multiplicative >= fee_additive,
+            "multiplicative={} must be ≥ additive={} \
+             for base={}, tier={}, vol={}",
+            fee_multiplicative, fee_additive, base, tier, vol
+        );
+    }
+
+    /// P19: A positive base increment always produces a non-decreasing fee.
+    #[test]
+    fn prop_fee_non_decreasing_in_base_with_increment(
+        base  in 0i128..=999_999_999i128,
+        tier  in 0u32..=10_000u32,
+        vol   in 0u32..=10_000u32,
+        extra in 1i128..=100_000i128,
+    ) {
+        let base2 = base + extra;
+        let fee1 = compute_fee(base, tier, vol);
+        let fee2 = compute_fee(base2, tier, vol);
+        prop_assert!(
+            fee2 >= fee1,
+            "fee must be non-decreasing for base={}→{}, tier={}, vol={}: {} < {}",
+            base, base2, tier, vol, fee2, fee1
+        );
+    }
+
+    /// P20: N calls to compute_fee with identical parameters always sum to N × single_fee.
+    ///
+    /// Validates pure-function referential transparency and statelessness.
+    #[test]
+    fn prop_fee_pure_function_referential_transparency(
+        base in 0i128..=100_000_000i128,
+        tier in 0u32..=10_000u32,
+        vol  in 0u32..=10_000u32,
+        n    in 1usize..=10usize,
+    ) {
+        let per_fee = compute_fee(base, tier, vol);
+        let repeated: i128 = (0..n).map(|_| compute_fee(base, tier, vol)).sum();
+        prop_assert_eq!(
+            repeated, per_fee * n as i128,
+            "sum of {} identical fee calls must equal {}×per_fee={}: got {}",
+            n, n, per_fee, repeated
+        );
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  §L — End-to-End Fee Monotonicity via Contract State  (parametric)
+//
+//  Invariant P21: The effective fee quoted by the contract never increases
+//                 as the business's tier discount increases (admin-assigned).
+//  Invariant P22: The effective fee never increases as the business's
+//                 cumulative attestation count crosses upward into higher
+//                 volume-discount brackets.
+//  Invariant P23: The fee stored in sequential attestation records is
+//                 monotonically non-increasing for a single business.
+//
+//  These use parametric contract-state tests (fresh Env per case).
+// ════════════════════════════════════════════════════════════════════
+
+/// Tier discount schedule for P21 (strictly ascending discounts).
+///
+/// | Tier | Discount (bps) | Effective fee on 1_000_000 base |
+/// |------|----------------|----------------------------------|
+/// | 0    | 0              | 1_000_000                        |
+/// | 1    | 1_000 (10%)    | 900_000                          |
+/// | 2    | 2_500 (25%)    | 750_000                          |
+/// | 3    | 5_000 (50%)    | 500_000                          |
+/// | 4    | 7_500 (75%)    | 250_000                          |
+/// | 5    | 10_000 (100%)  | 0                                |
+const TIER_MONOTONICITY_DISCOUNTS: &[(u32, u32)] = &[
+    (0, 0),
+    (1, 1_000),
+    (2, 2_500),
+    (3, 5_000),
+    (4, 7_500),
+    (5, 10_000),
+];
+
+/// P21: As tier level increases (with strictly ascending discounts),
+/// `get_fee_quote` must be monotonically non-increasing.
+///
+/// Security implication: no tier assignment can accidentally increase the fee.
+#[test]
+fn prop_tier_upgrade_fee_monotonicity() {
+    let base_fee: i128 = 1_000_000;
+    let (env, client, _admin, token_addr, _collector) = setup_with_fees(base_fee);
+
+    for &(tier_level, discount_bps) in TIER_MONOTONICITY_DISCOUNTS {
+        client.set_tier_discount(&tier_level, &discount_bps);
+    }
+
+    let business = Address::generate(&env);
+    mint(&env, &token_addr, &business, base_fee * 100);
+
+    let mut prev_quote = i128::MAX;
+
+    for &(tier_level, discount_bps) in TIER_MONOTONICITY_DISCOUNTS {
+        client.set_business_tier(&business, &tier_level);
+        let quote = client.get_fee_quote(&business);
+
+        // P21: Quote must be ≤ previous quote.
+        assert!(
+            quote <= prev_quote,
+            "tier={tier_level} (discount={discount_bps} bps): quote={quote} must be ≤ prev_quote={prev_quote}"
+        );
+
+        // Cross-check against formula.
+        let expected = compute_fee(base_fee, discount_bps, 0);
+        assert_eq!(
+            quote, expected,
+            "tier={tier_level}: contract quote={quote} != formula={expected}"
+        );
+
+        prev_quote = quote;
+    }
+
+    // Confirm full discount yields zero fee.
+    assert_eq!(prev_quote, 0, "full tier discount must yield fee = 0");
+}
+
+/// Volume bracket schedule for P22.
+///
+/// | Count range | Discount (bps) | Fee on 1_000_000 base |
+/// |-------------|----------------|-----------------------|
+/// | 0–4         | 0              | 1_000_000             |
+/// | 5–9         | 500            | 950_000               |
+/// | 10–24       | 1_000          | 900_000               |
+/// | 25–49       | 2_000          | 800_000               |
+/// | 50+         | 4_000          | 600_000               |
+const VOLUME_BRACKET_THRESHOLDS: &[u64] = &[5, 10, 25, 50];
+const VOLUME_BRACKET_DISCOUNTS: &[u32] = &[500, 1_000, 2_000, 4_000];
+
+/// P22: Fee quote must be monotonically non-increasing as the business's
+/// cumulative count crosses volume-bracket thresholds.
+///
+/// Security implication: volume brackets cannot create a fee increase,
+/// which would create a perverse incentive against high-volume usage.
+#[test]
+fn prop_volume_bracket_crossing_fee_monotonicity() {
+    let base_fee: i128 = 1_000_000;
+    let (env, client, _admin, token_addr, _collector) = setup_with_fees(base_fee);
+
+    let soroban_thresholds = {
+        let mut v = vec![&env];
+        for &t in VOLUME_BRACKET_THRESHOLDS {
+            v.push_back(t);
+        }
+        v
+    };
+    let soroban_discounts = {
+        let mut v = vec![&env];
+        for &d in VOLUME_BRACKET_DISCOUNTS {
+            v.push_back(d);
+        }
+        v
+    };
+    client.set_volume_brackets(&soroban_thresholds, &soroban_discounts);
+
+    let business = Address::generate(&env);
+    let total_submissions = VOLUME_BRACKET_THRESHOLDS.last().copied().unwrap_or(0) + 5;
+    mint(
+        &env,
+        &token_addr,
+        &business,
+        base_fee * total_submissions as i128 * 2,
+    );
+
+    let checkpoints: &[(u64, u32)] = &[(0, 0), (5, 500), (10, 1_000), (25, 2_000), (50, 4_000)];
+
+    let mut prev_quote = i128::MAX;
+    let mut submission_idx: u64 = 0;
+
+    for &(target_count, expected_disc_bps) in checkpoints {
+        while submission_idx < target_count {
+            let period = String::from_str(&env, &std::format!("VOL-MONO-{submission_idx:05}"));
+            let root = BytesN::from_array(&env, &[(submission_idx % 256) as u8; 32]);
+            client.submit_attestation(
+                &business, &period, &root, &1_000_000, &1, &0i128, &None, &None,
+            );
+            submission_idx += 1;
+        }
+
+        let quote = client.get_fee_quote(&business);
+        let expected = compute_fee(base_fee, 0, expected_disc_bps);
+
+        // P22-a: Non-increasing.
+        assert!(
+            quote <= prev_quote,
+            "count={target_count}: fee={quote} increased from prev={prev_quote}"
+        );
+        // P22-b: Matches formula for active bracket.
+        assert_eq!(
+            quote, expected,
+            "count={target_count}: quote={quote} != expected={expected} (disc={expected_disc_bps} bps)"
+        );
+
+        prev_quote = quote;
+    }
+}
+
+/// P23: Fees stored in sequential attestation records are monotonically
+/// non-increasing for a single business (no tier change, advancing brackets).
+#[test]
+fn prop_sequential_stored_fees_non_increasing() {
+    let base_fee: i128 = 2_000_000;
+    let (env, client, _admin, token_addr, _collector) = setup_with_fees(base_fee);
+
+    // Brackets: ≥3 → 10%, ≥8 → 25%, ≥15 → 40%.
+    let soroban_thresholds = vec![&env, 3u64, 8u64, 15u64];
+    let soroban_discounts = vec![&env, 1_000u32, 2_500u32, 4_000u32];
+    client.set_volume_brackets(&soroban_thresholds, &soroban_discounts);
+
+    let business = Address::generate(&env);
+    mint(&env, &token_addr, &business, base_fee * 30);
+
+    let mut prev_fee_paid = i128::MAX;
+
+    for i in 0u64..20 {
+        let period = String::from_str(&env, &std::format!("SEQ-{i:04}"));
+        let root = BytesN::from_array(&env, &[(i % 256) as u8; 32]);
+        client.submit_attestation(
+            &business, &period, &root, &1_000_000, &1, &0i128, &None, &None,
+        );
+
+        let (_, _, _, fee_paid, _, _) = client.get_attestation(&business, &period).unwrap();
+
+        // P23: Each record's fee_paid ≤ previous record's fee_paid.
+        assert!(
+            fee_paid <= prev_fee_paid,
+            "attestation {i}: fee_paid={fee_paid} increased from prev={prev_fee_paid}"
+        );
+
+        prev_fee_paid = fee_paid;
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  §M — Combined Tier + Volume Monotonicity Matrix
+//
+//  Invariant P24: When both tier and volume discounts increase
+//                 (or one increases and the other stays), fee never rises.
+//  Invariant P25: The protocol quote always equals the formula value
+//                 for the same tier + volume discount configuration.
+// ════════════════════════════════════════════════════════════════════
+
+/// Matrix of (tier_bps, vol_bps) pairs — non-decreasing in ≥1 axis per row.
+const COMBINED_MONOTONICITY_MATRIX: &[(u32, u32)] = &[
+    (0, 0),         // Baseline: full fee
+    (500, 0),       // Tier increases
+    (500, 500),     // Volume also increases
+    (1_000, 500),   // Tier increases further
+    (1_000, 1_000), // Volume catches up
+    (2_000, 1_500), // Both increase
+    (3_000, 2_000),
+    (5_000, 3_000),
+    (5_000, 5_000), // Equal large discounts
+    (7_500, 5_000),
+    (10_000, 5_000),  // Full tier discount
+    (10_000, 10_000), // Both fully discounted → 0
+];
+
+/// P24 + P25: For each matrix row, effective fee must be ≤ prevous row's fee
+/// and must exactly match `compute_fee`.
+#[test]
+fn prop_combined_tier_volume_fee_monotonicity() {
+    let base_fee: i128 = 1_000_000;
+    let mut prev_fee = i128::MAX;
+
+    for &(tier_bps, vol_bps) in COMBINED_MONOTONICITY_MATRIX {
+        // Fresh Env per case — no cross-case state.
+        let (env, client, _admin, _token_addr, _collector) = setup_with_fees(base_fee);
+        let business = Address::generate(&env);
+
+        client.set_tier_discount(&1u32, &tier_bps);
+        client.set_business_tier(&business, &1u32);
+
+        if vol_bps > 0 {
+            let soroban_thresholds = vec![&env, 0u64];
+            let soroban_discounts = vec![&env, vol_bps];
+            client.set_volume_brackets(&soroban_thresholds, &soroban_discounts);
+        }
+
+        let quote = client.get_fee_quote(&business);
+        let formula = compute_fee(base_fee, tier_bps, vol_bps);
+
+        // P24: Non-increasing.
+        assert!(
+            quote <= prev_fee,
+            "tier={tier_bps}, vol={vol_bps}: quote={quote} > prev_fee={prev_fee}"
+        );
+        // P25: Matches formula exactly.
+        assert_eq!(
+            quote, formula,
+            "tier={tier_bps}, vol={vol_bps}: quote={quote} != formula={formula}"
+        );
+
+        prev_fee = quote;
+    }
+
+    assert_eq!(
+        prev_fee, 0,
+        "fee must be 0 with full tier + volume discount"
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  §N — Boundary Arithmetic Precision
+//
+//  Invariant P26: Exact arithmetic spot-checks at critical BPS boundaries
+//                 — ensures integer truncation is deterministic.
+//  Invariant P27: Fee on maximum valid base (1 trillion) does not overflow.
+//  Invariant P28: A minimal positive discount (1 bps) strictly reduces
+//                 the fee for bases ≥ 10_000 (enough to survive truncation).
+// ════════════════════════════════════════════════════════════════════
+
+/// Spot-check table: (base_fee, tier_bps, vol_bps, expected_fee)
+///
+/// Formula: base × (10_000 − tier) × (10_000 − vol) / 100_000_000
+const ARITHMETIC_SPOT_CHECKS: &[(i128, u32, u32, i128)] = &[
+    // Zero base always yields zero.
+    (0, 0, 0, 0),
+    (0, 5_000, 5_000, 0),
+    (0, 10_000, 10_000, 0),
+    // No discounts: fee = base.
+    (1_000_000, 0, 0, 1_000_000),
+    (999_999_999, 0, 0, 999_999_999),
+    // Single-bps tier discount:
+    //   1_000_000 × 9_999 × 10_000 / 100_000_000 = 999_900
+    (1_000_000, 1, 0, 999_900),
+    // Single-bps volume discount (symmetric):
+    (1_000_000, 0, 1, 999_900),
+    // Both 1 bps:
+    //   1_000_000 × 9_999 × 9_999 / 100_000_000 = 999_800 (truncation)
+    (1_000_000, 1, 1, 999_800),
+    // Near-full tier discount (9_999 bps):
+    //   1_000_000 × 1 × 10_000 / 100_000_000 = 100
+    (1_000_000, 9_999, 0, 100),
+    // Full tier discount → 0.
+    (1_000_000, 10_000, 0, 0),
+    // Full volume discount → 0.
+    (1_000_000, 0, 10_000, 0),
+    // Both full → 0.
+    (1_000_000, 10_000, 10_000, 0),
+    // 50% × 50% = 25% effective:
+    //   1_000_000 × 5_000 × 5_000 / 100_000_000 = 250_000
+    (1_000_000, 5_000, 5_000, 250_000),
+    // Worked example from docs (20% tier + 10% volume = 72% effective):
+    //   1_000_000 × 8_000 × 9_000 / 100_000_000 = 720_000
+    (1_000_000, 2_000, 1_000, 720_000),
+    // Large base, moderate discounts (40% tier + 20% volume = 48% effective):
+    //   100_000_000 × 6_000 × 8_000 / 100_000_000 = 48_000_000
+    (100_000_000, 4_000, 2_000, 48_000_000),
+];
+
+/// P26: Exact arithmetic spot-checks covering critical boundary values.
+///
+/// Any deviation indicates a regression in the fee calculation formula.
+#[test]
+fn prop_arithmetic_boundary_spot_checks() {
+    for &(base, tier, vol, expected) in ARITHMETIC_SPOT_CHECKS {
+        let actual = compute_fee(base, tier, vol);
+        assert_eq!(
+            actual, expected,
+            "compute_fee({base}, {tier}, {vol}) = {actual}, expected {expected}"
+        );
+    }
+}
+
+/// P27: No overflow on maximum safe base fee (1 trillion stroops).
+///
+/// Maximum intermediate: 1_000_000_000_000 × 10_000 × 10_000 = 10^20
+/// i128::MAX ≈ 1.7 × 10^38 → safely within range.
+#[test]
+fn prop_no_overflow_at_max_base() {
+    let max_base: i128 = 1_000_000_000_000;
+    for &(tier, vol) in &[(0u32, 0u32), (0, 10_000), (10_000, 0), (10_000, 10_000)] {
+        let fee = compute_fee(max_base, tier, vol);
+        assert!(
+            fee >= 0 && fee <= max_base,
+            "overflow or bound violation at base={max_base}, tier={tier}, vol={vol}: fee={fee}"
+        );
+    }
+}
+
+/// P28: A minimal positive discount (1 bps) strictly reduces the fee
+/// when the base is large enough (≥ 10_000) to survive integer truncation.
+#[test]
+fn prop_minimal_discount_strictly_reduces_fee() {
+    let bases: &[i128] = &[10_000, 100_000, 1_000_000, 100_000_000, 1_000_000_000];
+    for &base in bases {
+        let full_fee = compute_fee(base, 0, 0);
+        let discounted_fee = compute_fee(base, 1, 0);
+        assert!(
+            discounted_fee < full_fee,
+            "1 bps discount must strictly reduce fee for base={}: full={}, discounted={}",
+            base,
+            full_fee,
+            discounted_fee
+        );
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  §O — Adversarial Fee Manipulation Resistance
+//
+//  Invariant P29: Valid tier assignments (0–10_000 bps) never produce
+//                 a fee above the base fee.
+//  Invariant P30: Toggling fees on/off produces deterministic quotes.
+//  Invariant P31: A volume bracket with threshold=0 applies immediately
+//                 to all businesses (including new ones at count=0).
+//  Invariant P32: Rapid tier reassignment converges to the last assigned
+//                 tier — no intermediate state leakage.
+// ════════════════════════════════════════════════════════════════════
+
+/// P29: Tier assignment cannot inflate fees beyond the base fee.
+///
+/// An adversary controlling the admin cannot use valid tier configurations
+/// (0–10_000 bps) to produce a fee above the base fee.
+#[test]
+fn prop_tier_assignment_cannot_inflate_fee() {
+    let base_fee: i128 = 500_000;
+    let (env, client, _admin, token_addr, _collector) = setup_with_fees(base_fee);
+    let business = Address::generate(&env);
+    mint(&env, &token_addr, &business, base_fee * 10);
+
+    for discount_bps in (0u32..=10_000).step_by(500) {
+        client.set_tier_discount(&99u32, &discount_bps);
+        client.set_business_tier(&business, &99u32);
+        let quote = client.get_fee_quote(&business);
+        assert!(
+            quote <= base_fee,
+            "discount={discount_bps} bps produced fee={quote} > base_fee={base_fee}"
+        );
+        assert!(
+            quote >= 0,
+            "discount={discount_bps} bps produced negative fee={quote}"
+        );
+    }
+}
+
+/// P30: Toggling fees on/off produces fully deterministic, idempotent quotes.
+///
+/// When enabled:  quote = compute_fee(base, tier, vol)
+/// When disabled: quote = 0
+/// Re-enabling restores exactly the original quote.
+#[test]
+fn prop_fee_toggle_determinism() {
+    let base_fee: i128 = 1_000_000;
+    let (env, client, _admin, _token_addr, _collector) = setup_with_fees(base_fee);
+    let business = Address::generate(&env);
+
+    client.set_tier_discount(&1u32, &2_000u32);
+    client.set_business_tier(&business, &1u32);
+
+    let soroban_thresholds = vec![&env, 0u64];
+    let soroban_discounts = vec![&env, 1_000u32];
+    client.set_volume_brackets(&soroban_thresholds, &soroban_discounts);
+
+    // Expected fee: 1_000_000 × 0.80 × 0.90 = 720_000
+    let expected_fee = compute_fee(base_fee, 2_000, 1_000);
+
+    for cycle in 0..5u32 {
+        client.set_fee_enabled(&true);
+        let enabled_quote = client.get_fee_quote(&business);
+        assert_eq!(
+            enabled_quote, expected_fee,
+            "cycle={cycle}: enabled quote={enabled_quote} != expected={expected_fee}"
+        );
+
+        client.set_fee_enabled(&false);
+        let disabled_quote = client.get_fee_quote(&business);
+        assert_eq!(
+            disabled_quote, 0,
+            "cycle={cycle}: disabled quote must be 0, got {disabled_quote}"
+        );
+    }
+}
+
+/// P31: A volume bracket with threshold=0 applies to all businesses immediately
+/// (even a new business with count=0).
+///
+/// Tests the edge case in `volume_discount_for_count` where the first bracket
+/// has threshold 0.
+#[test]
+fn prop_zero_threshold_volume_bracket_applies_immediately() {
+    let base_fee: i128 = 1_000_000;
+    let (env, client, _admin, token_addr, _collector) = setup_with_fees(base_fee);
+
+    let soroban_thresholds = vec![&env, 0u64];
+    let soroban_discounts = vec![&env, 3_000u32]; // 30% off
+    client.set_volume_brackets(&soroban_thresholds, &soroban_discounts);
+
+    let business = Address::generate(&env);
+    let expected = compute_fee(base_fee, 0, 3_000); // 700_000
+
+    let quote = client.get_fee_quote(&business);
+    assert_eq!(
+        quote, expected,
+        "zero-threshold bracket must apply immediately: quote={quote}, expected={expected}"
+    );
+
+    // Verify the actual submission charges exactly this amount.
+    mint(&env, &token_addr, &business, base_fee * 2);
+    let before = token_balance(&env, &token_addr, &business);
+    let period = String::from_str(&env, "ZERO-THRESH");
+    let root = BytesN::from_array(&env, &[77u8; 32]);
+    client.submit_attestation(
+        &business, &period, &root, &1_000_000, &1, &0i128, &None, &None,
+    );
+    let after = token_balance(&env, &token_addr, &business);
+    assert_eq!(
+        before - after,
+        expected,
+        "zero-threshold bracket must produce correct charge on submit"
+    );
+}
+
+/// P32: Multiple rapid tier reassignments converge to the last assigned tier.
+///
+/// No intermediate tier state must leak into the fee quote.
+#[test]
+fn prop_tier_reassignment_no_state_leakage() {
+    let base_fee: i128 = 1_000_000;
+    let (env, client, _admin, _token_addr, _collector) = setup_with_fees(base_fee);
+    let business = Address::generate(&env);
+
+    let tiers: &[(u32, u32)] = &[(0, 0), (1, 1_000), (2, 5_000), (3, 10_000)];
+    for &(tier, disc) in tiers {
+        client.set_tier_discount(&tier, &disc);
+    }
+
+    // Cycle through tiers in arbitrary order; settle on tier 2.
+    for &t in &[3u32, 1, 0, 2, 3, 0, 1, 2] {
+        client.set_business_tier(&business, &t);
+    }
+
+    let final_quote = client.get_fee_quote(&business);
+    let expected = compute_fee(base_fee, 5_000, 0); // 500_000
+
+    assert_eq!(
+        final_quote, expected,
+        "after rapid reassignment, final quote={final_quote} must equal expected={expected}"
+    );
+
+    let stored_tier = client.get_business_tier(&business);
+    assert_eq!(stored_tier, 2, "stored tier must be 2 (last assigned)");
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  §P — Regression and Determinism Tests
+//
+//  Invariant P33: Multi-business simulation revenue is always reproducible.
+//  Invariant P34: The documented worked example from attestation-dynamic-fees.md
+//                 produces exactly 720_000 stroops.
+//  Invariant P35: `get_fee_quote` is idempotent — no side effects.
+// ════════════════════════════════════════════════════════════════════
+
+/// P34: The exact worked example from `docs/attestation-dynamic-fees.md`
+/// produces the documented result of 720_000 stroops.
+///
+/// Pure arithmetic:
+///   1_000_000 × (10_000 − 2_000) × (10_000 − 1_000) / 100_000_000
+///   = 1_000_000 × 8_000 × 9_000 / 100_000_000
+///   = 720_000
+///
+/// Contract state: tier 1 = 20% discount, volume bracket ≥10 = 10% discount,
+/// business has made 12 submissions (≥10 threshold active).
+#[test]
+fn prop_regression_docs_worked_example() {
+    // Pure arithmetic layer.
+    let result = compute_fee(1_000_000, 2_000, 1_000);
+    assert_eq!(
+        result, 720_000,
+        "compute_fee docs worked example must return 720_000"
+    );
+
+    // Contract layer: reproduce the docs scenario end-to-end.
+    let (env, client, _admin, token_addr, _collector) = setup_with_fees(1_000_000);
+
+    client.set_tier_discount(&1u32, &2_000u32); // 20%
+
+    let soroban_thresholds = vec![&env, 10u64];
+    let soroban_discounts = vec![&env, 1_000u32]; // 10%
+    client.set_volume_brackets(&soroban_thresholds, &soroban_discounts);
+
+    let business = Address::generate(&env);
+    client.set_business_tier(&business, &1u32);
+    mint(&env, &token_addr, &business, 1_000_000 * 25);
+
+    // Submit 12 attestations → count = 12 (≥10 bracket active).
+    for i in 0u64..12 {
+        let period = String::from_str(&env, &std::format!("DOC-EX-{i:03}"));
+        let root = BytesN::from_array(&env, &[(i % 256) as u8; 32]);
+        client.submit_attestation(
+            &business,
+            &period,
+            &root,
+            &1_700_000_000,
+            &1,
+            &0i128,
+            &None,
+            &None,
+        );
+    }
+
+    let quote = client.get_fee_quote(&business);
+    assert_eq!(
+        quote, 720_000,
+        "contract fee quote at count=12 must match docs worked example: got {quote}"
+    );
+}
+
+/// P35: `get_fee_quote` is idempotent — repeated calls return the same value
+/// and the business count must not change.
+#[test]
+fn prop_get_fee_quote_is_idempotent() {
+    let base_fee: i128 = 750_000;
+    let (env, client, _admin, _token_addr, _collector) = setup_with_fees(base_fee);
+
+    client.set_tier_discount(&1u32, &1_500u32);
+    let business = Address::generate(&env);
+    client.set_business_tier(&business, &1u32);
+
+    let soroban_thresholds = vec![&env, 0u64];
+    let soroban_discounts = vec![&env, 1_000u32];
+    client.set_volume_brackets(&soroban_thresholds, &soroban_discounts);
+
+    let first_quote = client.get_fee_quote(&business);
+
+    for call_idx in 0..10u32 {
+        let repeat_quote = client.get_fee_quote(&business);
+        assert_eq!(
+            repeat_quote, first_quote,
+            "get_fee_quote must be idempotent: call {call_idx} returned {repeat_quote} != {first_quote}"
+        );
+        assert_eq!(
+            client.get_business_count(&business),
+            0,
+            "get_fee_quote must not mutate business count (call {call_idx})"
+        );
+    }
+}
+
+/// P33: Protocol revenue regression — a reproducible multi-business simulation
+/// must always yield exactly the same total.
+///
+/// Configuration:
+///   - 3 businesses: Standard (0%), Professional (15%), Enterprise (30%)
+///   - Volume brackets: ≥5 → 5%, ≥10 → 10%
+///   - Base fee: 1_000_000 stroops, 12 attestations each
+///
+/// Pre-calculated expected totals:
+///
+///   Standard (0% tier):
+///     Attestations 1–5   (count 0–4): 1_000_000 × 1.00 × 1.00 = 1_000_000 × 5  = 5_000_000
+///     Attestations 6–10  (count 5–9): 1_000_000 × 1.00 × 0.95 =   950_000 × 5  = 4_750_000
+///     Attestations 11–12 (count 10+): 1_000_000 × 1.00 × 0.90 =   900_000 × 2  = 1_800_000
+///     Total = 11_550_000
+///
+///   Professional (15% tier):
+///     Attestations 1–5:  1_000_000 × 0.85 × 1.00 = 850_000 × 5 = 4_250_000
+///     Attestations 6–10: 1_000_000 × 0.85 × 0.95 = 807_500 × 5 = 4_037_500
+///     Attestations 11–12:1_000_000 × 0.85 × 0.90 = 765_000 × 2 = 1_530_000
+///     Total = 9_817_500
+///
+///   Enterprise (30% tier):
+///     Attestations 1–5:  1_000_000 × 0.70 × 1.00 = 700_000 × 5 = 3_500_000
+///     Attestations 6–10: 1_000_000 × 0.70 × 0.95 = 665_000 × 5 = 3_325_000
+///     Attestations 11–12:1_000_000 × 0.70 × 0.90 = 630_000 × 2 = 1_260_000
+///     Total = 8_085_000
+///
+///   Grand total = 11_550_000 + 9_817_500 + 8_085_000 = 29_452_500
+#[test]
+fn prop_regression_protocol_revenue_determinism() {
+    let base_fee: i128 = 1_000_000;
+    let (env, client, _admin, token_addr, collector) = setup_with_fees(base_fee);
+
+    client.set_tier_discount(&0u32, &0u32);
+    client.set_tier_discount(&1u32, &1_500u32); // 15%
+    client.set_tier_discount(&2u32, &3_000u32); // 30%
+
+    let soroban_thresholds = vec![&env, 5u64, 10u64];
+    let soroban_discounts = vec![&env, 500u32, 1_000u32];
+    client.set_volume_brackets(&soroban_thresholds, &soroban_discounts);
+
+    let biz_standard = Address::generate(&env);
+    let biz_professional = Address::generate(&env);
+    let biz_enterprise = Address::generate(&env);
+
+    client.set_business_tier(&biz_standard, &0u32);
+    client.set_business_tier(&biz_professional, &1u32);
+    client.set_business_tier(&biz_enterprise, &2u32);
+
+    let mint_amount = base_fee * 20;
+    for biz in [&biz_standard, &biz_professional, &biz_enterprise] {
+        mint(&env, &token_addr, biz, mint_amount);
+    }
+
+    for i in 0u32..12 {
+        for (biz, prefix) in [
+            (&biz_standard, "S"),
+            (&biz_professional, "P"),
+            (&biz_enterprise, "E"),
+        ] {
+            let period = String::from_str(&env, &std::format!("{prefix}-{i:03}"));
+            let root = BytesN::from_array(&env, &[(i % 256) as u8; 32]);
+            client.submit_attestation(
+                biz,
+                &period,
+                &root,
+                &1_700_000_000,
+                &1,
+                &0i128,
+                &None,
+                &None,
+            );
+        }
+    }
+
+    assert_eq!(client.get_business_count(&biz_standard), 12);
+    assert_eq!(client.get_business_count(&biz_professional), 12);
+    assert_eq!(client.get_business_count(&biz_enterprise), 12);
+
+    let standard_spent = mint_amount - token_balance(&env, &token_addr, &biz_standard);
+    let pro_spent = mint_amount - token_balance(&env, &token_addr, &biz_professional);
+    let ent_spent = mint_amount - token_balance(&env, &token_addr, &biz_enterprise);
+
+    assert_eq!(
+        standard_spent, 11_550_000,
+        "Standard total spend regression"
+    );
+    assert_eq!(pro_spent, 9_817_500, "Professional total spend regression");
+    assert_eq!(ent_spent, 8_085_000, "Enterprise total spend regression");
+
+    let total_revenue = token_balance(&env, &token_addr, &collector);
+    assert_eq!(
+        total_revenue, 29_452_500,
+        "Protocol revenue regression: expected 29_452_500, got {total_revenue}"
+    );
+
+    // Verify monotonicity across tiers at the final quote (count=12, vol disc=10%).
+    let std_next = client.get_fee_quote(&biz_standard);
+    let pro_next = client.get_fee_quote(&biz_professional);
+    let ent_next = client.get_fee_quote(&biz_enterprise);
+
+    assert_eq!(
+        std_next,
+        compute_fee(base_fee, 0, 1_000),
+        "Standard next-quote regression"
+    );
+    assert_eq!(
+        pro_next,
+        compute_fee(base_fee, 1_500, 1_000),
+        "Professional next-quote regression"
+    );
+    assert_eq!(
+        ent_next,
+        compute_fee(base_fee, 3_000, 1_000),
+        "Enterprise next-quote regression"
+    );
+
+    // Cross-tier monotonicity: higher tier → lower fee.
+    assert!(std_next >= pro_next, "Standard ≥ Professional fee");
+    assert!(pro_next >= ent_next, "Professional ≥ Enterprise fee");
 }

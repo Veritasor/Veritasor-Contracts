@@ -20,14 +20,14 @@ fn setup() -> (Env, AttestationContractClient<'static>, Address) {
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    client.initialize(&admin, &0u64);
     (env, client, admin)
 }
 
 fn setup_with_short_rotation_config() -> (Env, AttestationContractClient<'static>, Address) {
     let (env, client, admin) = setup();
     // Set short timelock for testing: 10 ledgers timelock, 20 window, 5 cooldown
-    client.configure_key_rotation(&10u32, &20u32, &5u32);
+    client.configure_key_rotation(&10u32, &20u32, &5u32, &10u32);
     (env, client, admin)
 }
 
@@ -38,7 +38,7 @@ fn setup_with_multisig() -> (
     Vec<Address>,
 ) {
     let (env, client, admin) = setup();
-    client.configure_key_rotation(&10u32, &20u32, &5u32);
+    client.configure_key_rotation(&10u32, &20u32, &5u32, &10u32);
 
     let owner2 = Address::generate(&env);
     let owner3 = Address::generate(&env);
@@ -58,7 +58,7 @@ fn setup_with_multisig() -> (
 #[test]
 fn test_configure_key_rotation() {
     let (_env, client, _admin) = setup();
-    client.configure_key_rotation(&100u32, &200u32, &50u32);
+    client.configure_key_rotation(&100u32, &200u32, &50u32, &100u32);
 
     let config = client.get_key_rotation_config();
     assert_eq!(config.timelock_ledgers, 100);
@@ -168,13 +168,14 @@ fn test_emergency_rotation_via_multisig() {
     let proposal_id = client.create_proposal(
         &admin,
         &ProposalAction::EmergencyRotateAdmin(new_admin.clone()),
+        &0u64,
     );
 
     // Second owner approves (threshold = 2)
-    client.approve_proposal(&owner2, &proposal_id);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
 
     // Execute
-    client.execute_proposal(&admin, &proposal_id);
+    client.execute_proposal(&admin, &proposal_id, &0u64);
 
     // Verify admin transferred
     assert_eq!(client.get_admin(), new_admin);
@@ -191,9 +192,10 @@ fn test_emergency_rotation_records_history() {
     let proposal_id = client.create_proposal(
         &admin,
         &ProposalAction::EmergencyRotateAdmin(new_admin.clone()),
+        &0u64,
     );
-    client.approve_proposal(&owner2, &proposal_id);
-    client.execute_proposal(&admin, &proposal_id);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &0u64);
 
     assert_eq!(client.get_key_rotation_count(), 1);
     let history = client.get_key_rotation_history();
@@ -216,9 +218,10 @@ fn test_emergency_rotation_clears_pending_planned() {
     let proposal_id = client.create_proposal(
         &admin,
         &ProposalAction::EmergencyRotateAdmin(emergency_new.clone()),
+        &0u64,
     );
-    client.approve_proposal(&owner2, &proposal_id);
-    client.execute_proposal(&admin, &proposal_id);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &0u64);
 
     assert!(!client.has_pending_key_rotation());
     assert_eq!(client.get_admin(), emergency_new);

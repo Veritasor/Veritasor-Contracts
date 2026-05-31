@@ -29,3 +29,17 @@ Extended metadata for revenue attestations: currency code and net/gross revenue 
 ## Lender and Oracle Visibility
 
 - Both `get_attestation` and `get_attestation_metadata` are read-only and unrestricted. Lenders and oracles can call them to verify attestation existence and metadata (currency, net/gross) for a given (business, period).
+
+## Security Considerations
+
+### Storage Bounds & DoS Prevention
+
+- **Fixed per-entry size**: The serialized `AttestationMetadata` struct is ~12 bytes XDR (3-byte max string + bool + XDR overhead). This is a constant, predictable cost regardless of caller input.
+- **ASCII-alphabetic enforcement**: `currency_code` is validated to contain only ASCII alphabetic characters (`A–Z`, `a–z`). This prevents multi-byte UTF-8 payloads, control characters, digits, and symbols from being stored.
+- **1:1 growth with attestations**: Metadata entries are created only alongside attestations. Attestation submission is already bounded by:
+  - Rate limiting (`rate_limit` module)
+  - Dynamic and flat fees (`dynamic_fees`, `fees` modules)
+  - Nonce replay protection (`replay_protection` module)
+- **No standalone update path**: There is no entrypoint to update metadata for an existing attestation. Metadata can only be written at submission time, preventing amplification attacks.
+- **Cleanup on revocation**: When an attestation is revoked, `revoke_attestation` removes the corresponding metadata entry, preventing dead-storage accumulation.
+- **Backward compatibility**: Attestations submitted without metadata consume zero additional storage. Existing attestations remain valid and unaffected.

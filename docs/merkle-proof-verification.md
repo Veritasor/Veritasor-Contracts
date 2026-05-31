@@ -41,6 +41,7 @@ let is_valid = verify_merkle_proof(&env, &root, &leaf, &proof);
 
 - **Canonical Ordering**: Sorting hashes at each level ensures a deterministic path regardless of whether a node is a left or right child.
 - **Unbalanced Trees**: This approach handles unbalanced trees safely.
+- **Length Bounds**: The contract enforces a maximum Merkle proof length limit (`MAX_TREE_DEPTH = 64`) to prevent infinite loop or out-of-gas vulnerabilities during on-chain verification.
 - **On-chain Costs**: Implementation is optimized to minimize memory allocations in the Soroban VM, using `Bytes` buffer only for concatenation before hashing.
 
 ## Example Proof Generation (Off-chain)

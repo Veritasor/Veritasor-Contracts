@@ -156,8 +156,12 @@ pub fn reactivate_business(env: &Env, caller: &Address, business: &Address) {
 
 // Replace the tag set on a business record. Caller must hold `ROLE_ADMIN`.
 //
-// Valid for businesses in any lifecycle state.
+// Valid for businesses in any lifecycle state (Pending, Active, Suspended).
 // Panics if `business` is not registered.
+//
+// Security: intentionally does not gate on status so admins can tag
+// businesses for compliance review even while suspended. The tag set
+// carries no authorization weight — it is metadata only.
 pub fn update_tags(env: &Env, caller: &Address, business: &Address, tags: Vec<Symbol>) {
     access_control::require_admin(env, caller);
 

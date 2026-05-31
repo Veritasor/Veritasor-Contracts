@@ -17,10 +17,14 @@
 //! - Readable by attestation and lender contracts
 
 use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec};
-
-// ════════════════════════════════════════════════════════════════════
-//  Storage Keys
-// ════════════════════════════════════════════════════════════════════
+const BUSINESS_CONFIG_SCHEMA_VERSION: u32 = 1;
+const DEFAULT_ANOMALY_ALERT_THRESHOLD: u32 = 70;
+const DEFAULT_ANOMALY_BLOCK_THRESHOLD: u32 = 90;
+const DEFAULT_EXPIRY_SECONDS: u64 = 31_536_000; // 1 year
+const DEFAULT_GRACE_PERIOD_SECONDS: u64 = 2_592_000; // 30 days
+                                                     // ════════════════════════════════════════════════════════════════════
+                                                     //  Storage Keys
+                                                     // ════════════════════════════════════════════════════════════════════
 
 #[contracttype]
 #[derive(Clone)]
@@ -33,6 +37,8 @@ pub enum ConfigKey {
     GlobalDefaults,
     /// Initialization flag
     Initialized,
+    /// Anchor (immutability) locks per business
+    AnchorConfig(Address),
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -103,12 +109,31 @@ pub struct ComplianceConfig {
     pub metadata_required: bool,
 }
 
+/// Anchor configuration — tracks which config sections are immutably locked.
+/// Once a field is set to `true`, it cannot be reverted to `false`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnchorConfig {
+    /// Whether the anomaly policy is immutably anchored
+    pub anomaly_policy_anchored: bool,
+    /// Whether integration requirements are immutably anchored
+    pub integrations_anchored: bool,
+    /// Whether the expiry configuration is immutably anchored
+    pub expiry_anchored: bool,
+    /// Whether the custom fee configuration is immutably anchored
+    pub custom_fees_anchored: bool,
+    /// Whether the compliance configuration is immutably anchored
+    pub compliance_anchored: bool,
+}
+
 /// Complete business configuration
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct BusinessConfig {
     /// Business address this config applies to
     pub business: Address,
+    /// Schema version for compatibility and migration tracking
+    pub schema_version: u32,
     /// Anomaly detection policy
     pub anomaly_policy: AnomalyPolicy,
     /// Integration requirements
@@ -119,7 +144,7 @@ pub struct BusinessConfig {
     pub custom_fees: CustomFeeConfig,
     /// Compliance requirements
     pub compliance: ComplianceConfig,
-    /// Configuration version for migration tracking
+    /// Configuration instance version for update tracking
     pub version: u32,
     /// Timestamp when config was created
     pub created_at: u64,
@@ -134,6 +159,7 @@ pub struct BusinessConfig {
 const TOPIC_CONFIG_SET: Symbol = symbol_short!("cfg_set");
 const TOPIC_CONFIG_UPDATED: Symbol = symbol_short!("cfg_upd");
 const TOPIC_DEFAULTS_UPDATED: Symbol = symbol_short!("def_upd");
+const TOPIC_ANCHOR_SET: Symbol = symbol_short!("anc_set");
 
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -191,6 +217,11 @@ impl BusinessConfigContract {
     /// - `business`: Business address to configure
     /// - `config`: Complete configuration to apply
     ///
+    /// # Behavior
+    /// - Preserves `created_at` for existing configs
+    /// - Increments `version` on every update
+    /// - Rejects an existing config if it contains an unsupported `schema_version`
+    ///
     /// # Panics
     /// - If caller is not admin
     /// - If configuration values are invalid
@@ -208,14 +239,44 @@ impl BusinessConfigContract {
         Self::validate_anomaly_policy(&anomaly_policy);
         Self::validate_custom_fees(&custom_fees);
 
+        let anchor = Self::get_anchor_config_internal(&env, &business);
         let ts = env.ledger().timestamp();
         let existing = env
             .storage()
             .instance()
             .get::<ConfigKey, BusinessConfig>(&ConfigKey::BusinessConfig(business.clone()));
 
+        // Enforce anchor immutability on updates
+        if existing.is_some() {
+            assert!(
+                !anchor.anomaly_policy_anchored,
+                "anomaly policy is anchored and cannot be modified"
+            );
+            assert!(
+                !anchor.integrations_anchored,
+                "integrations config is anchored and cannot be modified"
+            );
+            assert!(
+                !anchor.expiry_anchored,
+                "expiry config is anchored and cannot be modified"
+            );
+            assert!(
+                !anchor.custom_fees_anchored,
+                "custom fees config is anchored and cannot be modified"
+            );
+            assert!(
+                !anchor.compliance_anchored,
+                "compliance config is anchored and cannot be modified"
+            );
+        }
+
         let (version, created_at) = match existing {
             Some(old) => {
+                assert!(
+                    old.schema_version <= BUSINESS_CONFIG_SCHEMA_VERSION,
+                    "unsupported business config schema version"
+                );
+
                 env.events().publish(
                     (TOPIC_CONFIG_UPDATED, business.clone()),
                     ConfigUpdatedEvent {
@@ -242,6 +303,7 @@ impl BusinessConfigContract {
 
         let config = BusinessConfig {
             business: business.clone(),
+            schema_version: BUSINESS_CONFIG_SCHEMA_VERSION,
             anomaly_policy,
             integrations,
             expiry,
@@ -271,6 +333,10 @@ impl BusinessConfigContract {
     ) {
         Self::require_admin(&env, &caller);
         Self::validate_anomaly_policy(&policy);
+        assert!(
+            !Self::get_anchor_config_internal(&env, &business).anomaly_policy_anchored,
+            "anomaly policy is anchored and cannot be modified"
+        );
 
         let mut config = Self::get_business_config_or_default(&env, &business);
         config.anomaly_policy = policy;
@@ -290,6 +356,10 @@ impl BusinessConfigContract {
         integrations: IntegrationRequirements,
     ) {
         Self::require_admin(&env, &caller);
+        assert!(
+            !Self::get_anchor_config_internal(&env, &business).integrations_anchored,
+            "integrations config is anchored and cannot be modified"
+        );
 
         let mut config = Self::get_business_config_or_default(&env, &business);
         config.integrations = integrations;
@@ -309,6 +379,10 @@ impl BusinessConfigContract {
         expiry: ExpiryConfig,
     ) {
         Self::require_admin(&env, &caller);
+        assert!(
+            !Self::get_anchor_config_internal(&env, &business).expiry_anchored,
+            "expiry config is anchored and cannot be modified"
+        );
 
         let mut config = Self::get_business_config_or_default(&env, &business);
         config.expiry = expiry;
@@ -329,6 +403,10 @@ impl BusinessConfigContract {
     ) {
         Self::require_admin(&env, &caller);
         Self::validate_custom_fees(&custom_fees);
+        assert!(
+            !Self::get_anchor_config_internal(&env, &business).custom_fees_anchored,
+            "custom fees config is anchored and cannot be modified"
+        );
 
         let mut config = Self::get_business_config_or_default(&env, &business);
         config.custom_fees = custom_fees;
@@ -348,6 +426,10 @@ impl BusinessConfigContract {
         compliance: ComplianceConfig,
     ) {
         Self::require_admin(&env, &caller);
+        assert!(
+            !Self::get_anchor_config_internal(&env, &business).compliance_anchored,
+            "compliance config is anchored and cannot be modified"
+        );
 
         let mut config = Self::get_business_config_or_default(&env, &business);
         config.compliance = compliance;
@@ -379,6 +461,7 @@ impl BusinessConfigContract {
         // Use caller address as placeholder for global defaults
         let defaults = BusinessConfig {
             business: caller.clone(),
+            schema_version: BUSINESS_CONFIG_SCHEMA_VERSION,
             anomaly_policy,
             integrations,
             expiry,
@@ -441,6 +524,8 @@ impl BusinessConfigContract {
     }
 
     /// Get global default configuration.
+    ///
+    /// If global defaults have not been set, returns a runtime safe default config.
     pub fn get_global_defaults(env: Env) -> BusinessConfig {
         env.storage()
             .instance()
@@ -457,8 +542,64 @@ impl BusinessConfigContract {
     }
 
     // ════════════════════════════════════════════════════════════════
+    //  Immutable Anchor Fields
+    // ════════════════════════════════════════════════════════════════
+
+    /// Anchor (lock) one or more configuration sections for a business.
+    /// Once a section is anchored it can never be updated again.
+    ///
+    /// # Parameters
+    /// - `caller`: Admin address
+    /// - `business`: Business whose config sections to anchor
+    /// - `anchor`: Anchor flags — only `true` values are applied; a `false`
+    ///   value will **not** un-anchor a previously anchored section.
+    ///
+    /// # Panics
+    /// - If caller is not admin
+    pub fn set_anchor_config(env: Env, caller: Address, business: Address, anchor: AnchorConfig) {
+        Self::require_admin(&env, &caller);
+
+        let existing = Self::get_anchor_config_internal(&env, &business);
+
+        // Merge: once anchored, always anchored
+        let merged = AnchorConfig {
+            anomaly_policy_anchored: existing.anomaly_policy_anchored
+                || anchor.anomaly_policy_anchored,
+            integrations_anchored: existing.integrations_anchored || anchor.integrations_anchored,
+            expiry_anchored: existing.expiry_anchored || anchor.expiry_anchored,
+            custom_fees_anchored: existing.custom_fees_anchored || anchor.custom_fees_anchored,
+            compliance_anchored: existing.compliance_anchored || anchor.compliance_anchored,
+        };
+
+        env.storage()
+            .instance()
+            .set(&ConfigKey::AnchorConfig(business.clone()), &merged);
+
+        env.events().publish((TOPIC_ANCHOR_SET, business), merged);
+    }
+
+    /// Get the anchor configuration for a business.
+    /// Returns all-false if no anchors have been set.
+    pub fn get_anchor_config(env: Env, business: Address) -> AnchorConfig {
+        Self::get_anchor_config_internal(&env, &business)
+    }
+
+    // ════════════════════════════════════════════════════════════════
     //  Internal Helpers
     // ════════════════════════════════════════════════════════════════
+
+    fn get_anchor_config_internal(env: &Env, business: &Address) -> AnchorConfig {
+        env.storage()
+            .instance()
+            .get::<ConfigKey, AnchorConfig>(&ConfigKey::AnchorConfig(business.clone()))
+            .unwrap_or(AnchorConfig {
+                anomaly_policy_anchored: false,
+                integrations_anchored: false,
+                expiry_anchored: false,
+                custom_fees_anchored: false,
+                compliance_anchored: false,
+            })
+    }
 
     fn require_admin(env: &Env, caller: &Address) {
         caller.require_auth();
@@ -474,10 +615,18 @@ impl BusinessConfigContract {
         env.storage()
             .instance()
             .get::<ConfigKey, BusinessConfig>(&ConfigKey::BusinessConfig(business.clone()))
+            .map(|config| {
+                Self::validate_schema_version(&config);
+                config
+            })
             .unwrap_or_else(|| {
                 env.storage()
                     .instance()
-                    .get(&ConfigKey::GlobalDefaults)
+                    .get::<ConfigKey, BusinessConfig>(&ConfigKey::GlobalDefaults)
+                    .map(|config| {
+                        Self::validate_schema_version(&config);
+                        config
+                    })
                     .unwrap_or_else(|| Self::create_default_config(env))
             })
     }
@@ -488,9 +637,10 @@ impl BusinessConfigContract {
 
         BusinessConfig {
             business: contract_address,
+            schema_version: BUSINESS_CONFIG_SCHEMA_VERSION,
             anomaly_policy: AnomalyPolicy {
-                alert_threshold: 70,
-                block_threshold: 90,
+                alert_threshold: DEFAULT_ANOMALY_ALERT_THRESHOLD,
+                block_threshold: DEFAULT_ANOMALY_BLOCK_THRESHOLD,
                 required: false,
                 auto_revoke: false,
             },
@@ -500,9 +650,9 @@ impl BusinessConfigContract {
                 external_validation_required: false,
             },
             expiry: ExpiryConfig {
-                default_expiry_seconds: 31536000, // 1 year
+                default_expiry_seconds: DEFAULT_EXPIRY_SECONDS,
                 enforce_expiry: false,
-                grace_period_seconds: 2592000, // 30 days
+                grace_period_seconds: DEFAULT_GRACE_PERIOD_SECONDS,
             },
             custom_fees: CustomFeeConfig {
                 base_fee_override: None,
@@ -516,9 +666,14 @@ impl BusinessConfigContract {
                 metadata_required: false,
             },
             version: 0,
-            created_at: 0,
-            updated_at: 0,
+            created_at: env.ledger().timestamp(),
+            updated_at: env.ledger().timestamp(),
         }
+    }
+
+    /// Returns the current contract schema version for business config objects.
+    pub fn get_schema_version(_env: Env) -> u32 {
+        BUSINESS_CONFIG_SCHEMA_VERSION
     }
 
     fn validate_anomaly_policy(policy: &AnomalyPolicy) {
@@ -543,6 +698,13 @@ impl BusinessConfigContract {
         if let Some(fee) = fees.base_fee_override {
             assert!(fee >= 0, "base fee cannot be negative");
         }
+    }
+
+    fn validate_schema_version(config: &BusinessConfig) {
+        assert!(
+            config.schema_version <= BUSINESS_CONFIG_SCHEMA_VERSION,
+            "unsupported business config schema version"
+        );
     }
 }
 

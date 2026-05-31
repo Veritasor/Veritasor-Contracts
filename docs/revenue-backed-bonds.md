@@ -233,6 +233,8 @@ fn get_admin(env: Env) -> Address
 
 **Mechanism**: Before processing redemption, check if `Redemption(bond_id, period)` exists. If it does, abort with "already redeemed for period". On successful redemption, store the redemption record to block future attempts.
 
+**Operational note**: This invariant is enforced on the exact period string key. Equivalent human periods represented with different strings are treated as distinct keys.
+
 ### 2. Attestation Verification
 
 **Invariant**: All redemptions require verified, non-revoked attestations.
@@ -300,6 +302,8 @@ The contract includes comprehensive tests covering:
 
 ### Multi-Period & State Management
 - `test_multiple_period_redemptions`: Verify multiple periods redeem independently
+- `test_redemption_continues_after_maturity_period_drift`: Verify redemption remains valid past expected maturity periods
+- `test_redemption_allows_out_of_order_period_drift`: Verify out-of-order period strings redeem independently
 - `test_full_redemption`: Verify status transition to fully redeemed
 - `test_early_redemption_scenario`: Verify early full repayment
 
@@ -413,6 +417,18 @@ Expected number of periods until full repayment. Not enforced by contract (bonds
 - Investor yield calculations
 - Issuer financial planning
 - Default risk assessment
+
+#### Maturity and Redemption Drift Assumptions
+
+`maturity_periods` is informational and does not gate `redeem`.
+
+Expected behavior:
+- Redemptions may continue after the expected maturity window while bond status is `Active`
+- Redemptions may arrive out of chronological order across period strings
+- Face-value capping and period-level double-spend prevention still apply
+
+Security assumption:
+- Integrators should enforce a canonical period format (for example `YYYY-MM`) across attestation and redemption services to avoid semantic duplicates represented by different strings.
 
 ## Risk Factors
 

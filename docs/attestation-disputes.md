@@ -279,6 +279,103 @@ contract.close_dispute(dispute_id);
 - `"dispute is not open"`
 - `"dispute is not resolved"`
 
+## Revocation/Dispute State Transitions
+
+The dispute mechanism interacts with the attestation revocation system. Understanding these state transitions is critical for correct system behavior.
+
+### State Transition Matrix
+
+| Attestation State | Dispute State | Allowed Actions |
+|-------------------|---------------|-----------------|
+| Active | None | open_dispute, revoke_attestation |
+| Active | Open | resolve_dispute, revoke_attestation |
+| Active | Resolved | close_dispute, revoke_attestation |
+| Active | Closed | revoke_attestation |
+| Revoked | None | None (cannot dispute) |
+| Revoked | Open | resolve_dispute, close_dispute |
+| Revoked | Resolved | close_dispute |
+| Revoked | Closed | None |
+
+### Key Behaviors
+
+#### Opening Disputes on Revoked Attestations
+- **Not Allowed**: Once an attestation is revoked, new disputes cannot be opened
+- **Rationale**: A revoked attestation is no longer considered valid, so challenging it serves no purpose
+- **Error**: Attempting to open a dispute on a revoked attestation will fail validation
+
+#### Revocation During Active Disputes
+- **Allowed**: An attestation can be revoked even while disputes are open
+- **Behavior**: Existing disputes remain intact and can still be resolved/closed
+- **Use Case**: Business discovers error and revokes regardless of ongoing challenges
+
+#### Dispute Resolution After Revocation
+- **Allowed**: Open disputes can still be resolved after the attestation is revoked
+- **Rationale**: Dispute resolution may still be relevant for audit trails, reputation, or slashing
+- **Outcome Recording**: Resolution outcome is preserved regardless of revocation state
+
+#### Dispute History Preservation
+- **Guaranteed**: Revocation does not delete or hide dispute history
+- **Queryable**: All dispute records remain accessible via `get_dispute`, `get_disputes_by_attestation`, and `get_disputes_by_challenger`
+- **Audit Trail**: Complete chronological history is maintained
+
+### State Transition Scenarios
+
+#### Scenario 1: Dispute Then Revoke
+```
+1. Submit attestation     → Attestation: Active
+2. Open dispute           → Dispute: Open
+3. Revoke attestation     → Attestation: Revoked, Dispute: Open
+4. Resolve dispute        → Attestation: Revoked, Dispute: Resolved
+5. Close dispute          → Attestation: Revoked, Dispute: Closed
+```
+
+#### Scenario 2: Revoke Then Attempt Dispute
+```
+1. Submit attestation     → Attestation: Active
+2. Revoke attestation     → Attestation: Revoked
+3. Attempt open dispute   → FAILS: Cannot dispute revoked attestation
+```
+
+#### Scenario 3: Complete Dispute Lifecycle Then Revoke
+```
+1. Submit attestation     → Attestation: Active
+2. Open dispute           → Dispute: Open
+3. Resolve dispute        → Dispute: Resolved
+4. Close dispute          → Dispute: Closed
+5. Revoke attestation     → Attestation: Revoked (dispute history preserved)
+```
+
+#### Scenario 4: Multiple Challengers Then Revoke
+```
+1. Submit attestation     → Attestation: Active
+2. Challenger A disputes  → Dispute A: Open
+3. Challenger B disputes  → Dispute B: Open
+4. Revoke attestation     → Attestation: Revoked, both disputes remain Open
+5. Resolve both disputes  → Both disputes: Resolved
+```
+
+### Security Invariants
+
+1. **Revocation Finality**: Once revoked, an attestation remains revoked; cannot be "unrevoked"
+2. **Dispute Isolation**: Disputes for different periods are independent
+3. **State Consistency**: Revocation state and dispute state are stored separately and cannot corrupt each other
+4. **History Immutability**: Neither revocation nor dispute resolution modifies the original attestation data
+
+### Testing Coverage
+
+The state transition tests in `contracts/attestation/src/revocation_test.rs` verify:
+- Dispute on revoked attestation fails
+- Revocation with open dispute succeeds
+- Revocation with resolved dispute succeeds
+- Full dispute lifecycle then revocation
+- Multiple challengers before revocation
+- Dispute resolution after revocation
+- Revocation preserves dispute history
+- State consistency across operations
+- Independent periods remain separate
+- Dispute outcome recorded before revocation
+- No new disputes after revocation
+
 ## Testing
 
 The dispute mechanism includes comprehensive tests covering:

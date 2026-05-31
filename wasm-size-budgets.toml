@@ -1,0 +1,131 @@
+# WASM Size Budgets for Veritasor Contracts
+#
+# This file defines size budgets (in bytes) for each contract's WASM binary.
+# CI will fail if any contract's WASM exceeds its budget.
+#
+# Budgets are set with a 20% tolerance above baseline to allow for reasonable
+# growth while catching significant regressions.
+#
+# Format:
+# [contract.<package-name>]
+# budget = <size-in-bytes>  # Hard limit
+# baseline = <size-in-bytes>  # Current baseline
+# warn_threshold = <percentage>  # Warn if exceeds baseline by this % (default: 10)
+# status = blocked|ok  # If blocked, provide reason in status_reason
+# status_reason = <description>  # Only needed if status=blocked
+#
+# Notes:
+# - Budgets must be updated when intentional changes increase size
+# - Growth > 20% above baseline should be justified and documented
+# - Debug symbols should never be included in production WASM
+
+[contract.veritasor-aggregated-attestations]
+budget = 100000
+baseline = 0
+status = blocked
+status_reason = requires-attestation-snapshot-compilation
+
+[contract.veritasor-attestation]
+budget = 100000
+baseline = 0
+status = blocked
+status_reason = syntax-errors-in-lib.rs-lines-866-910
+
+[contract.veritasor-attestation-registry]
+budget = 15000
+baseline = 9910
+warn_threshold = 10
+
+[contract.veritasor-attestation-snapshot]
+budget = 100000
+baseline = 0
+status = blocked
+status_reason = requires-attestation-wasm
+
+[contract.veritasor-attestor-staking]
+budget = 35000
+baseline = 25131
+warn_threshold = 10
+
+[contract.veritasor-audit-log]
+budget = 20000
+baseline = 11940
+warn_threshold = 10
+
+[contract.veritasor-business-config]
+budget = 50000
+baseline = 35925
+warn_threshold = 10
+
+[contract.veritasor-integration-registry]
+budget = 50000
+baseline = 35807
+warn_threshold = 10
+
+[contract.veritasor-lender-access-list]
+budget = 50000
+baseline = 0
+status = blocked
+status_reason = symbol-name-too-long-max-9-chars
+
+[contract.veritasor-lender-consumer]
+budget = 20000
+baseline = 12264
+warn_threshold = 10
+
+[contract.veritasor-network-config]
+budget = 50000
+baseline = 0
+status = blocked
+status_reason = struct-field-name-too-long-max-30-chars
+
+[contract.veritasor-protocol-dao]
+budget = 30000
+baseline = 18928
+warn_threshold = 10
+
+[contract.veritasor-protocol-simulation]
+budget = 50000
+baseline = 35983
+warn_threshold = 10
+
+[contract.veritasor-revenue-bonds]
+budget = 50000
+baseline = 0
+status = blocked
+status_reason = missing-symbol_short-macro
+
+[contract.veritasor-revenue-curve]
+budget = 30000
+baseline = 0
+status = blocked
+status_reason = missing-symbol_short-macro
+
+[contract.veritasor-revenue-share]
+budget = 50000
+baseline = 0
+status = blocked
+status_reason = missing-symbol_short-macro
+
+[contract.veritasor-revenue-stream]
+budget = 50000
+baseline = 0
+status = blocked
+status_reason = requires-snapshot-wasm
+
+[contract.veritasor-common]
+budget = 0
+baseline = 0
+status = blocked
+status_reason = shared-library-not-deployable
+
+[profile.release]
+# Release profile settings that affect WASM size
+opt-level = z
+overflow-checks = true
+debug = 0
+strip = symbols
+debug-assertions = false
+panic = abort
+codegen-units = 1
+lto = true

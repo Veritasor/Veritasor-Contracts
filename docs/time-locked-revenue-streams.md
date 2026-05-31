@@ -12,19 +12,20 @@ Contract that releases payments to beneficiaries when a referenced attestation e
 | `beneficiary`          | Address | Receives the stream amount. |
 | `token`                | Address | Token used for payment. |
 | `amount`               | i128    | Amount to release. |
+ | `cliff_timestamp`      | Option<u64> | Optional Unix timestamp after which release is allowed. |
 | `released`             | bool    | Whether the stream has been released. |
 
 ## Lifecycle
 
-1. **Create**: Admin calls **create_stream** with attestation contract, (business, period), beneficiary, token, and amount. The admin must have approved the contract to transfer `amount` from them; tokens are transferred from admin to the stream contract.
-2. **Release**: Anyone can call **release**(stream_id). The contract calls the attestation contract to ensure (business, period) exists and is not revoked. If so, it transfers `amount` from the stream contract to the beneficiary and sets `released = true`.
-3. **Failure modes**: If attestation is missing or revoked, **release** panics. Missed or delayed attestations simply delay release until the attestation is present and not revoked.
+1. **Create**: Admin calls **create_stream** with attestation contract, (business, period), beneficiary, token, amount, and optional cliff_timestamp. The admin must have approved the contract to transfer `amount` from them; tokens are transferred from admin to the stream contract.
+2. **Release**: Anyone can call **release**(stream_id). The contract checks if the cliff timestamp has been reached (if set), then calls the attestation contract to ensure (business, period) exists and is not revoked. If so, it transfers `amount` from the stream contract to the beneficiary and sets `released = true`.
+3. **Failure modes**: If cliff not reached, attestation is missing or revoked, **release** panics. Missed or delayed attestations simply delay release until the attestation is present, not revoked, and cliff is reached.
 
 ## API
 
 - **initialize**(admin): Sets admin.
-- **create_stream**(admin, attestation_contract, business, period, beneficiary, token, amount) → u64: Funds stream and returns stream id.
-- **release**(stream_id): Checks attestation and, if valid, pays beneficiary and marks stream released.
+- **create_stream**(admin, attestation_contract, business, period, beneficiary, token, amount, cliff_timestamp) → u64: Funds stream and returns stream id.
+- **release**(stream_id): Checks cliff and attestation and, if valid, pays beneficiary and marks stream released.
 - **get_stream**(stream_id) → `Option<Stream>`: Returns stream config and released flag.
 
 ## Integration with Settlement

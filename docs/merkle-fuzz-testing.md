@@ -54,6 +54,7 @@ The fuzzing tests intentionally generate malformed proofs by:
 3. **Proof Corruption**: Replacing proof elements with random data
 4. **Path Direction Flipping**: Inverting the proof path directions
 5. **Completely Random**: Generating entirely invalid proofs
+6. **Metadata Length Mismatch**: Desynchronizing `proof.len()` and `path.len()`
 
 ### Edge Cases Covered
 
@@ -64,6 +65,7 @@ The fuzzing tests intentionally generate malformed proofs by:
 | Maximum Leaves | Tree with 1000+ leaves |
 | Power of 2 | Tree sizes that are powers of 2 |
 | Power of 2 - 1 | Tree sizes just below powers of 2 |
+| Odd-Width Final Branch | Last leaf duplicated as its own sibling |
 | Duplicate Leaves | Multiple identical leaves |
 | All Zeros | Leaves with all zero bytes |
 | All Ones | Leaves with all 0xFF bytes |
@@ -206,16 +208,20 @@ All inputs are validated before processing:
 
 - Empty tree detection
 - Index bounds checking
-- Maximum depth enforcement
-- Proof length validation
+- Proof/path length equality validation
+- Deterministic rejection of malformed proofs via `MerkleError`
 
 ### Panic Prevention
 
-The implementation uses `catch_unwind` in fuzz tests to ensure:
+Malformed proof metadata should fail with `MerkleError::MalformedInput` rather than panicking.
 
-- No panics on malformed input
-- Graceful error handling
-- No unexpected crashes
+The fuzz harness now explicitly covers:
+
+- truncated path metadata
+- extra path metadata
+- odd-width final branches where the last leaf is duplicated as its own sibling
+- repeated verification of the same edge proof for deterministic behavior
+- `compute_root` consistency against `build_merkle_tree`
 
 ### Hash Algorithm
 
@@ -234,6 +240,17 @@ Potential enhancements for the fuzzing harness:
 3. **Cross-Contract Testing**: Test Merkle usage across contract boundaries
 4. **Performance Testing**: Add benchmarks for tree construction and verification
 5. **Differential Fuzzing**: Compare multiple implementations for consistency
+
+## Security Notes
+
+- Merkle verification must reject malformed branch metadata deterministically; panics on adversarial input are treated as correctness bugs.
+- Odd-width trees are expected to duplicate the final leaf at that level. The fuzz suite now asserts this behavior directly for the terminal branch.
+- The new coverage is test-only and does not add on-chain execution cost for production consumers of the shared utility.
+
+## Performance Notes
+
+- The added cases reuse the existing deterministic RNG and small bounded tree sizes.
+- Test runtime impact is minimal and does not affect contract gas usage because the changes are confined to the test harness plus one constant-time metadata validation in `verify_proof`.
 
 ## Example: Running a Complete Test Suite
 

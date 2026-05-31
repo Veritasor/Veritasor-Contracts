@@ -65,8 +65,12 @@ client.distribute_revenue(
 
 ## Documentation
 
-See [docs/revenue-share-distribution.md](../../docs/revenue-share-distribution.md) for complete documentation including:
+See the following for complete documentation:
 
+- [Revenue Share Distribution](../../docs/revenue-share-distribution.md) - Overview and API reference
+- [Revenue Share: Rounding Dust Determinism](../../docs/revenue-share-rounding.md) - **NEW** - Comprehensive rounding algorithm specification, with examples, security proofs, and operational implications
+
+Additional resources:
 - Distribution algorithm details
 - All contract methods
 - Security considerations
@@ -84,6 +88,7 @@ The contract includes comprehensive test coverage (>95%) covering:
 - ✅ Extreme allocations (3 tests)
 - ✅ Configuration updates (3 tests)
 - ✅ Query operations (3 tests)
+- ✅ **Rounding Dust Determinism** (10 NEW tests - prime numbers, odd stakeholder counts, edge cases, maximum scale, consistency verification)
 
 ### Test Results
 

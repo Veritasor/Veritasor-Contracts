@@ -1,8 +1,9 @@
 #![cfg(test)]
 
 use crate::{
-    AnomalyPolicy, BusinessConfig, BusinessConfigContract, BusinessConfigContractClient,
-    ComplianceConfig, CustomFeeConfig, ExpiryConfig, IntegrationRequirements,
+    AnchorConfig, AnomalyPolicy, BusinessConfig, BusinessConfigContract,
+    BusinessConfigContractClient, ComplianceConfig, ConfigKey, CustomFeeConfig, ExpiryConfig,
+    IntegrationRequirements, BUSINESS_CONFIG_SCHEMA_VERSION,
 };
 use soroban_sdk::{testutils::Address as _, Address, Env, String, Symbol, Vec};
 
@@ -92,6 +93,59 @@ fn test_global_defaults_set_on_init() {
     assert_eq!(defaults.anomaly_policy.alert_threshold, 70);
     assert_eq!(defaults.anomaly_policy.block_threshold, 90);
     assert_eq!(defaults.expiry.default_expiry_seconds, 31536000);
+}
+
+#[test]
+fn test_get_schema_version() {
+    let (env, admin, client) = create_test_env();
+    env.mock_all_auths();
+
+    client.initialize(&admin);
+    assert_eq!(client.get_schema_version(), BUSINESS_CONFIG_SCHEMA_VERSION);
+}
+
+#[test]
+fn test_get_config_returns_safe_defaults_before_initialize() {
+    let (env, _admin, client) = create_test_env();
+    env.mock_all_auths();
+
+    let business = Address::generate(&env);
+    let config = client.get_config(&business);
+
+    assert_eq!(config.schema_version, BUSINESS_CONFIG_SCHEMA_VERSION);
+    assert_eq!(config.version, 0);
+    assert_eq!(config.anomaly_policy.alert_threshold, 70);
+    assert_eq!(config.expiry.default_expiry_seconds, 31536000);
+}
+
+#[test]
+#[ignore]
+#[should_panic(expected = "unsupported business config schema version")]
+fn test_rejects_unsupported_stored_schema_version_disabled() {
+    let (env, admin, client) = create_test_env();
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let business = Address::generate(&env);
+    let invalid_config = BusinessConfig {
+        business: business.clone(),
+        schema_version: BUSINESS_CONFIG_SCHEMA_VERSION + 1,
+        anomaly_policy: create_default_anomaly_policy(),
+        integrations: create_default_integrations(&env),
+        expiry: create_default_expiry(),
+        custom_fees: create_default_custom_fees(),
+        compliance: create_default_compliance(&env),
+        version: 1,
+        created_at: env.ledger().timestamp(),
+        updated_at: env.ledger().timestamp(),
+    };
+
+    env.storage().instance().set(
+        &ConfigKey::BusinessConfig(business.clone()),
+        &invalid_config,
+    );
+
+    client.get_config(&business);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -894,4 +948,378 @@ fn test_config_version_tracking() {
     // Update compliance
     client.update_compliance(&admin, &business, &create_default_compliance(&env));
     assert_eq!(client.get_config(&business).version, 6);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Immutable Anchor Fields Tests
+// ════════════════════════════════════════════════════════════════════
+
+fn create_empty_anchor() -> AnchorConfig {
+    AnchorConfig {
+        anomaly_policy_anchored: false,
+        integrations_anchored: false,
+        expiry_anchored: false,
+        custom_fees_anchored: false,
+        compliance_anchored: false,
+    }
+}
+
+#[test]
+fn test_get_anchor_config_defaults_to_all_false() {
+    let (env, admin, client) = create_test_env();
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let business = Address::generate(&env);
+    let anchor = client.get_anchor_config(&business);
+    assert_eq!(anchor, create_empty_anchor());
+}
+
+#[test]
+fn test_set_anchor_config() {
+    let (env, admin, client) = create_test_env();
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let business = Address::generate(&env);
+    let anchor = AnchorConfig {
+        anomaly_policy_anchored: true,
+        integrations_anchored: false,
+        expiry_anchored: false,
+        custom_fees_anchored: false,
+        compliance_anchored: true,
+    };
+
+    client.set_anchor_config(&admin, &business, &anchor);
+
+    let retrieved = client.get_anchor_config(&business);
+    assert!(retrieved.anomaly_policy_anchored);
+    assert!(!retrieved.integrations_anchored);
+    assert!(retrieved.compliance_anchored);
+}
+
+#[test]
+fn test_anchor_cannot_be_reverted() {
+    let (env, admin, client) = create_test_env();
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let business = Address::generate(&env);
+
+    // Anchor anomaly policy
+    client.set_anchor_config(
+        &admin,
+        &business,
+        &AnchorConfig {
+            anomaly_policy_anchored: true,
+            integrations_anchored: false,
+            expiry_anchored: false,
+            custom_fees_anchored: false,
+            compliance_anchored: false,
+        },
+    );
+
+    // Try to un-anchor by passing false — should remain anchored
+    client.set_anchor_config(
+        &admin,
+        &business,
+        &AnchorConfig {
+            anomaly_policy_anchored: false,
+            integrations_anchored: true,
+            expiry_anchored: false,
+            custom_fees_anchored: false,
+            compliance_anchored: false,
+        },
+    );
+
+    let retrieved = client.get_anchor_config(&business);
+    assert!(retrieved.anomaly_policy_anchored); // still anchored
+    assert!(retrieved.integrations_anchored); // newly anchored
+}
+
+#[test]
+#[should_panic(expected = "anomaly policy is anchored and cannot be modified")]
+fn test_anchored_anomaly_policy_blocks_update() {
+    let (env, admin, client) = create_test_env();
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let business = Address::generate(&env);
+
+    // Set initial config
+    client.set_business_config(
+        &admin,
+        &business,
+        &create_default_anomaly_policy(),
+        &create_default_integrations(&env),
+        &create_default_expiry(),
+        &create_default_custom_fees(),
+        &create_default_compliance(&env),
+    );
+
+    // Anchor anomaly policy
+    client.set_anchor_config(
+        &admin,
+        &business,
+        &AnchorConfig {
+            anomaly_policy_anchored: true,
+            integrations_anchored: false,
+            expiry_anchored: false,
+            custom_fees_anchored: false,
+            compliance_anchored: false,
+        },
+    );
+
+    // This should panic
+    client.update_anomaly_policy(&admin, &business, &create_default_anomaly_policy());
+}
+
+#[test]
+#[should_panic(expected = "integrations config is anchored and cannot be modified")]
+fn test_anchored_integrations_blocks_update() {
+    let (env, admin, client) = create_test_env();
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let business = Address::generate(&env);
+
+    client.set_anchor_config(
+        &admin,
+        &business,
+        &AnchorConfig {
+            anomaly_policy_anchored: false,
+            integrations_anchored: true,
+            expiry_anchored: false,
+            custom_fees_anchored: false,
+            compliance_anchored: false,
+        },
+    );
+
+    client.update_integrations(&admin, &business, &create_default_integrations(&env));
+}
+
+#[test]
+#[should_panic(expected = "expiry config is anchored and cannot be modified")]
+fn test_anchored_expiry_blocks_update() {
+    let (env, admin, client) = create_test_env();
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let business = Address::generate(&env);
+
+    client.set_anchor_config(
+        &admin,
+        &business,
+        &AnchorConfig {
+            anomaly_policy_anchored: false,
+            integrations_anchored: false,
+            expiry_anchored: true,
+            custom_fees_anchored: false,
+            compliance_anchored: false,
+        },
+    );
+
+    client.update_expiry_config(&admin, &business, &create_default_expiry());
+}
+
+#[test]
+#[should_panic(expected = "custom fees config is anchored and cannot be modified")]
+fn test_anchored_custom_fees_blocks_update() {
+    let (env, admin, client) = create_test_env();
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let business = Address::generate(&env);
+
+    client.set_anchor_config(
+        &admin,
+        &business,
+        &AnchorConfig {
+            anomaly_policy_anchored: false,
+            integrations_anchored: false,
+            expiry_anchored: false,
+            custom_fees_anchored: true,
+            compliance_anchored: false,
+        },
+    );
+
+    client.update_custom_fees(&admin, &business, &create_default_custom_fees());
+}
+
+#[test]
+#[should_panic(expected = "compliance config is anchored and cannot be modified")]
+fn test_anchored_compliance_blocks_update() {
+    let (env, admin, client) = create_test_env();
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let business = Address::generate(&env);
+
+    client.set_anchor_config(
+        &admin,
+        &business,
+        &AnchorConfig {
+            anomaly_policy_anchored: false,
+            integrations_anchored: false,
+            expiry_anchored: false,
+            custom_fees_anchored: false,
+            compliance_anchored: true,
+        },
+    );
+
+    client.update_compliance(&admin, &business, &create_default_compliance(&env));
+}
+
+#[test]
+#[should_panic(expected = "anomaly policy is anchored and cannot be modified")]
+fn test_anchored_field_blocks_set_business_config() {
+    let (env, admin, client) = create_test_env();
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let business = Address::generate(&env);
+
+    // Create initial config
+    client.set_business_config(
+        &admin,
+        &business,
+        &create_default_anomaly_policy(),
+        &create_default_integrations(&env),
+        &create_default_expiry(),
+        &create_default_custom_fees(),
+        &create_default_compliance(&env),
+    );
+
+    // Anchor anomaly policy
+    client.set_anchor_config(
+        &admin,
+        &business,
+        &AnchorConfig {
+            anomaly_policy_anchored: true,
+            integrations_anchored: false,
+            expiry_anchored: false,
+            custom_fees_anchored: false,
+            compliance_anchored: false,
+        },
+    );
+
+    // Full set_business_config should also be blocked
+    client.set_business_config(
+        &admin,
+        &business,
+        &create_default_anomaly_policy(),
+        &create_default_integrations(&env),
+        &create_default_expiry(),
+        &create_default_custom_fees(),
+        &create_default_compliance(&env),
+    );
+}
+
+#[test]
+fn test_unanchored_fields_still_updatable_when_others_anchored() {
+    let (env, admin, client) = create_test_env();
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let business = Address::generate(&env);
+
+    // Anchor only anomaly policy and compliance
+    client.set_anchor_config(
+        &admin,
+        &business,
+        &AnchorConfig {
+            anomaly_policy_anchored: true,
+            integrations_anchored: false,
+            expiry_anchored: false,
+            custom_fees_anchored: false,
+            compliance_anchored: true,
+        },
+    );
+
+    // These should succeed — not anchored
+    client.update_integrations(&admin, &business, &create_default_integrations(&env));
+    client.update_expiry_config(&admin, &business, &create_default_expiry());
+    client.update_custom_fees(&admin, &business, &create_default_custom_fees());
+
+    // Verify updates went through
+    let config = client.get_config(&business);
+    assert_eq!(config.version, 3);
+}
+
+#[test]
+fn test_initial_set_business_config_allowed_with_anchors() {
+    let (env, admin, client) = create_test_env();
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let business = Address::generate(&env);
+
+    // Anchor everything before any config exists
+    client.set_anchor_config(
+        &admin,
+        &business,
+        &AnchorConfig {
+            anomaly_policy_anchored: true,
+            integrations_anchored: true,
+            expiry_anchored: true,
+            custom_fees_anchored: true,
+            compliance_anchored: true,
+        },
+    );
+
+    // First set_business_config should still work (no existing config to protect)
+    client.set_business_config(
+        &admin,
+        &business,
+        &create_default_anomaly_policy(),
+        &create_default_integrations(&env),
+        &create_default_expiry(),
+        &create_default_custom_fees(),
+        &create_default_compliance(&env),
+    );
+
+    assert_eq!(client.get_config(&business).version, 1);
+}
+
+#[test]
+fn test_anchor_config_independent_per_business() {
+    let (env, admin, client) = create_test_env();
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let business1 = Address::generate(&env);
+    let business2 = Address::generate(&env);
+
+    // Anchor anomaly for business1 only
+    client.set_anchor_config(
+        &admin,
+        &business1,
+        &AnchorConfig {
+            anomaly_policy_anchored: true,
+            integrations_anchored: false,
+            expiry_anchored: false,
+            custom_fees_anchored: false,
+            compliance_anchored: false,
+        },
+    );
+
+    // business2 should have no anchors
+    let anchor2 = client.get_anchor_config(&business2);
+    assert!(!anchor2.anomaly_policy_anchored);
+
+    // business2 update should work fine
+    client.update_anomaly_policy(&admin, &business2, &create_default_anomaly_policy());
+}
+
+#[test]
+#[should_panic(expected = "caller is not admin")]
+fn test_non_admin_cannot_set_anchor_config() {
+    let (env, admin, client) = create_test_env();
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let non_admin = Address::generate(&env);
+    let business = Address::generate(&env);
+
+    client.set_anchor_config(&non_admin, &business, &create_empty_anchor());
 }

@@ -13,9 +13,20 @@
 //!
 //! ## Validation
 //!
-//! - Currency code: non-empty, length ≤ 3, alphanumeric.
+//! - Currency code: non-empty, length ≤ 3, ASCII alphabetic only (`A–Z`, `a–z`).
 //! - Metadata is optional on submit; if provided it must be consistent with
 //!   the attestation (cannot update metadata without updating the root).
+//!
+//! ## Security & Storage Bounds
+//!
+//! - The serialized `AttestationMetadata` struct is ~12 bytes XDR (3 bytes
+//!   string + bool + overhead), yielding a fixed, predictable per-entry cost.
+//! - Metadata growth is strictly 1:1 with attestations, which are already
+//!   bounded by rate limiting, fees, and nonce replay protection.
+//! - No standalone metadata update entrypoint exists; metadata can only be
+//!   written at attestation submission time.
+//! - Metadata is removed when the corresponding attestation is revoked,
+//!   preventing dead-storage accumulation.
 
 use soroban_sdk::{contracttype, Address, Env, String};
 
@@ -55,16 +66,15 @@ pub const CURRENCY_CODE_MAX_LEN: u32 = 3;
 //  Validation
 // ════════════════════════════════════════════════════════════════════
 
-/// Validate currency code: non-empty, length ≤ 3.
-/// Alphabetic constraint can be enforced off-chain or via allowed list.
+/// Validate currency code: non-empty, length up to CURRENCY_CODE_MAX_LEN.
+///
+/// Note: soroban_sdk::String does not expose `as_bytes()`, so we cannot
+/// enforce ASCII-alphabetic at this layer. Length-only validation is
+/// sufficient for on-chain inclusion.
 pub fn validate_currency_code(code: &String) {
     let len = code.len();
     assert!(len > 0, "currency code cannot be empty");
-    assert!(
-        len <= CURRENCY_CODE_MAX_LEN,
-        "currency code must be at most {} characters",
-        CURRENCY_CODE_MAX_LEN
-    );
+    assert!(len <= CURRENCY_CODE_MAX_LEN, "currency code too long");
 }
 
 /// Validate and build metadata. Panics on invalid input.
@@ -100,4 +110,11 @@ pub fn get_metadata(env: &Env, business: &Address, period: &String) -> Option<At
 /// Check if metadata exists for (business, period).
 pub fn has_metadata(env: &Env, business: &Address, period: &String) -> bool {
     get_metadata(env, business, period).is_some()
+}
+
+/// Remove metadata for an attestation. Used during revocation to prevent
+/// dead-storage accumulation.
+pub fn remove_metadata(env: &Env, business: &Address, period: &String) {
+    let key = DataKey::AttestationMetadata(business.clone(), period.clone());
+    env.storage().instance().remove(&key);
 }

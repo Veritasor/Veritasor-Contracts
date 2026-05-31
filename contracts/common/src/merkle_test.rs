@@ -107,4 +107,19 @@ mod test {
         let invalid_root = BytesN::random(&env);
         assert!(!verify_merkle_proof(&env, &invalid_root, &l1, &proof));
     }
+
+    #[test]
+    fn test_verify_merkle_proof_exceeds_max_depth() {
+        let env = Env::default();
+        let l1 = BytesN::random(&env);
+        let root = BytesN::random(&env);
+
+        let mut proof = Vec::new(&env);
+        // MAX_TREE_DEPTH is 64
+        for _ in 0..65 {
+            proof.push_back(BytesN::random(&env));
+        }
+
+        assert!(!verify_merkle_proof(&env, &root, &l1, &proof));
+    }
 }

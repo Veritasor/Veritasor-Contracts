@@ -6,6 +6,11 @@ Optional anomaly flags and numeric risk scores can be stored per attestation to 
 
 - **Anomaly flags** (`u32`): Bitmask for anomaly conditions. Semantics are defined off-chain (e.g. bit 0 = revenue spike, bit 1 = timing anomaly). Lenders interpret via off-chain documentation.
 - **Risk score** (`u32`): Integer in `[0, 100]`. Higher values indicate higher risk. Out-of-range values are rejected.
+- **Escalation level** (`u32`): Business-level derived risk classification for attestation-level anomalies. Levels:
+  - `0` = none
+  - `1` = elevated
+  - `2` = high
+  - `3` = critical
 
 Anomaly data is keyed by the same `(business, period)` as the attestation. An attestation must exist before anomaly data can be set.
 
@@ -25,11 +30,14 @@ Only addresses in the authorized set may call `set_anomaly`. The updater must pa
 | `remove_authorized_analytics(caller, analytics)` | Remove an analytics/oracle address. `caller` must be admin and authorize. |
 | `set_anomaly(updater, business, period, flags, score)` | Store anomaly flags and score for an existing attestation. `updater` must authorize and be in the authorized set. `score` must be in `[0, 100]`. |
 | `get_anomaly(business, period)` | Return `Option<(u32, u32)>` (flags, score) for lenders. |
+| `get_anomaly_escalation(business)` | Return `Option<u32>` business-level escalation level (0..3). |
+| `clear_anomaly_escalation(caller, business)` | Clear escalation level (admin only). |
 
 ## Update rules
 
 - Anomaly data may only be written for `(business, period)` that already have an attestation.
 - Multiple updates overwrite previous flags and score.
+- Business anomaly escalation is derived and monotonic (never decreases automatically) as updates arrive.
 - Anomaly writes use a distinct storage key from attestation data; they cannot corrupt merkle root, timestamp, or version.
 
 ## Risk model assumptions
@@ -53,6 +61,9 @@ Covered behavior:
 - set_anomaly/get_anomaly with authorized updater; multiple updates overwrite.
 - Unauthorized set_anomaly panics; set_anomaly without attestation panics; score > 100 panics; score 100 accepted.
 - get_anomaly returns None when no anomaly data.
+- get_anomaly_escalation returns None before anomalies are set.
+- Business escalation level updates on set_anomaly and is monotonic across low->high updates.
+- clear_anomaly_escalation resets escalation only for admin callers.
 - Attestations without anomaly data unchanged; get_attestation and verify_attestation unchanged.
 - Anomaly update does not change attestation data (merkle root, timestamp, version).
 - Two authorized updaters can both set anomaly; removed analytics cannot set anomaly (and removed analytics set_anomaly panics).

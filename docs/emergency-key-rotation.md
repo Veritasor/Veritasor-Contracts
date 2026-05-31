@@ -56,6 +56,7 @@ The rotation configuration is adjustable per-contract via `configure_key_rotatio
 | `timelock_ledgers` | 17,280 (~24 hours) | Ledger sequences before confirmation is allowed |
 | `confirmation_window_ledgers` | 34,560 (~48 hours) | Window after timelock during which confirmation is valid |
 | `cooldown_ledgers` | 8,640 (~12 hours) | Minimum gap between consecutive rotations |
+| `grace_period_ledgers` | 17,280 (~24 hours) | Number of ledger sequences the old key remains valid after a planned rotation |
 
 All values assume ~5 seconds per ledger sequence.
 
@@ -81,7 +82,7 @@ Rotation history is capped at **50 records** (`MAX_ROTATION_HISTORY`). When the 
 
 | Method | Auth | Description |
 |--------|------|-------------|
-| `configure_key_rotation(timelock, window, cooldown)` | Admin | Set rotation timing parameters |
+| `configure_key_rotation(timelock, window, cooldown, grace)` | Admin | Set rotation timing parameters |
 | `propose_key_rotation(new_admin)` | Admin | Propose rotating admin to a new address |
 | `confirm_key_rotation(caller)` | New admin | Confirm and complete a pending rotation |
 | `cancel_key_rotation()` | Admin | Cancel a pending planned rotation |
@@ -135,6 +136,7 @@ pub struct RotationRecord {
     pub new_admin: Address,
     pub completed_at: u32,
     pub is_emergency: bool,
+    pub grace_period_end: u32,
 }
 ```
 
