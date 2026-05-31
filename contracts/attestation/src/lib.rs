@@ -636,7 +636,7 @@ impl AttestationContract {
                 Self::get_attestation(env.clone(), business.clone(), period.clone())
             {
                 // Verify: root must match AND attestation must not be revoked
-                let is_valid = &stored_root == provided_root
+                let is_valid = stored_root == provided_root
                     && !dispute::is_attestation_revoked(&env, &business, &period);
                 results.push_back(is_valid);
             } else {
