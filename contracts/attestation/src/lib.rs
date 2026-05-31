@@ -1230,6 +1230,14 @@ impl AttestationContract {
         dispute::is_attestation_revoked(&env, &business, &period)
     }
 
+    pub fn get_revocation_sequence(env: Env) -> u64 {
+        dispute::get_revocation_sequence(&env)
+    }
+
+    pub fn get_revoked_periods(env: Env, business: Address) -> Vec<String> {
+        dispute::get_revoked_periods(&env, &business)
+    }
+
     pub fn register_business(
         env: Env,
         business: Address,
