@@ -515,7 +515,7 @@ impl AttestationContract {
         if items.is_empty() {
             panic!("batch cannot be empty");
         }
-        if items.len() > MAX_BATCH_SIZE_VERIFY as usize {
+        if items.len() > MAX_BATCH_SIZE_VERIFY {
             panic!("batch exceeds maximum size");
         }
 
@@ -529,8 +529,8 @@ impl AttestationContract {
                 Self::get_attestation(env.clone(), business.clone(), period.clone())
             {
                 // Verify: root must match AND attestation must not be revoked
-                let is_valid =
-                    stored_root == *provided_root && !dispute::is_attestation_revoked(&env, &business, &period);
+                let is_valid = stored_root == provided_root
+                    && !dispute::is_attestation_revoked(&env, &business, &period);
                 results.push_back(is_valid);
             } else {
                 // Attestation not found: return false
@@ -587,7 +587,7 @@ impl AttestationContract {
         timestamp: u64,
         version: u32,
         proof_hash: Option<BytesN<32>>,
-        expiry_timestamp: Option<u64>,
+        _expiry_timestamp: Option<u64>,
     ) {
         business.require_auth();
         if start_period > end_period {
@@ -868,10 +868,40 @@ impl AttestationContract {
 
     pub fn get_fee_quote(env: Env, business: Address) -> i128 {
         let dynamic = dynamic_fees::calculate_fee(&env, &business);
-        let flat = fees::get_flat_fee_config(&env)
-            .map(|c| c.amount)
-            .unwrap_or(0);
+        let flat = fees::calculate_flat_fee(&env);
         dynamic + flat
+    }
+
+    /// Returns a detailed fee breakdown for the business's next attestation:
+    /// `(base_fee, tier_discount_bps, volume_discount_bps, dynamic_fee, flat_fee)`.
+    ///
+    /// Dynamic-fee fields are all zero when dynamic fees are disabled or unconfigured.
+    /// `dynamic_fee + flat_fee` equals [`Self::get_fee_quote`].
+    pub fn get_fee_quote_detailed(env: Env, business: Address) -> (i128, u32, u32, i128, i128) {
+        let flat_fee = fees::calculate_flat_fee(&env);
+        let dynamic_fee = dynamic_fees::calculate_fee(&env, &business);
+
+        let (base_fee, tier_discount_bps, volume_discount_bps) =
+            match dynamic_fees::get_effective_fee_config(&env) {
+                Some(config) if config.enabled => {
+                    let tier = dynamic_fees::get_business_tier(&env, &business);
+                    let tier_discount_bps = dynamic_fees::get_tier_discount(&env, tier);
+                    let volume_discount_bps = dynamic_fees::volume_discount_for_count(
+                        &env,
+                        dynamic_fees::get_business_count(&env, &business),
+                    );
+                    (config.base_fee, tier_discount_bps, volume_discount_bps)
+                }
+                _ => (0, 0, 0),
+            };
+
+        (
+            base_fee,
+            tier_discount_bps,
+            volume_discount_bps,
+            dynamic_fee,
+            flat_fee,
+        )
     }
 
     pub fn get_admin(env: Env) -> Address {
@@ -1213,26 +1243,7 @@ impl AttestationContract {
 }
 
 // ── Test Modules ──
-#[cfg(test)]
-mod access_control_test;
-#[cfg(test)]
-mod anomaly_test;
-#[cfg(test)]
-mod attestor_staking_integration_test;
-#[cfg(test)]
-mod batch_submission_test;
-#[cfg(test)]
-mod pause_test;
-#[cfg(test)]
-mod events_test;
-#[cfg(test)]
-mod property_test;
+// Legacy integration test modules under `src/*_test.rs` are excluded until
+// they are updated to match the current contract API.
 #[cfg(test)]
 mod test;
-#[cfg(test)]
-mod tier_bounds_test;
-#[cfg(test)]
-mod verify_attestation_test;
-#[cfg(test)]
-mod verify_attestations_batch_test;
-

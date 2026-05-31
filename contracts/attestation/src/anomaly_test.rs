@@ -74,7 +74,16 @@ fn set_anomaly_and_get_anomaly() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &None, &0u64);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+        &0u64,
+    );
     client.set_anomaly(&analytics, &business, &period, &1u32, &50u32);
     let out = client.get_anomaly(&business, &period).unwrap();
     assert_eq!(out.0, 1u32);
@@ -90,7 +99,16 @@ fn set_anomaly_multiple_updates_overwrites() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &None, &0u64);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+        &0u64,
+    );
     client.set_anomaly(&analytics, &business, &period, &1u32, &10u32);
     client.set_anomaly(&analytics, &business, &period, &2u32, &90u32);
     let out = client.get_anomaly(&business, &period).unwrap();
@@ -109,7 +127,16 @@ fn set_anomaly_unauthorized_panics() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &None, &0u64);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+        &0u64,
+    );
     client.set_anomaly(&unauthorized, &business, &period, &1u32, &50u32);
 }
 
@@ -135,7 +162,16 @@ fn set_anomaly_score_out_of_range_panics() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &None, &0u64);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+        &0u64,
+    );
     client.set_anomaly(&analytics, &business, &period, &0u32, &101u32);
 }
 
@@ -148,7 +184,16 @@ fn set_anomaly_score_boundary_100() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &None, &0u64);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+        &0u64,
+    );
     client.set_anomaly(&analytics, &business, &period, &0u32, &100u32);
     let out = client.get_anomaly(&business, &period).unwrap();
     assert_eq!(out.1, 100u32);
@@ -163,7 +208,16 @@ fn get_anomaly_escalation_none_for_low_score() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &None, &0u64);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+        &0u64,
+    );
     client.set_anomaly(&analytics, &business, &period, &0u32, &49u32);
     assert_eq!(client.get_anomaly_escalation(&business), None);
 }
@@ -178,8 +232,26 @@ fn get_anomaly_escalation_levels_monotonic() {
     let period1 = String::from_str(&env, "2026-02");
     let period2 = String::from_str(&env, "2026-03");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period1, &root, &1700000000u64, &1u32, &None, &None, &0u64);
-    client.submit_attestation(&business, &period2, &root, &1700000000u64, &1u32, &None, &None, &0u64);
+    client.submit_attestation(
+        &business,
+        &period1,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+        &0u64,
+    );
+    client.submit_attestation(
+        &business,
+        &period2,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+        &0u64,
+    );
 
     client.set_anomaly(&analytics, &business, &period1, &0u32, &60u32);
     assert_eq!(client.get_anomaly_escalation(&business), Some(1u32));
@@ -203,7 +275,16 @@ fn clear_anomaly_escalation_admin_path() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &None, &0u64);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+        &0u64,
+    );
     client.set_anomaly(&analytics, &business, &period, &0u32, &95u32);
     assert_eq!(client.get_anomaly_escalation(&business), Some(3u32));
     client.clear_anomaly_escalation(&admin, &business);
@@ -221,7 +302,16 @@ fn clear_anomaly_escalation_non_admin_panics() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &None, &0u64);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+        &0u64,
+    );
     client.set_anomaly(&analytics, &business, &period, &0u32, &95u32);
     client.clear_anomaly_escalation(&unauthorized, &business);
 }
@@ -233,7 +323,16 @@ fn get_anomaly_none_when_not_set() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &None, &0u64);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+        &0u64,
+    );
     let out = client.get_anomaly(&business, &period);
     assert!(out.is_none());
 }
@@ -251,7 +350,9 @@ fn attestation_without_anomaly_data_unchanged() {
     let root = BytesN::from_array(&env, &[5u8; 32]);
     let timestamp = 1700000000u64;
     let version = 2u32;
-    client.submit_attestation(&business, &period, &root, &timestamp, &version, &None, &None, &0u64);
+    client.submit_attestation(
+        &business, &period, &root, &timestamp, &version, &None, &None, &0u64,
+    );
     assert!(client.get_anomaly(&business, &period).is_none());
     let stored = client.get_attestation(&business, &period).unwrap();
     assert_eq!(stored.0, root);
@@ -271,7 +372,9 @@ fn anomaly_update_does_not_corrupt_attestation() {
     let root = BytesN::from_array(&env, &[7u8; 32]);
     let timestamp = 1700000001u64;
     let version = 3u32;
-    client.submit_attestation(&business, &period, &root, &timestamp, &version, &None, &None, &0u64);
+    client.submit_attestation(
+        &business, &period, &root, &timestamp, &version, &None, &None, &0u64,
+    );
     client.set_anomaly(&analytics, &business, &period, &0xFFu32, &75u32);
     let stored = client.get_attestation(&business, &period).unwrap();
     assert_eq!(stored.0, root);
@@ -294,7 +397,16 @@ fn two_authorized_updaters_can_both_set_anomaly() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &None, &0u64);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+        &0u64,
+    );
     client.set_anomaly(&analytics1, &business, &period, &1u32, &25u32);
     client.set_anomaly(&analytics2, &business, &period, &2u32, &50u32);
     let out = client.get_anomaly(&business, &period).unwrap();
@@ -311,7 +423,16 @@ fn removed_analytics_cannot_set_anomaly() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &None, &0u64);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+        &0u64,
+    );
     client.set_anomaly(&analytics, &business, &period, &1u32, &50u32);
     client.remove_authorized_analytics(&admin, &analytics);
     let out = client.get_anomaly(&business, &period).unwrap();
@@ -329,7 +450,16 @@ fn removed_analytics_set_anomaly_panics() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1700000000u64, &1u32, &None, &None, &0u64);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &None,
+        &None,
+        &0u64,
+    );
     client.remove_authorized_analytics(&admin, &analytics);
     client.set_anomaly(&analytics, &business, &period, &2u32, &60u32);
 }

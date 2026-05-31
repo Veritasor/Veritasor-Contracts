@@ -559,6 +559,22 @@ Calculate the fee a business would pay for its next attestation.
 
 ---
 
+#### `get_fee_quote_detailed(business: Address) -> (i128, u32, u32, i128, i128)`
+
+Return an itemized fee breakdown for the business's next attestation:
+`(base_fee, tier_discount_bps, volume_discount_bps, dynamic_fee, flat_fee)`.
+
+Dynamic-related fields are zero when dynamic fees are disabled. `dynamic_fee + flat_fee` equals `get_fee_quote(business)`.
+
+**Parameters:**
+| Name | Type | Description |
+|------|------|-------------|
+| `business` | `Address` | Business address |
+
+**Returns:** `(i128, u32, u32, i128, i128)` - Fee breakdown tuple
+
+---
+
 #### `get_business_tier(business: Address) -> u32`
 
 Return the tier assigned to a business.
