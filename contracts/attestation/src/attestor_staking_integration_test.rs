@@ -61,7 +61,14 @@ fn attestor_submit_fails_when_not_eligible() {
     let staking_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
-    staking.initialize(&staking_admin, &token, &treasury, &1_000i128, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &dispute,
+        &0u64,
+    );
 
     // Deploy attestation
     let attestation_id = env.register(AttestationContract, ());
@@ -109,7 +116,14 @@ fn attestor_submit_succeeds_when_eligible() {
     let staking_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
-    staking.initialize(&staking_admin, &token, &treasury, &1_000i128, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &dispute,
+        &0u64,
+    );
 
     // Deploy attestation
     let attestation_id = env.register(AttestationContract, ());
@@ -164,7 +178,14 @@ fn attestor_batch_submit_succeeds_when_eligible() {
     let staking_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
-    staking.initialize(&staking_admin, &token, &treasury, &1_000i128, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &dispute,
+        &0u64,
+    );
 
     // Deploy attestation
     let attestation_id = env.register(AttestationContract, ());
@@ -201,8 +222,12 @@ fn attestor_batch_submit_succeeds_when_eligible() {
 
     att_client.submit_batch_as_attestor(&attestor, &items);
 
-    assert!(att_client.get_attestation(&business, &String::from_str(&env, "2026-01")).is_some());
-    assert!(att_client.get_attestation(&business, &String::from_str(&env, "2026-02")).is_some());
+    assert!(att_client
+        .get_attestation(&business, &String::from_str(&env, "2026-01"))
+        .is_some());
+    assert!(att_client
+        .get_attestation(&business, &String::from_str(&env, "2026-02"))
+        .is_some());
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -227,7 +252,14 @@ fn attestor_with_exact_min_stake_is_eligible() {
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
     let min_stake = 1_000i128;
-    staking.initialize(&staking_admin, &token, &treasury, &min_stake, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &min_stake,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);
@@ -248,7 +280,13 @@ fn attestor_with_exact_min_stake_is_eligible() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
     att_client.submit_attestation_as_attestor(
-        &attestor, &business, &period, &root, &1_700_000_000u64, &1u32, &None,
+        &attestor,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
     assert!(att_client.get_attestation(&business, &period).is_some());
 }
@@ -271,7 +309,14 @@ fn attestor_one_below_min_stake_is_ineligible() {
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
     let min_stake = 1_000i128;
-    staking.initialize(&staking_admin, &token, &treasury, &min_stake, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &min_stake,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);
@@ -292,7 +337,13 @@ fn attestor_one_below_min_stake_is_ineligible() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
     let res = att_client.try_submit_attestation_as_attestor(
-        &attestor, &business, &period, &root, &1_700_000_000u64, &1u32, &None,
+        &attestor,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
     assert!(res.is_err());
 }
@@ -315,7 +366,14 @@ fn multiple_attestors_independent_eligibility() {
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
     let min_stake = 1_000i128;
-    staking.initialize(&staking_admin, &token, &treasury, &min_stake, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &min_stake,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);
@@ -344,7 +402,13 @@ fn multiple_attestors_independent_eligibility() {
     let period1 = String::from_str(&env, "2026-01");
     let root1 = BytesN::from_array(&env, &[1u8; 32]);
     att_client.submit_attestation_as_attestor(
-        &attestor1, &business1, &period1, &root1, &1_700_000_000u64, &1u32, &None,
+        &attestor1,
+        &business1,
+        &period1,
+        &root1,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
     assert!(att_client.get_attestation(&business1, &period1).is_some());
 
@@ -353,7 +417,13 @@ fn multiple_attestors_independent_eligibility() {
     let period2 = String::from_str(&env, "2026-02");
     let root2 = BytesN::from_array(&env, &[2u8; 32]);
     let res = att_client.try_submit_attestation_as_attestor(
-        &attestor2, &business2, &period2, &root2, &1_700_000_000u64, &1u32, &None,
+        &attestor2,
+        &business2,
+        &period2,
+        &root2,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
     assert!(res.is_err());
 }
@@ -426,7 +496,14 @@ fn non_attestor_cannot_submit_as_attestor() {
     let staking_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
-    staking.initialize(&staking_admin, &token, &treasury, &1_000i128, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);
@@ -444,7 +521,13 @@ fn non_attestor_cannot_submit_as_attestor() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
     let res = att_client.try_submit_attestation_as_attestor(
-        &user, &business, &period, &root, &1_700_000_000u64, &1u32, &None,
+        &user,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
     assert!(res.is_err());
 }
@@ -467,7 +550,14 @@ fn slashing_below_min_stake_makes_ineligible() {
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
     let min_stake = 1_000i128;
-    staking.initialize(&staking_admin, &token, &treasury, &min_stake, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &min_stake,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);
@@ -508,7 +598,14 @@ fn slashing_above_min_stake_keeps_eligible() {
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
     let min_stake = 1_000i128;
-    staking.initialize(&staking_admin, &token, &treasury, &min_stake, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &min_stake,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);
@@ -549,7 +646,14 @@ fn non_dispute_contract_cannot_slash() {
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env); // This is the authorized dispute contract
     let min_stake = 1_000i128;
-    staking.initialize(&staking_admin, &token, &treasury, &min_stake, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &min_stake,
+        &dispute,
+        &0u64,
+    );
 
     let attestor = Address::generate(&env);
     token_client.mint(&attestor, &1_500i128);
@@ -581,7 +685,14 @@ fn batch_submit_fails_when_ineligible() {
     let staking_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
-    staking.initialize(&staking_admin, &token, &treasury, &1_000i128, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);
@@ -626,7 +737,14 @@ fn min_stake_increase_makes_ineligible() {
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
     let initial_min = 1_000i128;
-    staking.initialize(&staking_admin, &token, &treasury, &initial_min, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &initial_min,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);
@@ -667,7 +785,14 @@ fn min_stake_decrease_makes_eligible() {
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
     let initial_min = 1_000i128;
-    staking.initialize(&staking_admin, &token, &treasury, &initial_min, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &initial_min,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);
@@ -713,7 +838,14 @@ fn pending_unstake_counts_toward_eligibility() {
     let dispute = Address::generate(&env);
     let min_stake = 1_000i128;
     // Set unbonding period to 0 for immediate unlock in test
-    staking.initialize(&staking_admin, &token, &treasury, &min_stake, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &min_stake,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);
@@ -754,7 +886,14 @@ fn full_withdrawal_makes_ineligible() {
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
     let min_stake = 1_000i128;
-    staking.initialize(&staking_admin, &token, &treasury, &min_stake, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &min_stake,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);
@@ -797,7 +936,14 @@ fn duplicate_attestation_rejected() {
     let staking_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
-    staking.initialize(&staking_admin, &token, &treasury, &1_000i128, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);
@@ -816,14 +962,26 @@ fn duplicate_attestation_rejected() {
 
     // First submission succeeds
     att_client.submit_attestation_as_attestor(
-        &attestor, &business, &period, &root1, &1_700_000_000u64, &1u32, &None,
+        &attestor,
+        &business,
+        &period,
+        &root1,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
     assert!(att_client.get_attestation(&business, &period).is_some());
 
     // Second submission fails
     let root2 = BytesN::from_array(&env, &[2u8; 32]);
     let res = att_client.try_submit_attestation_as_attestor(
-        &attestor, &business, &period, &root2, &1_700_000_001u64, &2u32, &None,
+        &attestor,
+        &business,
+        &period,
+        &root2,
+        &1_700_000_001u64,
+        &2u32,
+        &None,
     );
     assert!(res.is_err());
 }
@@ -845,7 +1003,14 @@ fn batch_with_duplicate_fails_entirely() {
     let staking_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
-    staking.initialize(&staking_admin, &token, &treasury, &1_000i128, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);
@@ -864,7 +1029,13 @@ fn batch_with_duplicate_fails_entirely() {
     let period1 = String::from_str(&env, "2026-01");
     let root1 = BytesN::from_array(&env, &[1u8; 32]);
     att_client.submit_attestation_as_attestor(
-        &attestor, &business, &period1, &root1, &1_700_000_000u64, &1u32, &None,
+        &attestor,
+        &business,
+        &period1,
+        &root1,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
 
     // Now try batch with duplicate
@@ -913,7 +1084,13 @@ fn submit_without_staking_contract_panics() {
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
     let res = att_client.try_submit_attestation_as_attestor(
-        &attestor, &business, &period, &root, &1_700_000_000u64, &1u32, &None,
+        &attestor,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
     assert!(res.is_err());
 }
@@ -950,7 +1127,14 @@ fn batch_submit_empty_list_handled() {
     let staking_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
-    staking.initialize(&staking_admin, &token, &treasury, &1_000i128, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);
@@ -990,7 +1174,14 @@ fn staking_contract_reconfiguration_affects_future_checks() {
     let staking_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
-    staking1.initialize(&staking_admin, &token, &treasury, &10_000i128, &dispute, &0u64);
+    staking1.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &10_000i128,
+        &dispute,
+        &0u64,
+    );
 
     // Deploy second staking contract with low min stake
     let staking2_id = env.register(AttestorStakingContract, ());
@@ -1019,7 +1210,13 @@ fn staking_contract_reconfiguration_affects_future_checks() {
 
     // Should fail - not enough stake for first contract
     let res = att_client.try_submit_attestation_as_attestor(
-        &attestor, &business, &period, &root, &1_700_000_000u64, &1u32, &None,
+        &attestor,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
     assert!(res.is_err());
 
@@ -1031,7 +1228,13 @@ fn staking_contract_reconfiguration_affects_future_checks() {
 
     // Should succeed - enough stake for second contract (500 min)
     att_client.submit_attestation_as_attestor(
-        &attestor, &business, &period, &root, &1_700_000_000u64, &1u32, &None,
+        &attestor,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
     assert!(att_client.get_attestation(&business, &period).is_some());
 }
@@ -1057,7 +1260,14 @@ fn attestor_submission_fails_when_paused() {
     let staking_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
-    staking.initialize(&staking_admin, &token, &treasury, &1_000i128, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);
@@ -1078,7 +1288,13 @@ fn attestor_submission_fails_when_paused() {
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
     let res = att_client.try_submit_attestation_as_attestor(
-        &attestor, &business, &period, &root, &1_700_000_000u64, &1u32, &None,
+        &attestor,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
     assert!(res.is_err());
 }
@@ -1100,7 +1316,14 @@ fn batch_submission_fails_when_paused() {
     let staking_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
-    staking.initialize(&staking_admin, &token, &treasury, &1_000i128, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);
@@ -1152,7 +1375,14 @@ fn attestor_submission_with_expired_expiry_fails() {
     let staking_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
-    staking.initialize(&staking_admin, &token, &treasury, &1_000i128, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);
@@ -1173,7 +1403,13 @@ fn attestor_submission_with_expired_expiry_fails() {
     let past_expiry = Some(1_600_000_000u64);
 
     let res = att_client.try_submit_attestation_as_attestor(
-        &attestor, &business, &period, &root, &1_700_000_000u64, &1u32, &past_expiry,
+        &attestor,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &past_expiry,
     );
     assert!(res.is_err());
 }
@@ -1195,7 +1431,14 @@ fn attestor_submission_with_valid_expiry_succeeds() {
     let staking_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
-    staking.initialize(&staking_admin, &token, &treasury, &1_000i128, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);
@@ -1216,7 +1459,13 @@ fn attestor_submission_with_valid_expiry_succeeds() {
     let future_expiry = Some(2_000_000_000u64);
 
     att_client.submit_attestation_as_attestor(
-        &attestor, &business, &period, &root, &1_700_000_000u64, &1u32, &future_expiry,
+        &attestor,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &future_expiry,
     );
     assert!(att_client.get_attestation(&business, &period).is_some());
 }
@@ -1242,7 +1491,14 @@ fn staking_storage_isolation() {
     let staking_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
-    staking.initialize(&staking_admin, &token, &treasury, &1_000i128, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);
@@ -1266,7 +1522,13 @@ fn staking_storage_isolation() {
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
     att_client.submit_attestation_as_attestor(
-        &attestor, &business, &period, &root, &1_700_000_000u64, &1u32, &None,
+        &attestor,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
 
     // Staking state should be unchanged
@@ -1296,7 +1558,14 @@ fn attestor_pays_fees_on_submission() {
     let staking_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
-    staking.initialize(&staking_admin, &token, &treasury, &1_000i128, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);
@@ -1318,7 +1587,13 @@ fn attestor_pays_fees_on_submission() {
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
     att_client.submit_attestation_as_attestor(
-        &attestor, &business, &period, &root, &1_700_000_000u64, &1u32, &None,
+        &attestor,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
 
     let attestor_balance_after = token_client.balance(&attestor);
@@ -1342,7 +1617,14 @@ fn batch_submission_collects_fees_per_item() {
     let staking_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     let dispute = Address::generate(&env);
-    staking.initialize(&staking_admin, &token, &treasury, &1_000i128, &dispute, &0u64);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &dispute,
+        &0u64,
+    );
 
     let attestation_id = env.register(AttestationContract, ());
     let att_client = AttestationContractClient::new(&env, &attestation_id);

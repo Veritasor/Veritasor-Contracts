@@ -84,6 +84,26 @@ This means:
 
 Brackets are evaluated highest-threshold-first. The cumulative attestation count for a business is tracked on-chain and incremented on each successful submission.
 
+## Fee Quote Breakdown
+
+`get_fee_quote_detailed(business)` returns a 5-tuple:
+
+```
+(base_fee, tier_discount_bps, volume_discount_bps, dynamic_fee, flat_fee)
+```
+
+| Field                 | Type   | Description                                                                 |
+| --------------------- | ------ | --------------------------------------------------------------------------- |
+| `base_fee`            | `i128` | Configured dynamic base fee from the effective `FeeConfig` (0 when dynamic fees are disabled or unconfigured) |
+| `tier_discount_bps`   | `u32`  | Tier discount in basis points for the business's assigned tier (0 when dynamic fees are disabled) |
+| `volume_discount_bps` | `u32`  | Volume discount in basis points for the business's current attestation count (0 when dynamic fees are disabled) |
+| `dynamic_fee`         | `i128` | Tier/volume-adjusted dynamic fee: `base_fee × (10 000 − tier_bps) × (10 000 − vol_bps) ÷ 100 000 000` (0 when dynamic fees are disabled) |
+| `flat_fee`            | `i128` | Flat fee from the effective flat-fee config (0 when flat fees are disabled or unconfigured) |
+
+**Invariant:** `dynamic_fee + flat_fee == get_fee_quote(business)`.
+
+When dynamic fees are disabled, all dynamic-related fields (`base_fee`, `tier_discount_bps`, `volume_discount_bps`, `dynamic_fee`) are zero. When flat fees are disabled, `flat_fee` is zero.
+
 ## Contract API
 
 ### Initialization
@@ -118,6 +138,7 @@ One-time setup. Must be called before any admin method. The `admin` address must
 | ------------------------------ | --------------------------------------------------- |
 | `get_fee_config()`             | Current fee configuration or None                   |
 | `get_fee_quote(business)`      | Fee the business would pay for its next attestation |
+| `get_fee_quote_detailed(business)` | Itemized fee breakdown (see below)              |
 | `get_business_tier(business)`  | Tier assigned to a business (0 if unset)            |
 | `get_business_count(business)` | Cumulative attestation count                        |
 | `get_admin()`                  | Contract admin address                              |

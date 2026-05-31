@@ -67,12 +67,7 @@ fn setup() -> Setup<'static> {
 }
 
 /// Submit a single-period attestation and return the root that was stored.
-fn submit(
-    s: &Setup,
-    business: &Address,
-    period_str: &str,
-    root_byte: u8,
-) -> BytesN<32> {
+fn submit(s: &Setup, business: &Address, period_str: &str, root_byte: u8) -> BytesN<32> {
     let period = String::from_str(&s.env, period_str);
     let root = BytesN::from_array(&s.env, &[root_byte; 32]);
     s.client.submit_attestation(
@@ -248,9 +243,19 @@ fn test_mixed_results_in_batch() {
     let mut items = Vec::new(&s.env);
     items.push_back(batch_item(&s, &biz_a, "2026-01", &root_a)); // true
     items.push_back(batch_item(&s, &biz_b, "2026-01", &root_b)); // true
-    items.push_back(batch_item(&s, &biz_c, "2026-01", &BytesN::from_array(&s.env, &[0x03; 32]))); // false (revoked)
+    items.push_back(batch_item(
+        &s,
+        &biz_c,
+        "2026-01",
+        &BytesN::from_array(&s.env, &[0x03; 32]),
+    )); // false (revoked)
     let nonexistent = Address::generate(&s.env);
-    items.push_back(batch_item(&s, &nonexistent, "2026-01", &BytesN::from_array(&s.env, &[0x04; 32]))); // false (missing)
+    items.push_back(batch_item(
+        &s,
+        &nonexistent,
+        "2026-01",
+        &BytesN::from_array(&s.env, &[0x04; 32]),
+    )); // false (missing)
 
     let results = s.client.verify_attestations_batch(&items);
     assert_eq!(results.len(), 4);
@@ -343,13 +348,32 @@ fn test_batch_results_match_individual_calls() {
     let mut items = Vec::new(&s.env);
     items.push_back(batch_item(&s, &biz_a, "2026-01", &root_a));
     items.push_back(batch_item(&s, &biz_b, "2026-01", &root_b));
-    items.push_back(batch_item(&s, &biz_c, "2026-01", &BytesN::from_array(&s.env, &[0x33; 32])));
+    items.push_back(batch_item(
+        &s,
+        &biz_c,
+        "2026-01",
+        &BytesN::from_array(&s.env, &[0x33; 32]),
+    ));
 
     let batch_results = s.client.verify_attestations_batch(&items);
 
-    assert_eq!(batch_results.get(0).unwrap(), verify(&s, &biz_a, "2026-01", &root_a));
-    assert_eq!(batch_results.get(1).unwrap(), verify(&s, &biz_b, "2026-01", &root_b));
-    assert_eq!(batch_results.get(2).unwrap(), verify(&s, &biz_c, "2026-01", &BytesN::from_array(&s.env, &[0x33; 32])));
+    assert_eq!(
+        batch_results.get(0).unwrap(),
+        verify(&s, &biz_a, "2026-01", &root_a)
+    );
+    assert_eq!(
+        batch_results.get(1).unwrap(),
+        verify(&s, &biz_b, "2026-01", &root_b)
+    );
+    assert_eq!(
+        batch_results.get(2).unwrap(),
+        verify(
+            &s,
+            &biz_c,
+            "2026-01",
+            &BytesN::from_array(&s.env, &[0x33; 32])
+        )
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -463,7 +487,11 @@ fn test_no_authorization_required() {
     // Verify batch without any auth (should succeed)
     env.mock_all_auths_allowing_non_root_auth();
     let mut items = Vec::new(&env);
-    items.push_back((business.clone(), String::from_str(&env, "2026-01"), root.clone()));
+    items.push_back((
+        business.clone(),
+        String::from_str(&env, "2026-01"),
+        root.clone(),
+    ));
 
     let results = client.verify_attestations_batch(&items);
     assert_eq!(results.len(), 1);

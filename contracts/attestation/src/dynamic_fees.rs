@@ -340,7 +340,8 @@ fn get_fee_config_from_dao(env: &Env) -> Option<FeeConfig> {
     })
 }
 
-fn get_effective_fee_config(env: &Env) -> Option<FeeConfig> {
+/// Effective fee config (DAO override takes precedence over local storage).
+pub fn get_effective_fee_config(env: &Env) -> Option<FeeConfig> {
     if let Some(config) = get_fee_config_from_dao(env) {
         return Some(config);
     }
