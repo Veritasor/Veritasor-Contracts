@@ -186,6 +186,20 @@ pub fn get_business(env: &Env, business: &Address) -> Option<BusinessRecord> {
     get_record_opt(env, business)
 }
 
+/// Require that the business is registered and currently Active.
+///
+/// Panics with distinct messages for unregistered, pending, and suspended states.
+pub fn require_active_business(env: &Env, business: &Address) {
+    match get_record_opt(env, business) {
+        None => panic!("business not registered"),
+        Some(record) => match record.status {
+            BusinessStatus::Active => (),
+            BusinessStatus::Pending => panic!("business pending approval"),
+            BusinessStatus::Suspended => panic!("business is suspended"),
+        },
+    }
+}
+
 // Return the current status of `business`, or `None` if not registered.
 pub fn get_status(env: &Env, business: &Address) -> Option<BusinessStatus> {
     get_record_opt(env, business).map(|r| r.status)
