@@ -208,9 +208,9 @@ fn test_expiry_near_max_u64() {
 
     // Set a very high expiry timestamp (near u64::MAX)
     let near_max_expiry = u64::MAX - 1;
-    
+
     env.ledger().set_timestamp(1000);
-    
+
     client.submit_attestation(
         &business,
         &period,
@@ -240,9 +240,9 @@ fn test_expiry_at_u64_max() {
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
 
     let max_expiry = u64::MAX;
-    
+
     env.ledger().set_timestamp(1000);
-    
+
     client.submit_attestation(
         &business,
         &period,
@@ -272,7 +272,7 @@ fn test_expiry_at_u64_max_with_max_ledger_time() {
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
 
     let max_expiry = u64::MAX;
-    
+
     client.submit_attestation(
         &business,
         &period,
@@ -285,7 +285,7 @@ fn test_expiry_at_u64_max_with_max_ledger_time() {
 
     // Set ledger time to u64::MAX
     env.ledger().set_timestamp(u64::MAX);
-    
+
     // At exact u64::MAX time with u64::MAX expiry, should be expired (>=)
     assert!(client.is_expired(&business, &period));
 }
@@ -300,10 +300,10 @@ fn test_expiry_at_zero() {
 
     // Set expiry to 0 (Unix epoch start)
     let zero_expiry = 0u64;
-    
+
     // Set ledger time to 0 as well
     env.ledger().set_timestamp(0);
-    
+
     client.submit_attestation(
         &business,
         &period,
@@ -327,10 +327,10 @@ fn test_expiry_just_after_zero() {
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
 
     let small_expiry = 1u64;
-    
+
     // Set ledger time to 0
     env.ledger().set_timestamp(0);
-    
+
     client.submit_attestation(
         &business,
         &period,
@@ -346,7 +346,7 @@ fn test_expiry_just_after_zero() {
 
     // Advance to time 1
     env.ledger().set_timestamp(1);
-    
+
     // Now should be expired
     assert!(client.is_expired(&business, &period));
 }
@@ -360,9 +360,9 @@ fn test_expiry_one_second_before() {
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
 
     let expiry_ts = 1000u64;
-    
+
     env.ledger().set_timestamp(500);
-    
+
     client.submit_attestation(
         &business,
         &period,
@@ -387,9 +387,9 @@ fn test_expiry_one_second_after() {
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
 
     let expiry_ts = 1000u64;
-    
+
     env.ledger().set_timestamp(500);
-    
+
     client.submit_attestation(
         &business,
         &period,
@@ -417,9 +417,9 @@ fn test_expiry_large_mid_range_timestamp() {
     // Use a very large timestamp (roughly year 292 billion)
     let large_timestamp = u64::MAX / 2;
     let expiry = large_timestamp + 1000000; // One million seconds later
-    
+
     env.ledger().set_timestamp(large_timestamp);
-    
+
     client.submit_attestation(
         &business,
         &period,
@@ -447,9 +447,9 @@ fn test_verify_with_large_expiry() {
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
 
     let large_expiry = u64::MAX - 1000;
-    
+
     env.ledger().set_timestamp(1000);
-    
+
     client.submit_attestation(
         &business,
         &period,
@@ -473,7 +473,7 @@ fn test_get_attestation_preserves_large_expiry() {
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
 
     let large_expiry = u64::MAX - 1;
-    
+
     client.submit_attestation(
         &business,
         &period,
@@ -486,7 +486,7 @@ fn test_get_attestation_preserves_large_expiry() {
 
     let result = client.get_attestation(&business, &period);
     assert!(result.is_some());
-    
+
     let (_, _, _, _, _, stored_expiry) = result.unwrap();
     assert_eq!(stored_expiry, Some(large_expiry));
 }
@@ -495,7 +495,7 @@ fn test_get_attestation_preserves_large_expiry() {
 #[test]
 fn test_multiple_attestations_varying_large_expiries() {
     let (env, client, _admin) = setup();
-    
+
     env.ledger().set_timestamp(1000);
 
     // Create multiple attestations with different large expiry values
@@ -537,9 +537,9 @@ fn test_expired_attestation_queryable_with_large_timestamp() {
 
     // Set expiry that will be immediately expired
     let expiry_ts = 1u64;
-    
+
     env.ledger().set_timestamp(0);
-    
+
     client.submit_attestation(
         &business,
         &period,
@@ -561,6 +561,119 @@ fn test_expired_attestation_queryable_with_large_timestamp() {
     assert!(result.is_some());
 }
 
+// ─────────────────────────────────────────────────────────────────
+// GitHub issue #325 boundary tests
+// ─────────────────────────────────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "expiry_timestamp must be > timestamp")]
+fn test_expiry_equal_to_timestamp() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-Q1");
+    let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
+
+    let timestamp = 1000;
+    let expiry = timestamp;
+
+    env.ledger().set_timestamp(500); // Set ledger time < expiry to test first condition
+    client.submit_attestation(
+        &business,
+        &period,
+        &merkle_root,
+        &timestamp,
+        &1,
+        &None,
+        &Some(expiry),
+    );
+}
+
+#[test]
+fn test_now_equal_to_expiry_is_expired() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-Q1");
+    let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
+
+    let expiry = 2000;
+
+    env.ledger().set_timestamp(1000);
+    client.submit_attestation(
+        &business,
+        &period,
+        &merkle_root,
+        &1500,
+        &1,
+        &None,
+        &Some(expiry),
+    );
+
+    env.ledger().set_timestamp(expiry);
+    assert!(client.is_expired(&business, &period));
+}
+
+#[test]
+fn test_now_equal_to_expiry_minus_one_not_expired() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-Q1");
+    let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
+
+    let expiry = 2000;
+
+    env.ledger().set_timestamp(1000);
+    client.submit_attestation(
+        &business,
+        &period,
+        &merkle_root,
+        &1500,
+        &1,
+        &None,
+        &Some(expiry),
+    );
+
+    env.ledger().set_timestamp(expiry - 1);
+    assert!(!client.is_expired(&business, &period));
+}
+
+#[test]
+fn test_expiry_equal_to_now_plus_one_not_expired() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-Q1");
+    let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
+
+    env.ledger().set_timestamp(1000);
+    let expiry = 1001;
+
+    client.submit_attestation(
+        &business,
+        &period,
+        &merkle_root,
+        &999,
+        &1,
+        &None,
+        &Some(expiry),
+    );
+
+    assert!(!client.is_expired(&business, &period));
+}
+
+#[test]
+fn test_none_expiry_never_expires() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-Q1");
+    let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
+
+    env.ledger().set_timestamp(1000);
+    client.submit_attestation(&business, &period, &merkle_root, &1000, &1, &None, &None);
+
+    // Advance time very far into the future
+    env.ledger().set_timestamp(u64::MAX);
+    assert!(!client.is_expired(&business, &period));
+}
+
 /// Test expiry behavior with timestamp rollover scenarios.
 /// This tests the case where we're near the boundary and check expiry.
 #[test]
@@ -572,9 +685,9 @@ fn test_expiry_near_boundary() {
 
     // Set expiry very close to u64::MAX
     let expiry_ts = u64::MAX - 10;
-    
+
     env.ledger().set_timestamp(u64::MAX - 100);
-    
+
     client.submit_attestation(
         &business,
         &period,
@@ -606,7 +719,7 @@ fn test_expiry_near_boundary() {
 fn test_expiry_comparison_semantics_at_boundary() {
     let (env, client, _admin) = setup();
     let business = Address::generate(&env);
-    
+
     env.ledger().set_timestamp(1000);
 
     // Test multiple boundary cases - using values that won't overflow when added to 1000
@@ -620,9 +733,9 @@ fn test_expiry_comparison_semantics_at_boundary() {
     for (delta, period_str) in test_cases.iter() {
         let period = String::from_str(&env, period_str);
         let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
-        
+
         let expiry = 1000 + delta;
-        
+
         client.submit_attestation(
             &business,
             &period,
@@ -652,9 +765,9 @@ fn test_past_expiry_immediately_expired() {
 
     // Set expiry in the past
     let past_expiry = 100u64;
-    
+
     env.ledger().set_timestamp(1000);
-    
+
     client.submit_attestation(
         &business,
         &period,
