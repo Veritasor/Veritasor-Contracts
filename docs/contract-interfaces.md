@@ -374,6 +374,27 @@ Return extended metadata for (business, period).
 
 ---
 
+#### `cleanup_expired_attestation(caller: Address, business: Address, period: String) -> ()`
+
+Remove expired attestation storage and associated metadata for a business-period pair.
+
+**Parameters:**
+| Name | Type | Description |
+|------|------|-------------|
+| `caller` | `Address` | Caller address, must be admin or the business owner |
+| `business` | `Address` | Business address owning the attestation |
+| `period` | `String` | Period identifier |
+
+**Returns:** `()` - No return value
+
+**Panics:**
+- if the attestation does not exist
+- if the attestation is not expired
+- if the attestation is revoked
+- if the attestation is part of an open dispute
+
+---
+
 #### `verify_attestation(business: Address, period: String, merkle_root: BytesN<32>) -> bool`
 
 Verify that an attestation exists, is not revoked, and merkle root matches.

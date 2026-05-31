@@ -413,6 +413,21 @@ pub fn is_attestation_revoked(env: &Env, business: &Address, period: &String) ->
     env.storage().instance().has(&key)
 }
 
+/// Returns true when an attestation has an open dispute associated with it.
+pub fn has_open_dispute(env: &Env, business: &Address, period: &String) -> bool {
+    let dispute_ids = get_dispute_ids_by_attestation(env, business, period);
+    for i in 0..dispute_ids.len() {
+        if let Some(dispute_id) = dispute_ids.get(i) {
+            if let Some(dispute) = get_dispute(env, dispute_id) {
+                if dispute.status == DisputeStatus::Open {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Loads revocation metadata for an attestation, if present.
 pub fn get_attestation_revocation(
     env: &Env,

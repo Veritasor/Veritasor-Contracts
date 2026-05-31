@@ -94,6 +94,8 @@ pub const TOPIC_ATTESTATION_SUBMITTED: Symbol = symbol_short!("att_sub");
 pub const TOPIC_ATTESTATION_REVOKED: Symbol = symbol_short!("att_rev");
 /// Topic: attestation migrated to a new version
 pub const TOPIC_ATTESTATION_MIGRATED: Symbol = symbol_short!("att_mig");
+/// Topic: attestation cleaned up after expiry
+pub const TOPIC_ATTESTATION_CLEANED_UP: Symbol = symbol_short!("att_cl");
 /// Topic: role granted to an address
 pub const TOPIC_ROLE_GRANTED: Symbol = symbol_short!("role_gr");
 /// Topic: role revoked from an address
@@ -213,6 +215,20 @@ pub struct AttestationMigratedEvent {
     pub new_version: u32,
     /// Address that performed the migration (must hold ADMIN role).
     pub migrated_by: Address,
+}
+
+/// Normalized payload for `AttestationCleanedUp` events.
+///
+/// Emitted when an expired attestation is deleted to reclaim storage.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AttestationCleanedUpEvent {
+    /// Business address whose expired attestation was cleaned up.
+    pub business: Address,
+    /// Period identifier of the cleaned up attestation.
+    pub period: String,
+    /// Ledger timestamp when cleanup occurred.
+    pub cleanup_timestamp: u64,
 }
 
 // ── Access control ────────────────────────────────────────────────
@@ -550,6 +566,34 @@ pub fn emit_attestation_migrated(
     };
     env.events()
         .publish((TOPIC_ATTESTATION_MIGRATED, business.clone()), event);
+}
+
+/// Emit an `AttestationCleanedUp` event.
+///
+/// Call this after an expired attestation and its metadata have been removed.
+///
+/// # Arguments
+///
+/// * `env`               – Soroban execution environment.
+/// * `business`          – Business whose attestation was cleaned up.
+/// * `period`            – Period identifier.
+/// * `cleanup_timestamp` – Ledger timestamp of the cleanup.
+///
+/// # Events
+///
+/// Publishes `(att_cl, business)` → `AttestationCleanedUpEvent`.
+pub fn emit_attestation_cleaned_up(
+    env: &Env,
+    business: &Address,
+    period: &String,
+) {
+    let event = AttestationCleanedUpEvent {
+        business: business.clone(),
+        period: period.clone(),
+        cleanup_timestamp: env.ledger().timestamp(),
+    };
+    env.events()
+        .publish((TOPIC_ATTESTATION_CLEANED_UP, business.clone()), event);
 }
 
 /// Normalized payload for `AttestationExpiryExtended` events.

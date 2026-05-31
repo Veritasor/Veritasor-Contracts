@@ -60,8 +60,8 @@ pub use dispute::{
 };
 pub use dynamic_fees::{compute_fee, DataKey, FeeConfig};
 pub use events::{
-    AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent,
-    ProofHashUpdatedEvent,
+    AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
+    AttestationSubmittedEvent, ProofHashUpdatedEvent,
 };
 pub use fees::{collect_flat_fee, FlatFeeConfig};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
@@ -514,6 +514,47 @@ impl AttestationContract {
             return Self::attestation_expired(&env, &data);
         }
         false
+    }
+
+    /// Remove expired attestation storage for a business-period pair.
+    ///
+    /// This method is callable by the business owner or an admin only.
+    /// It panics if the attestation does not exist, is not expired, is revoked,
+    /// or is currently part of an open dispute.
+    pub fn cleanup_expired_attestation(
+        env: Env,
+        caller: Address,
+        business: Address,
+        period: String,
+    ) {
+        caller.require_auth();
+        let caller_is_admin = *caller == dynamic_fees::get_admin(&env)
+            || access_control::has_role(&env, &caller, ROLE_ADMIN);
+        assert!(caller_is_admin || caller == business, "caller must be ADMIN or the business owner");
+
+        let key = DataKey::Attestation(business.clone(), period.clone());
+        let attestation: AttestationData = env
+            .storage()
+            .instance()
+            .get(&key)
+            .expect("attestation not found");
+
+        assert!(
+            Self::attestation_expired(&env, &attestation),
+            "attestation not expired"
+        );
+        assert!(
+            !dispute::is_attestation_revoked(&env, &business, &period),
+            "attestation revoked"
+        );
+        assert!(
+            !dispute::has_open_dispute(&env, &business, &period),
+            "attestation has an open dispute"
+        );
+
+        env.storage().instance().remove(&key);
+        extended_metadata::remove_metadata(&env, &business, &period);
+        events::emit_attestation_cleaned_up(&env, &business, &period);
     }
 
     pub fn get_revocation_info(
@@ -1095,7 +1136,8 @@ impl AttestationContract {
 
     pub fn cancel_key_rotation(env: Env) {
         let admin = dynamic_fees::require_admin(&env);
-        veritasor_common::key_rotation::cancel_rotation(&env, &admin);
+    admin.require_auth();
+    veritasor_common::key_rotation::cancel_rotation(&env, &admin);
     }
 
     pub fn has_pending_key_rotation(env: Env) -> bool {
