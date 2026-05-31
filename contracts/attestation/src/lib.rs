@@ -992,7 +992,8 @@ impl AttestationContract {
 
     pub fn cancel_key_rotation(env: Env) {
         let admin = dynamic_fees::require_admin(&env);
-        veritasor_common::key_rotation::cancel_rotation(&env, &admin);
+    admin.require_auth();
+    veritasor_common::key_rotation::cancel_rotation(&env, &admin);
     }
 
     pub fn has_pending_key_rotation(env: Env) -> bool {
