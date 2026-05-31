@@ -119,10 +119,8 @@ pub const MAX_BATCH_SIZE_VERIFY: u32 = 30;
 #[contract]
 pub struct AttestationContract;
 
-/// Lexicographic comparison of Soroban strings.
-fn compare_strings(a: &String, b: &String) -> Ordering {
-    a.cmp(b)
-}
+#[cfg(test)]
+mod active_submission_test;
 
 #[contractimpl]
 impl AttestationContract {
@@ -277,9 +275,11 @@ impl AttestationContract {
     ) {
         access_control::require_not_paused(&env);
         business.require_auth();
+        registry::require_active_business(&env, &business);
 
-        if registry::get_status(&env, &business) == Some(BusinessStatus::Suspended) {
-            panic!("business is suspended");
+        let key = DataKey::Attestation(business.clone(), period.clone());
+        if env.storage().instance().has(&key) {
+            panic!("attestation exists");
         }
 
         rate_limit::check_rate_limit(&env, &business);
@@ -327,92 +327,68 @@ impl AttestationContract {
     }
 
     pub fn submit_attestations_batch(env: Env, items: Vec<BatchAttestationItem>) {
-        access_control::require_not_paused(&env);
-        if items.is_empty() {
+        if items.len() == 0 {
             panic!("batch cannot be empty");
         }
-        if items.len() > MAX_BATCH_SIZE {
-            panic!("batch exceeds maximum size");
-        }
 
-        // 1. Validation Phase
-        let mut seen = Vec::new(&env);
-        let mut authed_businesses = Vec::new(&env);
+        let mut seen: Vec<(Address, String)> = Vec::new(&env);
         for item in items.iter() {
-            // Enforce non-empty period validation inside batch pipelines
-            Self::validate_period(&item.period);
+            let business = item.business.clone();
+            business.require_auth();
+            registry::require_active_business(&env, &business);
 
-            // Only require_auth once per unique business in the batch
-            let mut already_authed = false;
-            for b in authed_businesses.iter() {
-                if b == item.business {
-                    already_authed = true;
-                    break;
-                }
-            }
-            if !already_authed {
-                item.business.require_auth();
-                authed_businesses.push_back(item.business.clone());
-            }
-
-            if registry::get_status(&env, &item.business) == Some(BusinessStatus::Suspended) {
-                panic!("business is suspended");
-            }
-
-            let pair = (item.business.clone(), item.period.clone());
-            for s in seen.iter() {
-                if s == pair {
+            for existing in seen.iter() {
+                let existing = existing.clone();
+                if existing.0 == business && existing.1 == item.period {
                     panic!("duplicate attestation in batch");
                 }
             }
-            seen.push_back(pair);
+            seen.push_back((business.clone(), item.period.clone()));
 
-            let key = DataKey::Attestation(item.business.clone(), item.period.clone());
+            let key = DataKey::Attestation(business.clone(), item.period.clone());
             if env.storage().instance().has(&key) {
-                panic!("attestation already exists for this business and period");
+                panic!("attestation already exists");
             }
-
-            Self::validate_expiry(&env, item.timestamp, item.expiry_timestamp);
         }
 
-        // 2. Processing Phase
         for item in items.iter() {
-            let dynamic_fee = dynamic_fees::collect_fee(&env, &item.business);
-            let flat_fee = fees::collect_flat_fee(&env, &item.business);
-            let total_fee = dynamic_fee + flat_fee;
+            let business = item.business.clone();
+            let key = DataKey::Attestation(business.clone(), item.period.clone());
+            let fee = dynamic_fees::collect_fee(&env, &business);
+            dynamic_fees::increment_business_count(&env, &business);
 
-            dynamic_fees::increment_business_count(&env, &item.business);
-
-            let data: AttestationData = (
+            let proof_hash: Option<BytesN<32>> = None;
+            let data = (
                 item.merkle_root.clone(),
                 item.timestamp,
                 item.version,
-                total_fee,
-                item.proof_hash.clone(),
+                fee,
+                proof_hash.clone(),
                 item.expiry_timestamp,
             );
-            let key = DataKey::Attestation(item.business.clone(), item.period.clone());
             env.storage().instance().set(&key, &data);
 
             events::emit_attestation_submitted(
                 &env,
-                &item.business,
+                &business,
                 &item.period,
                 &item.merkle_root,
                 item.timestamp,
                 item.version,
-                total_fee,
-                &item.proof_hash,
+                fee,
+                &proof_hash,
                 item.expiry_timestamp,
             );
-
-            rate_limit::record_submission(&env, &item.business);
         }
+    }
 
-        // Extend TTL after writing
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+    pub fn get_attestation(
+        env: Env,
+        business: Address,
+        period: String,
+    ) -> Option<AttestationData> {
+        let key = DataKey::Attestation(business, period);
+        env.storage().instance().get(&key)
     }
 
     pub fn is_expired(env: Env, business: Address, period: String) -> bool {
