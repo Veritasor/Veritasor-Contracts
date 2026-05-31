@@ -121,7 +121,7 @@ fn register_sets_timestamps() {
 
 #[test]
 #[should_panic(expected = "business already registered")]
-fn duplicate_registration_panics() {
+fn duplicate_registration_panics_when_pending() {
     let ctx = Ctx::new();
     let business = Address::generate(&ctx.env);
     ctx.client.grant_role(&ctx.admin, &business, &ROLE_BUSINESS);
@@ -137,6 +137,34 @@ fn duplicate_registration_panics() {
 }
 
 #[test]
+#[should_panic(expected = "business already registered")]
+fn duplicate_registration_panics_when_active() {
+    let ctx = Ctx::new();
+    let business = ctx.active();
+
+    ctx.client.register_business(
+        &business,
+        &BytesN::from_array(&ctx.env, &[2u8; 32]),
+        &Symbol::new(&ctx.env, "CA"),
+        &Vec::new(&ctx.env),
+    );
+}
+
+#[test]
+#[should_panic(expected = "business already registered")]
+fn duplicate_registration_panics_when_suspended() {
+    let ctx = Ctx::new();
+    let business = ctx.suspended();
+
+    ctx.client.register_business(
+        &business,
+        &BytesN::from_array(&ctx.env, &[3u8; 32]),
+        &Symbol::new(&ctx.env, "NG"),
+        &Vec::new(&ctx.env),
+    );
+}
+
+#[test]
 #[should_panic(expected = "caller does not have BUSINESS role")]
 fn register_without_role_panics() {
     let ctx = Ctx::new();
@@ -145,6 +173,23 @@ fn register_without_role_panics() {
     ctx.client.register_business(
         &business,
         &BytesN::from_array(&ctx.env, &[1u8; 32]),
+        &Symbol::new(&ctx.env, "US"),
+        &Vec::new(&ctx.env),
+    );
+}
+
+#[test]
+#[should_panic(expected = "caller does not have BUSINESS role")]
+fn register_checks_role_before_duplicate_registration() {
+    let ctx = Ctx::new();
+    let business = ctx.pending();
+
+    ctx.client
+        .revoke_role(&ctx.admin, &business, &ROLE_BUSINESS);
+
+    ctx.client.register_business(
+        &business,
+        &BytesN::from_array(&ctx.env, &[4u8; 32]),
         &Symbol::new(&ctx.env, "US"),
         &Vec::new(&ctx.env),
     );
@@ -403,6 +448,39 @@ fn update_tags_valid_in_any_state() {
     ctx.client.update_business_tags(&ctx.admin, &active, &tags);
     ctx.client
         .update_business_tags(&ctx.admin, &suspended, &tags);
+}
+
+#[test]
+fn update_tags_replaces_tag_set_without_changing_status() {
+    let ctx = Ctx::new();
+    let pending = ctx.pending();
+    let active = ctx.active();
+    let suspended = ctx.suspended();
+
+    let mut tags = Vec::new(&ctx.env);
+    tags.push_back(symbol_short!("kyb"));
+    tags.push_back(symbol_short!("risk"));
+
+    ctx.client.update_business_tags(&ctx.admin, &pending, &tags);
+    ctx.client.update_business_tags(&ctx.admin, &active, &tags);
+    ctx.client
+        .update_business_tags(&ctx.admin, &suspended, &tags);
+
+    assert_eq!(
+        ctx.client.get_business_status(&pending),
+        Some(BusinessStatus::Pending)
+    );
+    assert_eq!(
+        ctx.client.get_business_status(&active),
+        Some(BusinessStatus::Active)
+    );
+    assert_eq!(
+        ctx.client.get_business_status(&suspended),
+        Some(BusinessStatus::Suspended)
+    );
+    assert_eq!(ctx.client.get_business(&pending).unwrap().tags.len(), 2);
+    assert_eq!(ctx.client.get_business(&active).unwrap().tags.len(), 2);
+    assert_eq!(ctx.client.get_business(&suspended).unwrap().tags.len(), 2);
 }
 
 #[test]

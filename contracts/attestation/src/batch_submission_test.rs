@@ -1096,3 +1096,201 @@ fn test_batch_empty_still_rejected() {
     let (env, client) = setup();
     client.submit_attestations_batch(&Vec::new(&env));
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  Issue #377: Stress Tests for MAX_BATCH_SIZE Ceiling
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_batch_stress_max_size_ceiling_25_items_mixed_businesses() {
+    // Stress test: MAX_BATCH_SIZE = 25 with 5 unique businesses, 5 items each.
+    // This is the 25 × 25 = 625 comparison ceiling for duplicate detection.
+    let (env, client) = setup();
+
+    let mut items = Vec::new(&env);
+    
+    // Generate 5 businesses, 5 unique periods each
+    for b_idx in 0..5 {
+        let business = Address::generate(&env);
+        for p_idx in 0..5 {
+            let period = String::from_str(
+                &env,
+                &std::format!("2026-{:02}", b_idx * 5 + p_idx + 1),
+            );
+            let mut root = [0u8; 32];
+            root[0] = (b_idx * 5 + p_idx) as u8;
+            items.push_back(BatchAttestationItem {
+                business: business.clone(),
+                period,
+                merkle_root: BytesN::from_array(&env, &root),
+                timestamp: 1_700_000_000u64,
+                version: 1u32,
+                proof_hash: None,
+                expiry_timestamp: None,
+            });
+        }
+    }
+
+    assert_eq!(items.len() as u32, MAX_BATCH_SIZE);
+    
+    // Should succeed: 25 items is at ceiling
+    client.submit_attestations_batch(&items);
+}
+
+#[test]
+fn test_batch_stress_max_size_all_items_created() {
+    // Verify all 25 items are stored after batch submission.
+    let (env, client) = setup();
+    
+    let mut items = Vec::new(&env);
+    let businesses: Vec<Address> = (0..5)
+        .map(|_| Address::generate(&env))
+        .collect::<Vec<_>>();
+    
+    for b_idx in 0..5 {
+        for p_idx in 0..5 {
+            let period = String::from_str(
+                &env,
+                &std::format!("2026-B{}-P{}", b_idx, p_idx),
+            );
+            let mut root = [0u8; 32];
+            root[0] = (b_idx * 5 + p_idx) as u8;
+            root[1] = 0xABu8;
+            items.push_back(BatchAttestationItem {
+                business: businesses[b_idx as usize].clone(),
+                period,
+                merkle_root: BytesN::from_array(&env, &root),
+                timestamp: 1_700_000_000u64,
+                version: 1u32,
+                proof_hash: None,
+                expiry_timestamp: None,
+            });
+        }
+    }
+
+    client.submit_attestations_batch(&items);
+
+    // Verify counts per business
+    for b_idx in 0..5 {
+        assert_eq!(client.get_business_count(&businesses[b_idx as usize]), 5u64);
+    }
+}
+
+#[test]
+#[should_panic(expected = "batch exceeds maximum size")]
+fn test_batch_stress_one_over_ceiling_panics() {
+    // Stress test: batch of 26 items must panic with "batch exceeds maximum size".
+    let (env, client) = setup();
+
+    let mut items = Vec::new(&env);
+    
+    // Generate 26 items (one over MAX_BATCH_SIZE = 25)
+    for i in 0..26 {
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
+        let mut root = [0u8; 32];
+        root[0] = (i as u8) % 256;
+        items.push_back(BatchAttestationItem {
+            business,
+            period,
+            merkle_root: BytesN::from_array(&env, &root),
+            timestamp: 1_700_000_000u64,
+            version: 1u32,
+            proof_hash: None,
+            expiry_timestamp: None,
+        });
+    }
+
+    // Must panic
+    client.submit_attestations_batch(&items);
+}
+
+#[test]
+#[should_panic(expected = "duplicate")]
+fn test_batch_stress_duplicates_within_batch_panic() {
+    // Verify that duplicate detection works: if batch has duplicate (business, period),
+    // it should panic with "duplicate" rather than "batch exceeds maximum size".
+    let (env, client) = setup();
+
+    let business = Address::generate(&env);
+    let mut items = Vec::new(&env);
+
+    // Add 25 unique items to fill batch
+    for i in 0..25 {
+        let period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
+        let mut root = [0u8; 32];
+        root[0] = i as u8;
+        items.push_back(BatchAttestationItem {
+            business: business.clone(),
+            period,
+            merkle_root: BytesN::from_array(&env, &root),
+            timestamp: 1_700_000_000u64,
+            version: 1u32,
+            proof_hash: None,
+            expiry_timestamp: None,
+        });
+    }
+
+    // All unique within batch, submit successfully
+    client.submit_attestations_batch(&items);
+
+    // Now try batch with duplicate periods (same business, same period, different root)
+    let mut dup_items = Vec::new(&env);
+    for i in 0..10 {
+        let period = String::from_str(&env, &std::format!("2026-DUP-{:02}", i + 1));
+        let mut root = [0u8; 32];
+        root[0] = i as u8;
+        dup_items.push_back(BatchAttestationItem {
+            business: business.clone(),
+            period: period.clone(),
+            merkle_root: BytesN::from_array(&env, &root),
+            timestamp: 1_700_000_000u64,
+            version: 1u32,
+            proof_hash: None,
+            expiry_timestamp: None,
+        });
+        
+        // Add duplicate to the same batch (same period, different root)
+        let mut root2 = [0u8; 32];
+        root2[0] = (i + 100) as u8;
+        dup_items.push_back(BatchAttestationItem {
+            business: business.clone(),
+            period,
+            merkle_root: BytesN::from_array(&env, &root2),
+            timestamp: 1_700_000_000u64,
+            version: 1u32,
+            proof_hash: None,
+            expiry_timestamp: None,
+        });
+    }
+
+    // Must panic on duplicate, not on size
+    client.submit_attestations_batch(&dup_items);
+}
+
+#[test]
+fn test_batch_stress_boundary_24_items_succeeds() {
+    // Test just under ceiling: 24 items should succeed.
+    let (env, client) = setup();
+
+    let mut items = Vec::new(&env);
+    for i in 0..24 {
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
+        let mut root = [0u8; 32];
+        root[0] = i as u8;
+        items.push_back(BatchAttestationItem {
+            business,
+            period,
+            merkle_root: BytesN::from_array(&env, &root),
+            timestamp: 1_700_000_000u64,
+            version: 1u32,
+            proof_hash: None,
+            expiry_timestamp: None,
+        });
+    }
+
+    assert_eq!(items.len() as u32, 24);
+    client.submit_attestations_batch(&items);
+}
+
