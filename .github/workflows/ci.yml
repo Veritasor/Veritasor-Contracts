@@ -10,6 +10,22 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  event-schema-guard:
+    name: Event Schema Version Guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify event schema snapshot is up to date
+        run: |
+          chmod +x scripts/check_event_schema.sh
+          ./scripts/check_event_schema.sh
+
+      - name: Run event schema tests
+        run: |
+          chmod +x scripts/tests/test_check_event_schema.sh
+          ./scripts/tests/test_check_event_schema.sh
+
   check:
     name: Check
     runs-on: ubuntu-latest

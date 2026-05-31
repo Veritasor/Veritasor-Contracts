@@ -1,0 +1,2 @@
+version=1
+struct_hash=5761bd8f9e8de934f73641fa163b6ce561a30c1adde0a9160617cb70bd976700
