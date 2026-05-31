@@ -85,6 +85,7 @@ pub struct AttestationRange {
 #[contracttype]
 pub enum MultiPeriodKey {
     Ranges(Address),
+    RootIndex(Address, BytesN<32>),
 }
 
 /// A single item in a batch attestation submission.
@@ -585,7 +586,7 @@ impl AttestationContract {
         merkle_root: BytesN<32>,
         timestamp: u64,
         version: u32,
-        proof_hash: Option<BytesN<32>>,
+        _proof_hash: Option<BytesN<32>>,
         _expiry_timestamp: Option<u64>,
     ) {
         business.require_auth();
@@ -621,6 +622,12 @@ impl AttestationContract {
         });
 
         env.storage().instance().set(&key, &ranges);
+
+        // Populate reverse index: merkle_root -> range position for O(1) revocation lookup
+        let index_key = MultiPeriodKey::RootIndex(business.clone(), merkle_root.clone());
+        let range_index = (ranges.len() - 1) as u32;
+        env.storage().instance().set(&index_key, &range_index);
+
         events::emit_multi_period_issued(&env, &business, start_period, end_period, &merkle_root);
     }
 
@@ -818,25 +825,28 @@ impl AttestationContract {
 
     pub fn revoke_multi_period_attestation(env: Env, business: Address, merkle_root: BytesN<32>) {
         business.require_auth();
-        let key = MultiPeriodKey::Ranges(business.clone());
-        let ranges: Vec<AttestationRange> = env
+        
+        // O(1) lookup via index instead of O(n) linear scan
+        let index_key = MultiPeriodKey::RootIndex(business.clone(), merkle_root.clone());
+        let range_index: u32 = env
             .storage()
             .instance()
-            .get(&key)
+            .get(&index_key)
+            .expect("root not found");
+
+        let ranges_key = MultiPeriodKey::Ranges(business.clone());
+        let mut ranges: Vec<AttestationRange> = env
+            .storage()
+            .instance()
+            .get(&ranges_key)
             .expect("no multi-period attestations");
-        let mut found = false;
-        let mut updated = Vec::new(&env);
-        for mut range in ranges.iter() {
-            if range.merkle_root == merkle_root {
-                range.revoked = true;
-                found = true;
-            }
-            updated.push_back(range);
-        }
-        if !found {
-            panic!("root not found");
-        }
-        env.storage().instance().set(&key, &updated);
+
+        // Mutate only the target range
+        let mut target_range = ranges.get(range_index).expect("invalid range index");
+        target_range.revoked = true;
+        ranges.set(range_index, target_range);
+
+        env.storage().instance().set(&ranges_key, &ranges);
     }
 
     /// Admin: set the DAO contract address for dynamic fee config override.
