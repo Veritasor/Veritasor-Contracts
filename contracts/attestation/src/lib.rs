@@ -116,6 +116,11 @@ pub const MAX_BATCH_SIZE: u32 = 25;
 /// and practical use cases.
 pub const MAX_BATCH_SIZE_VERIFY: u32 = 30;
 
+#[soroban_sdk::contractclient(name = "AttestorStakingClient")]
+pub trait AttestorStakingContractTrait {
+    fn is_eligible(env: Env, attestor: Address) -> bool;
+}
+
 #[contract]
 pub struct AttestationContract;
 
@@ -304,8 +309,7 @@ impl AttestationContract {
         let staking_addr = Self::get_attestor_staking_contract(env.clone())
             .expect("staking contract not configured");
 
-        let staking_client =
-            veritasor_attestor_staking::AttestorStakingContractClient::new(&env, &staking_addr);
+        let staking_client = AttestorStakingClient::new(&env, &staking_addr);
         if !staking_client.is_eligible(&attestor) {
             panic!("attestor is not eligible");
         }
@@ -357,8 +361,7 @@ impl AttestationContract {
         let staking_addr = Self::get_attestor_staking_contract(env.clone())
             .expect("staking contract not configured");
 
-        let staking_client =
-            veritasor_attestor_staking::AttestorStakingContractClient::new(&env, &staking_addr);
+        let staking_client = AttestorStakingClient::new(&env, &staking_addr);
         if !staking_client.is_eligible(&attestor) {
             panic!("attestor is not eligible");
         }
