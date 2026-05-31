@@ -1,0 +1,227 @@
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /workspaces/Veritasor-Contracts/contracts/aggregated-attestations/Cargo.toml
+workspace: /workspaces/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /workspaces/Veritasor-Contracts/contracts/attestation-snapshot/Cargo.toml
+workspace: /workspaces/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /workspaces/Veritasor-Contracts/contracts/attestation/Cargo.toml
+workspace: /workspaces/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /workspaces/Veritasor-Contracts/contracts/attestor-staking/Cargo.toml
+workspace: /workspaces/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /workspaces/Veritasor-Contracts/contracts/integration-registry/Cargo.toml
+workspace: /workspaces/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /workspaces/Veritasor-Contracts/contracts/audit-log/Cargo.toml
+workspace: /workspaces/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /workspaces/Veritasor-Contracts/contracts/business-config/Cargo.toml
+workspace: /workspaces/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /workspaces/Veritasor-Contracts/contracts/network-config/Cargo.toml
+workspace: /workspaces/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /workspaces/Veritasor-Contracts/contracts/protocol-dao/Cargo.toml
+workspace: /workspaces/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /workspaces/Veritasor-Contracts/contracts/protocol-simulation/Cargo.toml
+workspace: /workspaces/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /workspaces/Veritasor-Contracts/contracts/revenue-bonds/Cargo.toml
+workspace: /workspaces/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /workspaces/Veritasor-Contracts/contracts/revenue-stream/Cargo.toml
+workspace: /workspaces/Veritasor-Contracts/Cargo.toml
+   Compiling veritasor-attestation v0.1.0 (/workspaces/Veritasor-Contracts/contracts/attestation)
+warning: unused import: `core::cmp::Ordering`
+ --> contracts/attestation/src/lib.rs:2:5
+  |
+2 | use core::cmp::Ordering;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Symbol`
+ --> contracts/attestation/src/lib.rs:3:87
+  |
+3 | ..., Address, BytesN, Env, String, Symbol, Vec};
+  |                                    ^^^^^^
+
+warning: unused import: `veritasor_attestor_staking::AttestorStakingContractClient`
+  --> contracts/attestation/src/lib.rs:15:5
+   |
+15 | use veritasor_attestor_staking::AttestorStakingContractClient;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `to_string` found for reference `&str` in the current scope
+  --> contracts/attestation/src/active_submission_test.rs:18:14
+   |
+18 |         (*s).to_string()
+   |              ^^^^^^^^^ method not found in `&str`
+   |
+   = help: items from traits can only be used if the trait is in scope
+help: trait `ToString` which provides `to_string` is implemented but not in scope; perhaps you want to import it
+   |
+ 3 + use crate::active_submission_test::std::string::ToString;
+   |
+
+error[E0277]: the trait bound `soroban_sdk::String: From<&str>` is not satisfied
+   --> contracts/attestation/src/active_submission_test.rs:64:52
+    |
+ 64 | ...ge(result.unwrap_err()), String::from("business not registered"));
+    |                             ^^^^^^ the trait `From<&str>` is not implemented for `soroban_sdk::String`
+    |
+help: the trait `From<&str>` is not implemented for `soroban_sdk::String`
+      but trait `From<&soroban_sdk::String>` is implemented for it
+   --> /home/codespace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/soroban-sdk-22.0.11/src/string.rs:135:1
+    |
+135 | impl From<&String> for String {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for that trait implementation, expected `soroban_sdk::String`, found `str`
+
+error[E0277]: can't compare `active_submission_test::std::string::String` with `soroban_sdk::String`
+  --> contracts/attestation/src/active_submission_test.rs:64:5
+   |
+64 |     assert_eq!(panic_message(result.unwrap_err()), String::from("business not registered"));
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no implementation for `active_submission_test::std::string::String == soroban_sdk::String`
+   |
+   = help: the trait `PartialEq<soroban_sdk::String>` is not implemented for `active_submission_test::std::string::String`
+   = help: `active_submission_test::std::string::String` implements trait `PartialEq<Rhs>`:
+             PartialEq<&str>
+             PartialEq<ByteStr>
+             PartialEq<ByteString>
+             PartialEq<Cow<'_, str>>
+             PartialEq<Path>
+             PartialEq<PathBuf>
+             PartialEq<serde_json::value::Value>
+             PartialEq<str>
+             PartialEq
+
+error[E0277]: the trait bound `soroban_sdk::String: From<&str>` is not satisfied
+   --> contracts/attestation/src/active_submission_test.rs:80:52
+    |
+ 80 | ...ge(result.unwrap_err()), String::from("business pending approval"));
+    |                             ^^^^^^ the trait `From<&str>` is not implemented for `soroban_sdk::String`
+    |
+help: the trait `From<&str>` is not implemented for `soroban_sdk::String`
+      but trait `From<&soroban_sdk::String>` is implemented for it
+   --> /home/codespace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/soroban-sdk-22.0.11/src/string.rs:135:1
+    |
+135 | impl From<&String> for String {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for that trait implementation, expected `soroban_sdk::String`, found `str`
+
+error[E0277]: can't compare `active_submission_test::std::string::String` with `soroban_sdk::String`
+  --> contracts/attestation/src/active_submission_test.rs:80:5
+   |
+80 |     assert_eq!(panic_message(result.unwrap_err()), String::from("business pending approval"));
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no implementation for `active_submission_test::std::string::String == soroban_sdk::String`
+   |
+   = help: the trait `PartialEq<soroban_sdk::String>` is not implemented for `active_submission_test::std::string::String`
+   = help: `active_submission_test::std::string::String` implements trait `PartialEq<Rhs>`:
+             PartialEq<&str>
+             PartialEq<ByteStr>
+             PartialEq<ByteString>
+             PartialEq<Cow<'_, str>>
+             PartialEq<Path>
+             PartialEq<PathBuf>
+             PartialEq<serde_json::value::Value>
+             PartialEq<str>
+             PartialEq
+
+error[E0277]: the trait bound `soroban_sdk::String: From<&str>` is not satisfied
+   --> contracts/attestation/src/active_submission_test.rs:102:52
+    |
+102 | ...ge(result.unwrap_err()), String::from("business is suspended"));
+    |                             ^^^^^^ the trait `From<&str>` is not implemented for `soroban_sdk::String`
+    |
+help: the trait `From<&str>` is not implemented for `soroban_sdk::String`
+      but trait `From<&soroban_sdk::String>` is implemented for it
+   --> /home/codespace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/soroban-sdk-22.0.11/src/string.rs:135:1
+    |
+135 | impl From<&String> for String {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for that trait implementation, expected `soroban_sdk::String`, found `str`
+
+error[E0277]: can't compare `active_submission_test::std::string::String` with `soroban_sdk::String`
+   --> contracts/attestation/src/active_submission_test.rs:102:5
+    |
+102 |     assert_eq!(panic_message(result.unwrap_err()), String::from("business is suspended"));
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no implementation for `active_submission_test::std::string::String == soroban_sdk::String`
+    |
+    = help: the trait `PartialEq<soroban_sdk::String>` is not implemented for `active_submission_test::std::string::String`
+    = help: `active_submission_test::std::string::String` implements trait `PartialEq<Rhs>`:
+              PartialEq<&str>
+              PartialEq<ByteStr>
+              PartialEq<ByteString>
+              PartialEq<Cow<'_, str>>
+              PartialEq<Path>
+              PartialEq<PathBuf>
+              PartialEq<serde_json::value::Value>
+              PartialEq<str>
+              PartialEq
+
+error[E0277]: the trait bound `soroban_sdk::String: From<&str>` is not satisfied
+   --> contracts/attestation/src/active_submission_test.rs:154:52
+    |
+154 | ...ge(result.unwrap_err()), String::from("business pending approval"));
+    |                             ^^^^^^ the trait `From<&str>` is not implemented for `soroban_sdk::String`
+    |
+help: the trait `From<&str>` is not implemented for `soroban_sdk::String`
+      but trait `From<&soroban_sdk::String>` is implemented for it
+   --> /home/codespace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/soroban-sdk-22.0.11/src/string.rs:135:1
+    |
+135 | impl From<&String> for String {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for that trait implementation, expected `soroban_sdk::String`, found `str`
+
+error[E0277]: can't compare `active_submission_test::std::string::String` with `soroban_sdk::String`
+   --> contracts/attestation/src/active_submission_test.rs:154:5
+    |
+154 |     assert_eq!(panic_message(result.unwrap_err()), String::from("business pending approval"));
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no implementation for `active_submission_test::std::string::String == soroban_sdk::String`
+    |
+    = help: the trait `PartialEq<soroban_sdk::String>` is not implemented for `active_submission_test::std::string::String`
+    = help: `active_submission_test::std::string::String` implements trait `PartialEq<Rhs>`:
+              PartialEq<&str>
+              PartialEq<ByteStr>
+              PartialEq<ByteString>
+              PartialEq<Cow<'_, str>>
+              PartialEq<Path>
+              PartialEq<PathBuf>
+              PartialEq<serde_json::value::Value>
+              PartialEq<str>
+              PartialEq
+
+warning: unused variable: `env`
+   --> contracts/attestation/src/lib.rs:234:23
+    |
+234 |     pub fn is_revoked(env: Env, business: Address, period: String) -> b...
+    |                       ^^^ help: if this is intentional, prefix it with an underscore: `_env`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `business`
+   --> contracts/attestation/src/lib.rs:234:33
+    |
+234 | ...n is_revoked(env: Env, business: Address, period: String) -> bool {
+    |                           ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_business`
+
+warning: unused variable: `period`
+   --> contracts/attestation/src/lib.rs:234:52
+    |
+234 | ... Env, business: Address, period: String) -> bool {
+    |                             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_period`
+
+warning: unused variable: `old_root`
+   --> contracts/attestation/src/lib.rs:262:14
+    |
+262 |         let (old_root, ts, old_ver, fee, proof_hash, expiry): Attestati...
+    |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_old_root`
+
+Some errors have detailed explanations: E0277, E0599.
+For more information about an error, try `rustc --explain E0277`.
+warning: `veritasor-attestation` (lib test) generated 7 warnings
+error: could not compile `veritasor-attestation` (lib test) due to 9 previous errors; 7 warnings emitted
