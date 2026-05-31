@@ -45,6 +45,14 @@ For each item in the batch:
 
 All businesses in the batch must authorize before any processing begins. Each unique business is authorized exactly once, even if it appears multiple times in the batch.
 
+#### Business Status Requirements
+
+Each batch item is accepted only for a business that is both registered and currently `Active`. Submissions from:
+- unregistered businesses,
+- businesses in `Pending` approval status, and
+- suspended businesses
+are rejected before the attestation is stored.
+
 #### Atomicity
 
 The batch operation is fully atomic:

@@ -69,6 +69,7 @@ pub enum MultiPeriodKey {
 }
 
 #[contracttype]
+#[derive(Clone)]
 pub struct BatchAttestationItem {
     pub business: Address,
     pub period: String,
@@ -80,6 +81,9 @@ pub struct BatchAttestationItem {
 
 #[contract]
 pub struct AttestationContract;
+
+#[cfg(test)]
+mod active_submission_test;
 
 #[contractimpl]
 impl AttestationContract {
@@ -121,6 +125,8 @@ impl AttestationContract {
         expiry_timestamp: Option<u64>,
     ) {
         business.require_auth();
+        registry::require_active_business(&env, &business);
+
         let key = DataKey::Attestation(business.clone(), period.clone());
         if env.storage().instance().has(&key) {
             panic!("attestation exists");
@@ -150,6 +156,62 @@ impl AttestationContract {
             &proof_hash,
             expiry_timestamp,
         );
+    }
+
+    pub fn submit_attestations_batch(env: Env, items: Vec<BatchAttestationItem>) {
+        if items.len() == 0 {
+            panic!("batch cannot be empty");
+        }
+
+        let mut seen: Vec<(Address, String)> = Vec::new(&env);
+        for item in items.iter() {
+            let business = item.business.clone();
+            business.require_auth();
+            registry::require_active_business(&env, &business);
+
+            for existing in seen.iter() {
+                let existing = existing.clone();
+                if existing.0 == business && existing.1 == item.period {
+                    panic!("duplicate attestation in batch");
+                }
+            }
+            seen.push_back((business.clone(), item.period.clone()));
+
+            let key = DataKey::Attestation(business.clone(), item.period.clone());
+            if env.storage().instance().has(&key) {
+                panic!("attestation already exists");
+            }
+        }
+
+        for item in items.iter() {
+            let business = item.business.clone();
+            let key = DataKey::Attestation(business.clone(), item.period.clone());
+            let fee = dynamic_fees::collect_fee(&env, &business);
+            dynamic_fees::increment_business_count(&env, &business);
+
+            let proof_hash: Option<BytesN<32>> = None;
+            let data = (
+                item.merkle_root.clone(),
+                item.timestamp,
+                item.version,
+                fee,
+                proof_hash.clone(),
+                item.expiry_timestamp,
+            );
+            env.storage().instance().set(&key, &data);
+
+            events::emit_attestation_submitted(
+                &env,
+                &business,
+                &item.period,
+                &item.merkle_root,
+                item.timestamp,
+                item.version,
+                fee,
+                &proof_hash,
+                item.expiry_timestamp,
+            );
+        }
     }
 
     pub fn get_attestation(
