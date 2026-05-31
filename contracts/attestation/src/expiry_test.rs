@@ -190,6 +190,104 @@ fn expired_attestation_remains_queryable() {
     assert!(client.is_expired(&business, &period));
 }
 
+#[test]
+fn cleanup_expired_attestation_removes_data_and_emits_event() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2027-Q5");
+    let root = BytesN::from_array(&env, &[9u8; 32]);
+
+    env.ledger().set_timestamp(0);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &10u64,
+        &1u32,
+        &None,
+        &Some(20u64),
+    );
+
+    env.ledger().set_timestamp(20);
+    client.cleanup_expired_attestation(&business, &business, &period);
+
+    assert!(client.get_attestation(&business, &period).is_none());
+    let events = env.events().all();
+    let last = events.last().unwrap();
+    let event = super::events::AttestationCleanedUpEvent::try_from_val(&env, &last.2).unwrap();
+    assert_eq!(event.business, business);
+    assert_eq!(event.period, period);
+}
+
+#[test]
+#[should_panic(expected = "attestation not found")]
+fn cleanup_nonexistent_attestation_panics() {
+    let (env, client, admin) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2027-Q6");
+
+    env.ledger().set_timestamp(100);
+    client.cleanup_expired_attestation(&admin, &business, &period);
+}
+
+#[test]
+#[should_panic(expected = "attestation revoked")]
+fn cleanup_revoked_attestation_panics() {
+    let (env, client, admin) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2027-Q7");
+    let root = BytesN::from_array(&env, &[10u8; 32]);
+    let challenger = Address::generate(&env);
+
+    env.ledger().set_timestamp(0);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1u64,
+        &1u32,
+        &None,
+        &Some(10u64),
+    );
+    env.ledger().set_timestamp(20);
+    client.revoke_attestation(&admin, &business, &period, &String::from_str(&env, "revoked"), &0u64);
+
+    env.ledger().set_timestamp(30);
+    client.cleanup_expired_attestation(&admin, &business, &period);
+}
+
+#[test]
+#[should_panic(expected = "attestation has an open dispute")]
+fn cleanup_with_open_dispute_panics() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2027-Q8");
+    let root = BytesN::from_array(&env, &[11u8; 32]);
+    let challenger = Address::generate(&env);
+
+    env.ledger().set_timestamp(0);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1u64,
+        &1u32,
+        &None,
+        &Some(10u64),
+    );
+    env.ledger().set_timestamp(20);
+    client.open_dispute(
+        &challenger,
+        &business,
+        &period,
+        &super::DisputeType::DataIntegrity,
+        &String::from_str(&env, "challenge"),
+    );
+
+    env.ledger().set_timestamp(30);
+    client.cleanup_expired_attestation(&business, &business, &period);
+}
+
 // Note: test_migrate_preserves_expiry removed due to access control integration issues
 // The migrate_attestation function requires ADMIN role which needs proper setup
 
