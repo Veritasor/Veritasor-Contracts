@@ -20,6 +20,11 @@ pub const NONCE_CHANNEL_BUSINESS: u32 = 1;
 const ANOMALY_KEY_TAG: (u32,) = (3,);
 const AUTHORIZED_KEY_TAG: (u32,) = (4,);
 
+/// TTL threshold: if the instance's TTL is below this threshold, we bump it
+pub const INSTANCE_TTL_THRESHOLD: u32 = 100000;
+/// TTL bump amount: how much to bump the instance's TTL
+pub const INSTANCE_TTL_BUMP: u32 = 100000;
+
 // Status constants
 pub const STATUS_ACTIVE: u32 = 0;
 pub const STATUS_REVOKED: u32 = 1;
@@ -314,6 +319,11 @@ impl AttestationContract {
         );
 
         rate_limit::record_submission(&env, &business);
+
+        // Extend TTL after writing
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
     }
 
     pub fn submit_attestations_batch(env: Env, items: Vec<BatchAttestationItem>) {
@@ -398,6 +408,11 @@ impl AttestationContract {
 
             rate_limit::record_submission(&env, &item.business);
         }
+
+        // Extend TTL after writing
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
     }
 
     pub fn is_expired(env: Env, business: Address, period: String) -> bool {
@@ -529,8 +544,8 @@ impl AttestationContract {
                 Self::get_attestation(env.clone(), business.clone(), period.clone())
             {
                 // Verify: root must match AND attestation must not be revoked
-                let is_valid =
-                    stored_root == *provided_root && !dispute::is_attestation_revoked(&env, &business, &period);
+                let is_valid = stored_root == *provided_root
+                    && !dispute::is_attestation_revoked(&env, &business, &period);
                 results.push_back(is_valid);
             } else {
                 // Attestation not found: return false
@@ -576,6 +591,14 @@ impl AttestationContract {
         access_control::require_admin(&env, &caller);
         access_control::set_paused(&env, false);
         events::emit_unpaused(&env, &caller);
+    }
+
+    /// Admin-gated method to manually bump the instance TTL
+    pub fn bump_ttl(env: Env, caller: Address) {
+        access_control::require_admin(&env, &caller);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
     }
 
     pub fn submit_multi_period_attestation(
@@ -1222,17 +1245,54 @@ mod attestor_staking_integration_test;
 #[cfg(test)]
 mod batch_submission_test;
 #[cfg(test)]
-mod pause_test;
+mod dao_override_test;
+#[cfg(test)]
+mod dispute_test;
+#[cfg(test)]
+mod dynamic_fees_test;
 #[cfg(test)]
 mod events_test;
 #[cfg(test)]
+mod expiry_test;
+#[cfg(test)]
+mod extend_expiry_test;
+#[cfg(test)]
+mod extended_metadata_test;
+#[cfg(test)]
+mod fee_admin_auth_test;
+#[cfg(test)]
+mod fees_test;
+#[cfg(test)]
+mod gas_benchmark_test;
+#[cfg(test)]
+mod key_rotation_test;
+#[cfg(test)]
+mod multi_period_test;
+#[cfg(test)]
+mod multisig_test;
+#[cfg(test)]
+mod pause_test;
+#[cfg(test)]
+mod proof_hash_test;
+#[cfg(test)]
+mod proof_hash_update_test;
+#[cfg(test)]
 mod property_test;
+#[cfg(test)]
+mod query_pagination_test;
+#[cfg(test)]
+mod rate_limit_test;
+#[cfg(test)]
+mod registry_test;
+#[cfg(test)]
+mod revocation_test;
 #[cfg(test)]
 mod test;
 #[cfg(test)]
 mod tier_bounds_test;
 #[cfg(test)]
+mod ttl_test;
+#[cfg(test)]
 mod verify_attestation_test;
 #[cfg(test)]
 mod verify_attestations_batch_test;
-
