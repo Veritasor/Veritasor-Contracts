@@ -869,9 +869,7 @@ fn approval_count_tracks_for_votes() {
     mint(&env, &gov_token, &voter2, 100);
     let fee_token = Address::generate(&env);
     let collector = Address::generate(&env);
-    let id = client.create_fee_config_proposal(
-        &voter1, &fee_token, &collector, &500, &true,
-    );
+    let id = client.create_fee_config_proposal(&voter1, &fee_token, &collector, &500, &true);
 
     assert_eq!(client.get_approval_count(&id), 0);
     assert!(!client.is_proposal_approved(&id));
@@ -894,9 +892,7 @@ fn tied_votes_are_not_approved_even_when_quorum_is_met() {
     mint(&env, &gov_token, &voter2, 100);
     let fee_token = Address::generate(&env);
     let collector = Address::generate(&env);
-    let id = client.create_fee_config_proposal(
-        &voter1, &fee_token, &collector, &500, &true,
-    );
+    let id = client.create_fee_config_proposal(&voter1, &fee_token, &collector, &500, &true);
 
     client.vote_for(&voter1, &id);
     client.vote_against(&voter2, &id);
