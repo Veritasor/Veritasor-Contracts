@@ -194,8 +194,7 @@ fn test_submit_attestation_when_paused() {
         &root,
         &1_700_000_000u64,
         &1u32,
-        &None,
-        &None,
+        &0i128, &None, &None,
         &0u64,
     );
 }
@@ -503,3 +502,4 @@ fn test_all_role_combinations() {
     let roles = client.get_roles(&user);
     assert_eq!(roles, ROLE_ADMIN | ROLE_ATTESTOR | ROLE_OPERATOR);
 }
+

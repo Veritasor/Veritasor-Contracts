@@ -80,8 +80,7 @@ fn set_anomaly_and_get_anomaly() {
         &root,
         &1700000000u64,
         &1u32,
-        &None,
-        &None,
+        &0i128, &None, &None,
         &0u64,
     );
     client.set_anomaly(&analytics, &business, &period, &1u32, &50u32);
@@ -105,8 +104,7 @@ fn set_anomaly_multiple_updates_overwrites() {
         &root,
         &1700000000u64,
         &1u32,
-        &None,
-        &None,
+        &0i128, &None, &None,
         &0u64,
     );
     client.set_anomaly(&analytics, &business, &period, &1u32, &10u32);
@@ -133,8 +131,7 @@ fn set_anomaly_unauthorized_panics() {
         &root,
         &1700000000u64,
         &1u32,
-        &None,
-        &None,
+        &0i128, &None, &None,
         &0u64,
     );
     client.set_anomaly(&unauthorized, &business, &period, &1u32, &50u32);
@@ -168,8 +165,7 @@ fn set_anomaly_score_out_of_range_panics() {
         &root,
         &1700000000u64,
         &1u32,
-        &None,
-        &None,
+        &0i128, &None, &None,
         &0u64,
     );
     client.set_anomaly(&analytics, &business, &period, &0u32, &101u32);
@@ -190,8 +186,7 @@ fn set_anomaly_score_boundary_100() {
         &root,
         &1700000000u64,
         &1u32,
-        &None,
-        &None,
+        &0i128, &None, &None,
         &0u64,
     );
     client.set_anomaly(&analytics, &business, &period, &0u32, &100u32);
@@ -214,8 +209,7 @@ fn get_anomaly_escalation_none_for_low_score() {
         &root,
         &1700000000u64,
         &1u32,
-        &None,
-        &None,
+        &0i128, &None, &None,
         &0u64,
     );
     client.set_anomaly(&analytics, &business, &period, &0u32, &49u32);
@@ -238,8 +232,7 @@ fn get_anomaly_escalation_levels_monotonic() {
         &root,
         &1700000000u64,
         &1u32,
-        &None,
-        &None,
+        &0i128, &None, &None,
         &0u64,
     );
     client.submit_attestation(
@@ -248,8 +241,7 @@ fn get_anomaly_escalation_levels_monotonic() {
         &root,
         &1700000000u64,
         &1u32,
-        &None,
-        &None,
+        &0i128, &None, &None,
         &0u64,
     );
 
@@ -281,8 +273,7 @@ fn clear_anomaly_escalation_admin_path() {
         &root,
         &1700000000u64,
         &1u32,
-        &None,
-        &None,
+        &0i128, &None, &None,
         &0u64,
     );
     client.set_anomaly(&analytics, &business, &period, &0u32, &95u32);
@@ -308,8 +299,7 @@ fn clear_anomaly_escalation_non_admin_panics() {
         &root,
         &1700000000u64,
         &1u32,
-        &None,
-        &None,
+        &0i128, &None, &None,
         &0u64,
     );
     client.set_anomaly(&analytics, &business, &period, &0u32, &95u32);
@@ -329,8 +319,7 @@ fn get_anomaly_none_when_not_set() {
         &root,
         &1700000000u64,
         &1u32,
-        &None,
-        &None,
+        &0i128, &None, &None,
         &0u64,
     );
     let out = client.get_anomaly(&business, &period);
@@ -403,8 +392,7 @@ fn two_authorized_updaters_can_both_set_anomaly() {
         &root,
         &1700000000u64,
         &1u32,
-        &None,
-        &None,
+        &0i128, &None, &None,
         &0u64,
     );
     client.set_anomaly(&analytics1, &business, &period, &1u32, &25u32);
@@ -429,8 +417,7 @@ fn removed_analytics_cannot_set_anomaly() {
         &root,
         &1700000000u64,
         &1u32,
-        &None,
-        &None,
+        &0i128, &None, &None,
         &0u64,
     );
     client.set_anomaly(&analytics, &business, &period, &1u32, &50u32);
@@ -456,10 +443,10 @@ fn removed_analytics_set_anomaly_panics() {
         &root,
         &1700000000u64,
         &1u32,
-        &None,
-        &None,
+        &0i128, &None, &None,
         &0u64,
     );
     client.remove_authorized_analytics(&admin, &analytics);
     client.set_anomaly(&analytics, &business, &period, &2u32, &60u32);
 }
+

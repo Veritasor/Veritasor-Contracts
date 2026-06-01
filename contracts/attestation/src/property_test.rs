@@ -504,7 +504,7 @@ fn prop_duplicate_attestation_panics() {
     for period_str in DUPLICATE_PERIOD_CASES {
         let period_owned = std::string::String::from(*period_str);
 
-        let result = std::panic::catch_unwind(|| {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             // Env is created inside the closure — it is not UnwindSafe
             // and cannot be safely captured from the outer scope.
             let env = Env::default();
@@ -522,7 +522,7 @@ fn prop_duplicate_attestation_panics() {
             client.submit_attestation(
                 &business, &period, &root, &2_000_000, &2, &0i128, &None, &None,
             );
-        });
+        }));
 
         let err = result.expect_err(&std::format!(
             "period '{period_str}': duplicate submission must panic"
@@ -593,7 +593,7 @@ const MIGRATION_INVALID_PAIRS: &[(u32, u32)] = &[
 #[test]
 fn prop_migration_panics_for_non_increasing_version() {
     for &(old_ver, bad_new_ver) in MIGRATION_INVALID_PAIRS {
-        let result = std::panic::catch_unwind(|| {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let env = Env::default();
             env.mock_all_auths();
             let contract_id = env.register(AttestationContract, ());
@@ -608,7 +608,7 @@ fn prop_migration_panics_for_non_increasing_version() {
                 &business, &period, &old_root, &1_000_000, &old_ver, &0i128, &None, &None,
             );
             client.migrate_attestation(&admin_addr, &business, &period, &new_root, &bad_new_ver);
-        });
+        }));
 
         let err = result.expect_err(&std::format!(
             "migrate old={old_ver}, new={bad_new_ver} must panic"
@@ -643,14 +643,14 @@ fn prop_tier_discount_valid_range_succeeds() {
 fn prop_tier_discount_over_bound_panics() {
     let invalid: &[u32] = &[10_001, 10_002, 20_000, u32::MAX / 2, u32::MAX];
     for &discount in invalid {
-        let result = std::panic::catch_unwind(|| {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let env = Env::default();
             env.mock_all_auths();
             let contract_id = env.register(AttestationContract, ());
             let client = AttestationContractClient::new(&env, &contract_id);
             client.initialize(&Address::generate(&env), &0u64);
             client.set_tier_discount(&0u32, &discount);
-        });
+        }));
 
         let err = result.expect_err(&std::format!("set_tier_discount({discount}) must panic"));
         let msg = panic_message(&err);
@@ -717,7 +717,7 @@ fn prop_volume_brackets_unordered_panics() {
         let t_clone: std::vec::Vec<u64> = thresholds.to_vec();
         let discounts: std::vec::Vec<u32> = std::vec![0u32; thresholds.len()];
 
-        let result = std::panic::catch_unwind(|| {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let env = Env::default();
             env.mock_all_auths();
             let contract_id = env.register(AttestationContract, ());
@@ -738,7 +738,7 @@ fn prop_volume_brackets_unordered_panics() {
                 v
             };
             client.set_volume_brackets(&soroban_t, &soroban_d);
-        });
+        }));
 
         result.expect_err(&std::format!(
             "set_volume_brackets with unordered thresholds {:?} must panic",
@@ -760,7 +760,7 @@ fn prop_volume_brackets_length_mismatch_panics() {
         let t_clone: std::vec::Vec<u64> = thresholds.to_vec();
         let d_clone: std::vec::Vec<u32> = discounts.to_vec();
 
-        let result = std::panic::catch_unwind(|| {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let env = Env::default();
             env.mock_all_auths();
             let contract_id = env.register(AttestationContract, ());
@@ -781,7 +781,7 @@ fn prop_volume_brackets_length_mismatch_panics() {
                 v
             };
             client.set_volume_brackets(&soroban_t, &soroban_d);
-        });
+        }));
 
         result.expect_err(&std::format!(
             "mismatched lengths thresholds={:?} discounts={:?} must panic",
@@ -881,7 +881,7 @@ fn prop_pause_blocks_all_submissions() {
     for period_str in PAUSE_PERIOD_CASES {
         let period_owned = std::string::String::from(*period_str);
 
-        let result = std::panic::catch_unwind(|| {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let env = Env::default();
             env.mock_all_auths();
             let contract_id = env.register(AttestationContract, ());
@@ -893,7 +893,7 @@ fn prop_pause_blocks_all_submissions() {
             let period = String::from_str(&env, &period_owned);
             let root = BytesN::from_array(&env, &[1u8; 32]);
             client.submit_attestation(&business, &period, &root, &1_000, &1, &0i128, &None, &None);
-        });
+        }));
 
         let err = result.expect_err(&std::format!(
             "period '{period_str}': submit while paused must panic"
@@ -1893,3 +1893,5 @@ fn prop_regression_protocol_revenue_determinism() {
     assert!(std_next >= pro_next, "Standard ≥ Professional fee");
     assert!(pro_next >= ent_next, "Professional ≥ Enterprise fee");
 }
+
+

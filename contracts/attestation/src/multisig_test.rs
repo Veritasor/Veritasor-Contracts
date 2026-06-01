@@ -574,9 +574,9 @@ fn test_owner_cannot_approve_twice() {
 
     approve_proposal(&env, &owner, id);
 
-    let result = std::panic::catch_unwind(|| {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         approve_proposal(&env, &owner, id);
-    });
+    }));
 
     assert!(result.is_err());
 }
@@ -591,12 +591,14 @@ fn test_non_owner_cannot_approve() {
 
     let id = create_proposal(&env, &owner, ProposalAction::Pause);
 
-    let result = std::panic::catch_unwind(|| {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         approve_proposal(&env, &attacker, id);
-    });
+    }));
 
     assert!(result.is_err());
 }
+
+
 
 
 

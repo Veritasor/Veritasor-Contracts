@@ -92,7 +92,7 @@ fn mint(env: &Env, token_addr: &Address, to: &Address, amount: i128) {
 fn submit(client: &AttestationContractClient, env: &Env, business: &Address, idx: u32) {
     let period = String::from_str(env, &std::format!("P-{idx:04}"));
     let root = BytesN::from_array(env, &[idx as u8; 32]);
-    client.submit_attestation(business, &period, &root, &1_700_000_000u64, &1u32, &None, &None, &0u64);
+    client.submit_attestation(business, &period, &root, &1_700_000_000u64, &1u32, &0i128, &None, &None, &0u64);
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────

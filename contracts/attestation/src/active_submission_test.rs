@@ -56,9 +56,9 @@ fn test_submit_attestation_rejects_unregistered_business() {
     let period = SorobanString::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
-    let result = catch_unwind(|| {
-        client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None, &None);
-    });
+    let result = catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &0i128, &None, &None);
+    }));
 
     assert!(result.is_err(), "unregistered business should panic");
     assert_eq!(panic_message(result.unwrap_err()), String::from("business not registered"));
@@ -72,9 +72,9 @@ fn test_submit_attestation_rejects_pending_business() {
     let period = SorobanString::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[2u8; 32]);
 
-    let result = catch_unwind(|| {
-        client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None, &None);
-    });
+    let result = catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &0i128, &None, &None);
+    }));
 
     assert!(result.is_err(), "pending business should panic");
     assert_eq!(panic_message(result.unwrap_err()), String::from("business pending approval"));
@@ -94,9 +94,9 @@ fn test_submit_attestation_rejects_suspended_business() {
     let period = SorobanString::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[3u8; 32]);
 
-    let result = catch_unwind(|| {
-        client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None, &None);
-    });
+    let result = catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &0i128, &None, &None);
+    }));
 
     assert!(result.is_err(), "suspended business should panic");
     assert_eq!(panic_message(result.unwrap_err()), String::from("business is suspended"));
@@ -112,7 +112,7 @@ fn test_submit_attestation_accepts_active_business() {
     let period = SorobanString::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[4u8; 32]);
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None, &None);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &0i128, &None, &None);
     let stored = client.get_attestation(&business, &period).expect("expected attestation");
     assert_eq!(stored.0, root);
 }
@@ -129,7 +129,7 @@ fn test_submit_attestation_accepts_reactivated_business() {
     let period = SorobanString::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[5u8; 32]);
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &None, &None);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &0i128, &None, &None);
     assert!(client.get_attestation(&business, &period).is_some());
 }
 
@@ -149,7 +149,7 @@ fn test_submit_attestations_batch_rejects_pending_business() {
         expiry_timestamp: None,
     });
 
-    let result = catch_unwind(|| client.submit_attestations_batch(&items));
+    let result = catch_unwind(std::panic::AssertUnwindSafe(|| client.submit_attestations_batch(&items)));
     assert!(result.is_err(), "pending business in batch should panic");
     assert_eq!(panic_message(result.unwrap_err()), String::from("business pending approval"));
 }
@@ -176,3 +176,5 @@ fn test_submit_attestations_batch_accepts_reactivated_business() {
     client.submit_attestations_batch(&items);
     assert!(client.get_attestation(&business, &SorobanString::from_str(&env, "2026-02")).is_some());
 }
+
+

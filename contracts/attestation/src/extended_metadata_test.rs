@@ -27,8 +27,7 @@ fn test_submit_without_metadata_backward_compat() {
         &root,
         &1_700_000_000u64,
         &1u32,
-        &None,
-        &None,
+        &0i128, &None, &None,
         &0u64,
     );
 
@@ -187,8 +186,7 @@ fn test_metadata_missing_for_old_attestation() {
         &root,
         &1_700_000_000u64,
         &1u32,
-        &None,
-        &None,
+        &0i128, &None, &None,
         &0u64,
     );
 
@@ -372,3 +370,4 @@ fn test_metadata_removed_on_revocation() {
 
     assert!(client.get_attestation_metadata(&business, &period).is_none());
 }
+

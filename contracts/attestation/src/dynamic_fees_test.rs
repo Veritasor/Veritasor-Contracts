@@ -79,8 +79,7 @@ fn submit(client: &AttestationContractClient, env: &Env, business: &Address, ind
         &root,
         &1_700_000_000u64,
         &1u32,
-        &None,
-        &None,
+        &0i128, &None, &None,
         &0u64,
     );
 }
@@ -290,7 +289,7 @@ fn test_no_fee_config_free() {
 
     let period = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1u64, &1u32, &None, &None, &0u64);
+    client.submit_attestation(&business, &period, &root, &1u64, &1u32, &0i128, &None, &None, &0u64);
 
     let (_, _, _, fee_paid, _, _) = client.get_attestation(&business, &period).unwrap();
     assert_eq!(fee_paid, 0);
@@ -701,3 +700,4 @@ fn test_volume_brackets_descending_thresholds_rejected() {
     let discounts = vec![&t.env, 500u32, 1_000u32, 1_500u32];
     t.client.set_volume_brackets(&thresholds, &discounts);
 }
+
