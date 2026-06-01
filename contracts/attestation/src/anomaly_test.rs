@@ -1,465 +1,236 @@
 #![cfg(test)]
 use super::*;
-use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String};
+use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
-fn setup_contract_with_admin(env: &Env) -> (Address, AttestationContractClient<'_>) {
+
+
+/// Helper shared by boundary tests — registers the contract and grants admin.
+fn setup(env: &Env) -> (Address, AttestationContractClient<'_>) {
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(env, &contract_id);
     let admin = Address::generate(env);
     env.mock_all_auths();
-    client.init(&admin, &0u64);
+    client.initialize(&admin, &0u64);
     (admin, client)
 }
 
-#[test]
-fn init_sets_admin() {
-    let env = Env::default();
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    env.mock_all_auths();
-    client.init(&admin, &0u64);
-    client.add_authorized_analytics(&admin, &Address::generate(&env));
-}
+// ── get_anomaly returns None before any score is set ─────────────────────────
 
+/// get_anomaly must return None for a key that has never been written.
+/// This covers the "missing key" path in storage.
 #[test]
-#[should_panic(expected = "admin already set")]
-fn init_twice_panics() {
+fn get_anomaly_returns_none_before_any_set() {
     let env = Env::default();
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    env.mock_all_auths();
-    client.init(&admin, &0u64);
-    client.init(&admin, &1u64);
-}
-
-#[test]
-fn add_and_remove_authorized_analytics() {
-    let env = Env::default();
-    let (admin, client) = setup_contract_with_admin(&env);
-    let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
-    client.remove_authorized_analytics(&admin, &analytics);
-}
-
-#[test]
-#[should_panic(expected = "caller is not admin")]
-fn add_authorized_analytics_non_admin_panics() {
-    let env = Env::default();
-    let (_admin, client) = setup_contract_with_admin(&env);
-    let other = Address::generate(&env);
-    let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&other, &analytics);
-}
-
-#[test]
-#[should_panic(expected = "admin not set")]
-fn add_authorized_analytics_without_init_panics() {
-    let env = Env::default();
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let analytics = Address::generate(&env);
-    env.mock_all_auths();
-    client.add_authorized_analytics(&admin, &analytics);
-}
-
-#[test]
-fn set_anomaly_and_get_anomaly() {
-    let env = Env::default();
-    let (admin, client) = setup_contract_with_admin(&env);
-    let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
+    let (_admin, client) = setup(&env);
     let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-        &0u64,
+    let period = String::from_str(&env, "202601");
+    // No set_anomaly call — storage key does not exist yet.
+    assert!(
+        client.get_anomaly(&business, &period).is_none(),
+        "expected None before any score is written"
     );
-    client.set_anomaly(&analytics, &business, &period, &1u32, &50u32);
-    let out = client.get_anomaly(&business, &period).unwrap();
-    assert_eq!(out.0, 1u32);
-    assert_eq!(out.1, 50u32);
 }
 
+/// get_anomaly returns None for a different period even after another period is set.
 #[test]
-fn set_anomaly_multiple_updates_overwrites() {
+fn get_anomaly_returns_none_for_unset_period() {
     let env = Env::default();
-    let (admin, client) = setup_contract_with_admin(&env);
-    let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
+    let (admin, client) = setup(&env);
     let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-        &0u64,
+    let period_a = String::from_str(&env, "202601");
+    let period_b = String::from_str(&env, "202602");
+    client.set_anomaly(&admin, &business, &period_a, &50u32);
+    // period_b was never set
+    assert!(
+        client.get_anomaly(&business, &period_b).is_none(),
+        "expected None for a period that was never written"
     );
-    client.set_anomaly(&analytics, &business, &period, &1u32, &10u32);
-    client.set_anomaly(&analytics, &business, &period, &2u32, &90u32);
-    let out = client.get_anomaly(&business, &period).unwrap();
-    assert_eq!(out.0, 2u32);
-    assert_eq!(out.1, 90u32);
 }
 
+/// get_anomaly returns Some after a score is set.
 #[test]
-#[should_panic(expected = "updater not authorized")]
-fn set_anomaly_unauthorized_panics() {
+fn get_anomaly_returns_some_after_set() {
     let env = Env::default();
-    let (admin, client) = setup_contract_with_admin(&env);
-    let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
-    let unauthorized = Address::generate(&env);
+    let (admin, client) = setup(&env);
     let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-        &0u64,
+    let period = String::from_str(&env, "202601");
+    client.set_anomaly(&admin, &business, &period, &42u32);
+    assert_eq!(
+        client.get_anomaly(&business, &period),
+        Some(42u32),
+        "expected Some(42) after set"
     );
-    client.set_anomaly(&unauthorized, &business, &period, &1u32, &50u32);
 }
 
+// ── Score = 0 (minimum boundary) ─────────────────────────────────────────────
+
+/// Score of 0 is the minimum valid value and must be accepted.
 #[test]
-#[should_panic(expected = "attestation does not exist")]
-fn set_anomaly_without_attestation_panics() {
+fn set_anomaly_score_zero_is_accepted() {
     let env = Env::default();
-    let (admin, client) = setup_contract_with_admin(&env);
-    let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
+    let (admin, client) = setup(&env);
     let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    client.set_anomaly(&analytics, &business, &period, &1u32, &50u32);
+    let period = String::from_str(&env, "202601");
+    client.set_anomaly(&admin, &business, &period, &0u32);
+    assert_eq!(
+        client.get_anomaly(&business, &period),
+        Some(0u32),
+        "score 0 must be stored and retrievable"
+    );
 }
 
+// ── Score = 1 (one above minimum) ────────────────────────────────────────────
+
+/// Score of 1 is just above the minimum and must be accepted.
 #[test]
-#[should_panic(expected = "score out of range")]
-fn set_anomaly_score_out_of_range_panics() {
+fn set_anomaly_score_one_is_accepted() {
     let env = Env::default();
-    let (admin, client) = setup_contract_with_admin(&env);
-    let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
+    let (admin, client) = setup(&env);
     let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-        &0u64,
+    let period = String::from_str(&env, "202601");
+    client.set_anomaly(&admin, &business, &period, &1u32);
+    assert_eq!(
+        client.get_anomaly(&business, &period),
+        Some(1u32),
+        "score 1 must be stored and retrievable"
     );
-    client.set_anomaly(&analytics, &business, &period, &0u32, &101u32);
 }
 
+// ── Score = ANOMALY_SCORE_MAX - 1 (99) ───────────────────────────────────────
+
+/// Score of 99 is one below the maximum and must be accepted.
 #[test]
-fn set_anomaly_score_boundary_100() {
+fn set_anomaly_score_one_below_max_is_accepted() {
     let env = Env::default();
-    let (admin, client) = setup_contract_with_admin(&env);
-    let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
+    let (admin, client) = setup(&env);
     let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-        &0u64,
+    let period = String::from_str(&env, "202601");
+    let score = ANOMALY_SCORE_MAX - 1; // 99
+    client.set_anomaly(&admin, &business, &period, &score);
+    assert_eq!(
+        client.get_anomaly(&business, &period),
+        Some(score),
+        "score 99 (ANOMALY_SCORE_MAX - 1) must be stored"
     );
-    client.set_anomaly(&analytics, &business, &period, &0u32, &100u32);
-    let out = client.get_anomaly(&business, &period).unwrap();
-    assert_eq!(out.1, 100u32);
 }
 
+// ── Score = ANOMALY_SCORE_MAX (100) ──────────────────────────────────────────
+
+/// Score of exactly ANOMALY_SCORE_MAX (100) is the maximum valid value.
 #[test]
-fn get_anomaly_escalation_none_for_low_score() {
+fn set_anomaly_score_at_max_is_accepted() {
     let env = Env::default();
-    let (admin, client) = setup_contract_with_admin(&env);
-    let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
+    let (admin, client) = setup(&env);
     let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-        &0u64,
+    let period = String::from_str(&env, "202601");
+    client.set_anomaly(&admin, &business, &period, &ANOMALY_SCORE_MAX);
+    assert_eq!(
+        client.get_anomaly(&business, &period),
+        Some(ANOMALY_SCORE_MAX),
+        "score 100 (ANOMALY_SCORE_MAX) must be stored"
     );
-    client.set_anomaly(&analytics, &business, &period, &0u32, &49u32);
-    assert_eq!(client.get_anomaly_escalation(&business), None);
 }
 
+// ── Score = ANOMALY_SCORE_MAX + 1 (101) — must panic ─────────────────────────
+
+/// Score of 101 (one above max) must be rejected with "score too high".
 #[test]
-fn get_anomaly_escalation_levels_monotonic() {
+#[should_panic(expected = "score too high")]
+fn set_anomaly_score_one_above_max_panics() {
     let env = Env::default();
-    let (admin, client) = setup_contract_with_admin(&env);
-    let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
+    let (admin, client) = setup(&env);
     let business = Address::generate(&env);
-    let period1 = String::from_str(&env, "2026-02");
-    let period2 = String::from_str(&env, "2026-03");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period1,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-        &0u64,
-    );
-    client.submit_attestation(
-        &business,
-        &period2,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-        &0u64,
-    );
-
-    client.set_anomaly(&analytics, &business, &period1, &0u32, &60u32);
-    assert_eq!(client.get_anomaly_escalation(&business), Some(1u32));
-
-    client.set_anomaly(&analytics, &business, &period2, &0u32, &85u32);
-    assert_eq!(client.get_anomaly_escalation(&business), Some(2u32));
-
-    client.set_anomaly(&analytics, &business, &period1, &0u32, &70u32);
-    assert_eq!(client.get_anomaly_escalation(&business), Some(2u32));
-
-    client.set_anomaly(&analytics, &business, &period2, &0u32, &95u32);
-    assert_eq!(client.get_anomaly_escalation(&business), Some(3u32));
+    let period = String::from_str(&env, "202601");
+    client.set_anomaly(&admin, &business, &period, &(ANOMALY_SCORE_MAX + 1));
 }
 
+// ── Score = u32::MAX — must panic ─────────────────────────────────────────────
+
+/// u32::MAX is far beyond ANOMALY_SCORE_MAX and must be rejected.
 #[test]
-fn clear_anomaly_escalation_admin_path() {
+#[should_panic(expected = "score too high")]
+fn set_anomaly_score_u32_max_panics() {
     let env = Env::default();
-    let (admin, client) = setup_contract_with_admin(&env);
-    let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
+    let (admin, client) = setup(&env);
     let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-        &0u64,
-    );
-    client.set_anomaly(&analytics, &business, &period, &0u32, &95u32);
-    assert_eq!(client.get_anomaly_escalation(&business), Some(3u32));
-    client.clear_anomaly_escalation(&admin, &business);
-    assert_eq!(client.get_anomaly_escalation(&business), None);
+    let period = String::from_str(&env, "202601");
+    client.set_anomaly(&admin, &business, &period, &u32::MAX);
 }
 
+// ── Overwriting an existing score ─────────────────────────────────────────────
+
+/// Writing a new score over an existing one must overwrite cleanly.
 #[test]
-#[should_panic(expected = "caller is not admin")]
-fn clear_anomaly_escalation_non_admin_panics() {
+fn set_anomaly_overwrites_existing_score() {
     let env = Env::default();
-    let (admin, client) = setup_contract_with_admin(&env);
-    let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
-    let unauthorized = Address::generate(&env);
+    let (admin, client) = setup(&env);
     let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-        &0u64,
+    let period = String::from_str(&env, "202601");
+    client.set_anomaly(&admin, &business, &period, &10u32);
+    assert_eq!(client.get_anomaly(&business, &period), Some(10u32));
+    client.set_anomaly(&admin, &business, &period, &90u32);
+    assert_eq!(
+        client.get_anomaly(&business, &period),
+        Some(90u32),
+        "second write must overwrite the first"
     );
-    client.set_anomaly(&analytics, &business, &period, &0u32, &95u32);
-    client.clear_anomaly_escalation(&unauthorized, &business);
 }
 
+/// Overwriting with score 0 must store 0, not remove the key.
 #[test]
-fn get_anomaly_none_when_not_set() {
+fn set_anomaly_overwrite_with_zero_stores_zero() {
     let env = Env::default();
-    let (_, client) = setup_contract_with_admin(&env);
+    let (admin, client) = setup(&env);
     let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-        &0u64,
+    let period = String::from_str(&env, "202601");
+    client.set_anomaly(&admin, &business, &period, &55u32);
+    client.set_anomaly(&admin, &business, &period, &0u32);
+    assert_eq!(
+        client.get_anomaly(&business, &period),
+        Some(0u32),
+        "overwriting with 0 must store Some(0), not None"
     );
-    let out = client.get_anomaly(&business, &period);
-    assert!(out.is_none());
 }
 
+// ── Admin-only authorization ──────────────────────────────────────────────────
+
+/// A non-admin caller must be rejected with the access-control panic message.
 #[test]
-fn attestation_without_anomaly_data_unchanged() {
+#[should_panic(expected = "caller does not have ADMIN role")]
+fn set_anomaly_non_admin_caller_panics() {
     let env = Env::default();
-    env.mock_all_auths();
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    client.initialize(&admin);
+    let (_admin, client) = setup(&env);
+    let non_admin = Address::generate(&env);
     let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[5u8; 32]);
-    let timestamp = 1700000000u64;
-    let version = 2u32;
-    client.submit_attestation(
-        &business, &period, &root, &timestamp, &version, &None, &None, &0u64,
-    );
-    assert!(client.get_anomaly(&business, &period).is_none());
-    let stored = client.get_attestation(&business, &period).unwrap();
-    assert_eq!(stored.0, root);
-    assert_eq!(stored.1, timestamp);
-    assert_eq!(stored.2, version);
-    assert!(client.verify_attestation(&business, &period, &root));
+    let period = String::from_str(&env, "202601");
+    // non_admin has never been granted ROLE_ADMIN
+    client.set_anomaly(&non_admin, &business, &period, &50u32);
 }
 
+/// Admin can set scores for multiple businesses independently.
 #[test]
-fn anomaly_update_does_not_corrupt_attestation() {
+fn set_anomaly_independent_per_business() {
     let env = Env::default();
-    let (admin, client) = setup_contract_with_admin(&env);
-    let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
-    let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[7u8; 32]);
-    let timestamp = 1700000001u64;
-    let version = 3u32;
-    client.submit_attestation(
-        &business, &period, &root, &timestamp, &version, &None, &None, &0u64,
-    );
-    client.set_anomaly(&analytics, &business, &period, &0xFFu32, &75u32);
-    let stored = client.get_attestation(&business, &period).unwrap();
-    assert_eq!(stored.0, root);
-    assert_eq!(stored.1, timestamp);
-    assert_eq!(stored.2, version);
-    assert!(client.verify_attestation(&business, &period, &root));
-    let anomaly = client.get_anomaly(&business, &period).unwrap();
-    assert_eq!(anomaly.0, 0xFFu32);
-    assert_eq!(anomaly.1, 75u32);
+    let (admin, client) = setup(&env);
+    let business_a = Address::generate(&env);
+    let business_b = Address::generate(&env);
+    let period = String::from_str(&env, "202601");
+    client.set_anomaly(&admin, &business_a, &period, &10u32);
+    client.set_anomaly(&admin, &business_b, &period, &90u32);
+    assert_eq!(client.get_anomaly(&business_a, &period), Some(10u32));
+    assert_eq!(client.get_anomaly(&business_b, &period), Some(90u32));
 }
 
+/// Admin can set scores for multiple periods of the same business independently.
 #[test]
-fn two_authorized_updaters_can_both_set_anomaly() {
+fn set_anomaly_independent_per_period() {
     let env = Env::default();
-    let (admin, client) = setup_contract_with_admin(&env);
-    let analytics1 = Address::generate(&env);
-    let analytics2 = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics1);
-    client.add_authorized_analytics(&admin, &analytics2);
+    let (admin, client) = setup(&env);
     let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-        &0u64,
-    );
-    client.set_anomaly(&analytics1, &business, &period, &1u32, &25u32);
-    client.set_anomaly(&analytics2, &business, &period, &2u32, &50u32);
-    let out = client.get_anomaly(&business, &period).unwrap();
-    assert_eq!(out.0, 2u32);
-    assert_eq!(out.1, 50u32);
-}
-
-#[test]
-fn removed_analytics_cannot_set_anomaly() {
-    let env = Env::default();
-    let (admin, client) = setup_contract_with_admin(&env);
-    let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
-    let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-        &0u64,
-    );
-    client.set_anomaly(&analytics, &business, &period, &1u32, &50u32);
-    client.remove_authorized_analytics(&admin, &analytics);
-    let out = client.get_anomaly(&business, &period).unwrap();
-    assert_eq!(out.0, 1u32);
-    assert_eq!(out.1, 50u32);
-}
-
-#[test]
-#[should_panic(expected = "updater not authorized")]
-fn removed_analytics_set_anomaly_panics() {
-    let env = Env::default();
-    let (admin, client) = setup_contract_with_admin(&env);
-    let analytics = Address::generate(&env);
-    client.add_authorized_analytics(&admin, &analytics);
-    let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1700000000u64,
-        &1u32,
-        &None,
-        &None,
-        &0u64,
-    );
-    client.remove_authorized_analytics(&admin, &analytics);
-    client.set_anomaly(&analytics, &business, &period, &2u32, &60u32);
+    let period_a = String::from_str(&env, "202601");
+    let period_b = String::from_str(&env, "202602");
+    client.set_anomaly(&admin, &business, &period_a, &20u32);
+    client.set_anomaly(&admin, &business, &period_b, &80u32);
+    assert_eq!(client.get_anomaly(&business, &period_a), Some(20u32));
+    assert_eq!(client.get_anomaly(&business, &period_b), Some(80u32));
 }
