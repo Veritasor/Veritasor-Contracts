@@ -568,7 +568,7 @@ fn bench_grant_role() {
     let account = Address::generate(&env);
 
     let before = BudgetSnapshot::capture(&env);
-    client.grant_role(&admin, &account, &ROLE_ATTESTOR, &1u64);
+    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
     let after = BudgetSnapshot::capture(&env);
 
     let cost = before.delta(&after);
@@ -581,7 +581,7 @@ fn bench_has_role() {
     let (env, client, admin) = setup_basic();
 
     let account = Address::generate(&env);
-    client.grant_role(&admin, &account, &ROLE_ATTESTOR, &1u64);
+    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
 
     let before = BudgetSnapshot::capture(&env);
     let result = client.has_role(&account, &ROLE_ATTESTOR);
@@ -882,7 +882,7 @@ fn regression_grant_role_threshold() {
     let account = Address::generate(&env);
 
     let before = BudgetSnapshot::capture(&env);
-    client.grant_role(&admin, &account, &ROLE_ATTESTOR, &1u64);
+    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
     let after = BudgetSnapshot::capture(&env);
 
     let cost = before.delta(&after);

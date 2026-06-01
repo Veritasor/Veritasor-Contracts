@@ -29,12 +29,12 @@ fn setup() -> (Env, AttestationContractClient<'static>, Address) {
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
     client.initialize(&admin, &0u64);
-    access_control::grant_role(&env, &admin, ROLE_ADMIN);
+    access_control::grant_role(&env, &admin, ROLE_ADMIN, &admin);
     (env, client, admin)
 }
 
 fn register_pending_business(env: &Env, business: &Address) {
-    access_control::grant_role(env, business, ROLE_BUSINESS);
+    access_control::grant_role(env, business, ROLE_BUSINESS, business);
     let name_hash = BytesN::from_array(env, &[0u8; 32]);
     let tags: Vec<Symbol> = Vec::new(env);
     registry::register_business(env, business, name_hash, symbol_short!("US"), tags);

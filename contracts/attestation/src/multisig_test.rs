@@ -195,7 +195,7 @@ fn test_execute_unpause_proposal() {
     let owner2 = owners.get(1).unwrap();
 
     // First pause (admin nonce 2 after init 0, init_multisig 1)
-    client.pause(&admin, &2u64);
+    client.pause(&admin);
     assert!(client.is_paused());
 
     // Create unpause proposal (admin multisig nonce 0)

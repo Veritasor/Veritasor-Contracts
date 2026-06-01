@@ -304,7 +304,7 @@ fn test_collision_resistance_minimal_change() {
     let root = BytesN::from_array(&env, &[12u8; 32]);
 
     // Two hashes that differ by only one bit.
-    let mut hash1_bytes = [0xAAu8; 32];
+    let hash1_bytes = [0xAAu8; 32];
     let mut hash2_bytes = [0xAAu8; 32];
     hash2_bytes[31] ^= 1; // Flip the last bit
 
@@ -333,8 +333,8 @@ fn test_collision_resistance_minimal_change() {
     );
 
     // Verify they are stored as distinct values.
-    assert_eq!(client.get_proof_hash(&business1, &period), Some(hash1));
-    assert_eq!(client.get_proof_hash(&business2, &period), Some(hash2));
+    assert_eq!(client.get_proof_hash(&business1, &period), Some(hash1.clone()));
+    assert_eq!(client.get_proof_hash(&business2, &period), Some(hash2.clone()));
     assert_ne!(hash1, hash2);
 }
 
