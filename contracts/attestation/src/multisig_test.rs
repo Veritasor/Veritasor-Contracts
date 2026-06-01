@@ -6,7 +6,7 @@
 
 use super::*;
 use crate::multisig::*;
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{Address, Env, Vec};
 
 /// Helper: register the contract and return a client with multisig setup.
@@ -334,16 +334,14 @@ fn test_proposal_expiration() {
     
     // Advance ledger sequence beyond expiry
     let current_seq = env.ledger().sequence();
-    env.ledger().set_sequence(current_seq + DEFAULT_PROPOSAL_EXPIRY + 1);
+    env.ledger().set_sequence_number(current_seq + DEFAULT_PROPOSAL_EXPIRY + 1);
 
-    // Attempting to approve should panic and update status
-    let result = env.as_contract(&client.address, || {
-        client.approve_proposal(&owner2, &proposal_id, &0u64)
-    });
-    
-    // The test framework might not catch the panic inside env.as_contract gracefully in all cases,
-    // but in Soroban tests, we can just use #[should_panic] or check the status after.
-    // However, since we want to check the status, we might need a non-panicking way or just accept the panic.
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.approve_proposal(&owner2, &proposal_id, &0u64);
+    }));
+
+    let proposal = client.get_proposal(&proposal_id).unwrap();
+    assert_eq!(proposal.status, ProposalStatus::Expired);
 }
 
 #[test]
@@ -355,7 +353,7 @@ fn test_approve_expired_proposal_panics() {
     let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
     
     let current_seq = env.ledger().sequence();
-    env.ledger().set_sequence(current_seq + DEFAULT_PROPOSAL_EXPIRY + 1);
+    env.ledger().set_sequence_number(current_seq + DEFAULT_PROPOSAL_EXPIRY + 1);
 
     client.approve_proposal(&owner2, &proposal_id, &0u64);
 }
@@ -368,7 +366,7 @@ fn test_expired_proposal_status_update() {
     let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
     
     let current_seq = env.ledger().sequence();
-    env.ledger().set_sequence(current_seq + DEFAULT_PROPOSAL_EXPIRY + 1);
+    env.ledger().set_sequence_number(current_seq + DEFAULT_PROPOSAL_EXPIRY + 1);
 
     // We catch the panic to check the status
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -392,7 +390,7 @@ fn test_execute_expired_proposal_panics() {
     
     // Advance ledger sequence beyond expiry
     let current_seq = env.ledger().sequence();
-    env.ledger().set_sequence(current_seq + DEFAULT_PROPOSAL_EXPIRY + 1);
+    env.ledger().set_sequence_number(current_seq + DEFAULT_PROPOSAL_EXPIRY + 1);
 
     client.execute_proposal(&admin, &proposal_id, &1u64);
 }

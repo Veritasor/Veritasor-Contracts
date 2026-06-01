@@ -283,6 +283,21 @@ new_version)`
 
 ---
 
+### SI-014 — multisig: threshold, expiry, and execute ordering
+
+**Applies to:** `create_proposal`, `approve_proposal`, `execute_proposal`
+
+**Statement:**
+
+1. Execution requires approval count ≥ threshold at the time `mark_executed` runs.
+2. `execute_proposal` marks the proposal executed **before** applying side effects so threshold/owner changes during dispatch cannot invalidate the approval check.
+3. Expired proposals cannot be approved or executed (`is_proposal_expired` uses ledger sequence vs stored expiry).
+4. Each owner may approve a given proposal at most once.
+
+**Tests:** `multisig_e2e_test::*` (see `docs/multisig-e2e-testing.md`)
+
+---
+
 ## Attack Vectors Considered and Mitigated
 
 ### Unauthorized Access

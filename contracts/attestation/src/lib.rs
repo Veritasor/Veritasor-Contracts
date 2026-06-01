@@ -731,16 +731,123 @@ impl AttestationContract {
         extended_metadata::set_metadata(&env, &business, &period, &metadata);
     }
 
-    pub fn pause(env: Env, caller: Address) {
+    pub fn pause(env: Env, caller: Address, nonce: u64) {
         access_control::require_admin(&env, &caller);
+        replay_protection::verify_and_increment_nonce(
+            &env,
+            &caller,
+            NONCE_CHANNEL_ADMIN,
+            nonce,
+        );
         access_control::set_paused(&env, true);
         events::emit_paused(&env, &caller);
     }
 
-    pub fn unpause(env: Env, caller: Address) {
+    pub fn unpause(env: Env, caller: Address, nonce: u64) {
         access_control::require_admin(&env, &caller);
+        replay_protection::verify_and_increment_nonce(
+            &env,
+            &caller,
+            NONCE_CHANNEL_ADMIN,
+            nonce,
+        );
         access_control::set_paused(&env, false);
         events::emit_unpaused(&env, &caller);
+    }
+
+    pub fn is_paused(env: Env) -> bool {
+        access_control::is_paused(&env)
+    }
+
+    // ── Multisig governance ─────────────────────────────────────────
+
+    pub fn initialize_multisig(env: Env, owners: Vec<Address>, threshold: u32, nonce: u64) {
+        let admin = dynamic_fees::require_admin(&env);
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
+        assert!(
+            threshold > 0 && threshold <= owners.len(),
+            "invalid multisig threshold"
+        );
+        multisig::initialize_multisig(&env, &owners, threshold);
+    }
+
+    pub fn create_proposal(
+        env: Env,
+        proposer: Address,
+        action: ProposalAction,
+        nonce: u64,
+    ) -> u64 {
+        replay_protection::verify_and_increment_nonce(
+            &env,
+            &proposer,
+            replay_protection::CHANNEL_MULTISIG,
+            nonce,
+        );
+        multisig::create_proposal(&env, &proposer, action)
+    }
+
+    pub fn approve_proposal(env: Env, approver: Address, proposal_id: u64, nonce: u64) {
+        replay_protection::verify_and_increment_nonce(
+            &env,
+            &approver,
+            replay_protection::CHANNEL_MULTISIG,
+            nonce,
+        );
+        multisig::approve_proposal(&env, &approver, proposal_id);
+    }
+
+    pub fn reject_proposal(env: Env, rejecter: Address, proposal_id: u64, nonce: u64) {
+        replay_protection::verify_and_increment_nonce(
+            &env,
+            &rejecter,
+            replay_protection::CHANNEL_MULTISIG,
+            nonce,
+        );
+        multisig::reject_proposal(&env, &rejecter, proposal_id);
+    }
+
+    pub fn execute_proposal(env: Env, executor: Address, proposal_id: u64, nonce: u64) {
+        multisig::require_owner(&env, &executor);
+        replay_protection::verify_and_increment_nonce(
+            &env,
+            &executor,
+            replay_protection::CHANNEL_MULTISIG,
+            nonce,
+        );
+        let proposal = multisig::get_proposal(&env, proposal_id).expect("proposal not found");
+        let action = proposal.action.clone();
+        // Mark executed before applying side effects so threshold/owner changes
+        // during dispatch cannot invalidate the approval count check.
+        multisig::mark_executed(&env, proposal_id);
+        Self::dispatch_multisig_action(&env, &executor, &action);
+    }
+
+    pub fn get_proposal(env: Env, proposal_id: u64) -> Option<Proposal> {
+        multisig::get_proposal(&env, proposal_id)
+    }
+
+    pub fn get_approval_count(env: Env, proposal_id: u64) -> u32 {
+        multisig::get_approval_count(&env, proposal_id)
+    }
+
+    pub fn is_proposal_approved(env: Env, proposal_id: u64) -> bool {
+        multisig::is_proposal_approved(&env, proposal_id)
+    }
+
+    pub fn is_proposal_expired(env: Env, proposal_id: u64) -> bool {
+        multisig::is_proposal_expired(&env, proposal_id)
+    }
+
+    pub fn get_multisig_owners(env: Env) -> Vec<Address> {
+        multisig::get_owners(&env)
+    }
+
+    pub fn get_multisig_threshold(env: Env) -> u32 {
+        multisig::get_threshold(&env)
+    }
+
+    pub fn is_multisig_owner(env: Env, address: Address) -> bool {
+        multisig::is_owner(&env, &address)
     }
 
     /// Admin-gated method to manually bump the instance TTL
@@ -1398,6 +1505,56 @@ impl AttestationContract {
 
     // ── Internal Helpers ──────────────────────────────────────────────
 
+    /// Apply an approved multisig action. Called only from `execute_proposal` after
+    /// threshold and expiry checks in `multisig::mark_executed`.
+    fn dispatch_multisig_action(env: &Env, executor: &Address, action: &ProposalAction) {
+        match action {
+            ProposalAction::Pause => {
+                access_control::set_paused(env, true);
+                events::emit_paused(env, executor);
+            }
+            ProposalAction::Unpause => {
+                access_control::set_paused(env, false);
+                events::emit_unpaused(env, executor);
+            }
+            ProposalAction::AddOwner(addr) => multisig::add_owner(env, addr),
+            ProposalAction::RemoveOwner(addr) => multisig::remove_owner(env, addr),
+            ProposalAction::ChangeThreshold(t) => multisig::rotate_threshold(env, *t),
+            ProposalAction::GrantRole(account, role) => {
+                access_control::grant_role(env, account, *role, executor);
+            }
+            ProposalAction::RevokeRole(account, role) => {
+                access_control::revoke_role(env, account, *role, executor);
+            }
+            ProposalAction::UpdateFeeConfig(token, collector, base_fee, enabled) => {
+                assert!(*base_fee >= 0, "base_fee must be non-negative");
+                let config = FeeConfig {
+                    token: token.clone(),
+                    collector: collector.clone(),
+                    base_fee: *base_fee,
+                    enabled: *enabled,
+                };
+                dynamic_fees::set_fee_config(env, &config);
+                events::emit_fee_config_changed(
+                    env,
+                    &config.token,
+                    &config.collector,
+                    config.base_fee,
+                    config.enabled,
+                    executor,
+                );
+            }
+            ProposalAction::EmergencyRotateAdmin(new_admin) => {
+                let old_admin = dynamic_fees::get_admin(env);
+                veritasor_common::key_rotation::emergency_rotate(env, &old_admin, new_admin);
+                dynamic_fees::set_admin(env, new_admin);
+                access_control::revoke_role(env, &old_admin, ROLE_ADMIN, executor);
+                access_control::grant_role(env, new_admin, ROLE_ADMIN, executor);
+                events::emit_key_rotation_emergency(env, &old_admin, new_admin);
+            }
+        }
+    }
+
     /// REQUIREMENT: Rejects empty or malformed strings to avoid permanent unvalidated storage poisoning.
     fn validate_period(period: &String) {
         if period.len() == 0 {
@@ -1460,6 +1617,8 @@ mod anomaly_test;
 mod attestor_staking_integration_test;
 #[cfg(test)]
 mod batch_auth_dedup_test;
+#[cfg(test)]
+mod multisig_e2e_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod batch_submission_test;
 #[cfg(all(test, feature = "full-tests"))]
