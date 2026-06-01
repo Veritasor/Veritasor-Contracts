@@ -298,6 +298,20 @@ new_version)`
 
 ---
 
+### SI-015 — fee collection matches `get_fee_quote` at submission time
+
+**Applies to:** `submit_attestation`, `get_fee_quote`, `get_fee_quote_detailed`
+
+**Statement:**
+
+1. Stored `fee_paid` (attestation tuple index `.3`) equals `dynamic_fee + flat_fee` collected in `execute_submission`.
+2. That total equals the pre-submit `get_fee_quote(business)` snapshot (same `calculate_fee` + `calculate_flat_fee` path).
+3. The legacy `_fee_paid` submit argument is ignored; fees cannot be under-reported by callers.
+
+**Tests:** `fee_reconciliation_test::*` (see `docs/fee-reconciliation.md`)
+
+---
+
 ## Attack Vectors Considered and Mitigated
 
 ### Unauthorized Access

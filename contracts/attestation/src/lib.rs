@@ -1619,6 +1619,8 @@ mod attestor_staking_integration_test;
 mod batch_auth_dedup_test;
 #[cfg(test)]
 mod multisig_e2e_test;
+#[cfg(test)]
+mod fee_reconciliation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod batch_submission_test;
 #[cfg(all(test, feature = "full-tests"))]
