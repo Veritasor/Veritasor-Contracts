@@ -474,12 +474,13 @@ impl AttestationContract {
 
             dynamic_fees::increment_business_count(env, &item.business);
 
+            let key = DataKey::Attestation(item.business.clone(), item.period.clone());
             let data: AttestationData = (
                 item.merkle_root.clone(),
                 item.timestamp,
                 item.version,
-                fee,
-                proof_hash.clone(),
+                total_fee,
+                item.proof_hash.clone(),
                 item.expiry_timestamp,
             );
             env.storage().instance().set(&key, &data);
@@ -491,8 +492,8 @@ impl AttestationContract {
                 &item.merkle_root,
                 item.timestamp,
                 item.version,
-                fee,
-                &proof_hash,
+                total_fee,
+                &item.proof_hash,
                 item.expiry_timestamp,
             );
 
@@ -528,7 +529,7 @@ impl AttestationContract {
         period: String,
     ) {
         caller.require_auth();
-        let caller_is_admin = *caller == dynamic_fees::get_admin(&env)
+        let caller_is_admin = caller == dynamic_fees::get_admin(&env)
             || access_control::has_role(&env, &caller, ROLE_ADMIN);
         assert!(caller_is_admin || caller == business, "caller must be ADMIN or the business owner");
 
@@ -880,10 +881,6 @@ impl AttestationContract {
         events::emit_attestation_expiry_extended(&env, &business, &period, old_expiry, new_expiry);
     }
 
-    pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
-        let key = DataKey::Attestation(business, period);
-        env.storage().instance().get(&key)
-    }
 
     pub fn get_proof_hash(env: Env, business: Address, period: String) -> Option<BytesN<32>> {
         Self::get_attestation(env, business, period).and_then(|data| data.4)
@@ -1481,3 +1478,7 @@ mod ttl_test;
 mod verify_attestation_test;
 #[cfg(test)]
 mod verify_attestations_batch_test;
+
+fn compare_strings(a: &String, b: &String) -> Ordering {
+    a.cmp(b)
+}
