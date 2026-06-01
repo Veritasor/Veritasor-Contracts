@@ -1468,6 +1468,8 @@ mod rate_limit_test;
 #[cfg(test)]
 mod registry_test;
 #[cfg(test)]
+mod replay_nonce_test;
+#[cfg(test)]
 mod revocation_test;
 #[cfg(test)]
 mod test;
