@@ -42,7 +42,9 @@ pub const ROLE_BUSINESS: u32 = 1 << 2; // 0b0100
 pub const ROLE_OPERATOR: u32 = 1 << 3; // 0b1000
 
 /// Maximum valid role bitmap (all defined roles combined)
-/// Used for input validation to reject invalid role combinations
+/// Used for input validation to reject invalid role combinations.
+/// SECURITY: Adding a new role requires updating both this constant
+/// and the reference implementation in the proptests (`contracts/attestation/src/property_test.rs`).
 pub const ROLE_VALID_MASK: u32 = ROLE_ADMIN | ROLE_ATTESTOR | ROLE_BUSINESS | ROLE_OPERATOR;
 
 /// Storage keys for access control
@@ -67,7 +69,7 @@ pub enum AccessControlKey {
 /// Validate that a role bitmap is well-formed.
 /// Returns true if the bitmap only uses defined role bits.
 /// SECURITY: Prevents setting undefined bits that could cause unexpected behavior
-fn is_valid_role_bitmap(roles: u32) -> bool {
+pub(crate) fn is_valid_role_bitmap(roles: u32) -> bool {
     // All set bits must be within the valid mask
     // This allows any combination of valid roles but rejects invalid bits
     roles & !ROLE_VALID_MASK == 0

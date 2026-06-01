@@ -1893,3 +1893,56 @@ fn prop_regression_protocol_revenue_determinism() {
     assert!(std_next >= pro_next, "Standard ≥ Professional fee");
     assert!(pro_next >= ent_next, "Professional ≥ Enterprise fee");
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  §Q — Access Control Role Bitmap Validation
+//
+//  Invariant P36: Role bitmap validation accepts exactly the defined roles
+//                 (bits 0..=3) and rejects all other bit patterns in the u32 space.
+// ════════════════════════════════════════════════════════════════════
+
+proptest! {
+    /// P36: `is_valid_role_bitmap` behaves exactly as `(roles & !0xF) == 0`.
+    #[test]
+    fn prop_role_bitmap_validation_covers_u32_space(role_mask in 0u32..=u32::MAX) {
+        // Reference implementation: exactly the first 4 bits (0xF) are valid.
+        // If a new role is added, this reference AND the constant in access_control.rs must be updated.
+        let is_valid_reference = (role_mask & !0xF) == 0;
+        let actual_validation = access_control::is_valid_role_bitmap(role_mask);
+        
+        prop_assert_eq!(
+            actual_validation, is_valid_reference,
+            "validation mismatch for bitmap {:#010X}: expected {}, got {}",
+            role_mask, is_valid_reference, actual_validation
+        );
+        
+        // Assert that grant_role panics for any sampled invalid bitmap.
+        if !is_valid_reference {
+            let result = std::panic::catch_unwind(|| {
+                let env = Env::default();
+                let account = Address::generate(&env);
+                let admin = Address::generate(&env);
+                access_control::grant_role(&env, &account, role_mask, &admin);
+            });
+            prop_assert!(
+                result.is_err(),
+                "grant_role should panic for invalid role bitmap {:#010X}",
+                role_mask
+            );
+        } else if role_mask != 0 {
+            let result = std::panic::catch_unwind(|| {
+                let env = Env::default();
+                // Need to use testutils to allow events in Soroban testing.
+                env.mock_all_auths();
+                let account = Address::generate(&env);
+                let admin = Address::generate(&env);
+                access_control::grant_role(&env, &account, role_mask, &admin);
+            });
+            prop_assert!(
+                result.is_ok(),
+                "grant_role unexpectedly panicked for valid role bitmap {:#010X}",
+                role_mask
+            );
+        }
+    }
+}
