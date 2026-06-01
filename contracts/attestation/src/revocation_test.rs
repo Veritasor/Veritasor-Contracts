@@ -23,7 +23,7 @@ impl TestEnv {
     }
     
     pub fn submit_attestation(&self, business: Address, period: String, root: BytesN<32>, timestamp: u64, version: u32) {
-        self.client.submit_attestation(&business, &period, &root, &timestamp, &version, &0i128, &0i128, &None);
+        self.client.submit_attestation(&business, &period, &root, &timestamp, &version, &0i128, &None, &None);
     }
     
     pub fn revoke_attestation(&self, caller: Address, business: Address, period: String, reason: String) {
@@ -51,7 +51,15 @@ impl TestEnv {
     }
 
     pub fn pause(&self, admin: Address) {
-        self.client.pause(&admin, &0u64);
+        self.client.pause(&admin);
+    }
+
+    pub fn get_attestation_with_status(&self, business: Address, period: String) -> Option<crate::AttestationWithRevocation> {
+        self.client.get_attestation_with_status(&business, &period)
+    }
+
+    pub fn migrate_attestation(&self, caller: Address, business: Address, period: String, new_merkle_root: BytesN<32>, new_version: u32) {
+        self.client.migrate_attestation(&caller, &business, &period, &new_merkle_root, &new_version);
     }
 }
 use soroban_sdk::testutils::{Address as _, Events};
@@ -1015,7 +1023,7 @@ fn setup_index_env() -> (Env, AttestationContractClient<'static>, Address) {
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin);
+    client.initialize(&admin, &0u64);
     (env, client, admin)
 }
 
