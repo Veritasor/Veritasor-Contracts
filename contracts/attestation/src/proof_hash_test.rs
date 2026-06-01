@@ -311,8 +311,26 @@ fn test_collision_resistance_minimal_change() {
     let hash1 = BytesN::from_array(&env, &hash1_bytes);
     let hash2 = BytesN::from_array(&env, &hash2_bytes);
 
-    client.submit_attestation(&business1, &period, &root, &1_700_000_000u64, &1u32, &0i128, &Some(hash1.clone()), &None);
-    client.submit_attestation(&business2, &period, &root, &1_700_000_000u64, &1u32, &0i128, &Some(hash2.clone()), &None);
+    client.submit_attestation(
+        &business1,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &Some(hash1.clone()),
+        &None,
+    );
+    client.submit_attestation(
+        &business2,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &Some(hash2.clone()),
+        &None,
+    );
 
     // Verify they are stored as distinct values.
     assert_eq!(client.get_proof_hash(&business1, &period), Some(hash1));
@@ -332,11 +350,35 @@ fn test_adversarial_edge_hashes() {
     let zero_hash = BytesN::from_array(&env, &[0u8; 32]);
     let max_hash = BytesN::from_array(&env, &[0xFFu8; 32]);
 
-    client.submit_attestation(&business_zero, &period, &root, &1_700_000_000u64, &1u32, &0i128, &Some(zero_hash.clone()), &None);
-    client.submit_attestation(&business_max, &period, &root, &1_700_000_000u64, &1u32, &0i128, &Some(max_hash.clone()), &None);
+    client.submit_attestation(
+        &business_zero,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &Some(zero_hash.clone()),
+        &None,
+    );
+    client.submit_attestation(
+        &business_max,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &Some(max_hash.clone()),
+        &None,
+    );
 
-    assert_eq!(client.get_proof_hash(&business_zero, &period), Some(zero_hash));
-    assert_eq!(client.get_proof_hash(&business_max, &period), Some(max_hash));
+    assert_eq!(
+        client.get_proof_hash(&business_zero, &period),
+        Some(zero_hash)
+    );
+    assert_eq!(
+        client.get_proof_hash(&business_max, &period),
+        Some(max_hash)
+    );
 }
 
 #[test]
@@ -351,11 +393,35 @@ fn test_hash_uniqueness_across_records() {
     let shared_hash = BytesN::from_array(&env, &[0x55u8; 32]);
 
     // Same hash for different business/period pairs should be allowed and isolated.
-    client.submit_attestation(&business1, &period1, &root, &1_700_000_000u64, &1u32, &0i128, &Some(shared_hash.clone()), &None);
-    client.submit_attestation(&business2, &period2, &root, &1_700_000_000u64, &1u32, &0i128, &Some(shared_hash.clone()), &None);
+    client.submit_attestation(
+        &business1,
+        &period1,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &Some(shared_hash.clone()),
+        &None,
+    );
+    client.submit_attestation(
+        &business2,
+        &period2,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &Some(shared_hash.clone()),
+        &None,
+    );
 
-    assert_eq!(client.get_proof_hash(&business1, &period1), Some(shared_hash.clone()));
-    assert_eq!(client.get_proof_hash(&business2, &period2), Some(shared_hash));
+    assert_eq!(
+        client.get_proof_hash(&business1, &period1),
+        Some(shared_hash.clone())
+    );
+    assert_eq!(
+        client.get_proof_hash(&business2, &period2),
+        Some(shared_hash)
+    );
 }
 
 #[test]
@@ -369,8 +435,26 @@ fn test_prevent_proof_hash_overwrite() {
     let hash1 = BytesN::from_array(&env, &[0x11u8; 32]);
     let hash2 = BytesN::from_array(&env, &[0x22u8; 32]);
 
-    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &0i128, &Some(hash1), &None);
-    
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &Some(hash1),
+        &None,
+    );
+
     // Attempting to overwrite with a different hash should panic.
-    client.submit_attestation(&business, &period, &root, &1_700_000_001u64, &1u32, &0i128, &Some(hash2), &None);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_001u64,
+        &1u32,
+        &0i128,
+        &Some(hash2),
+        &None,
+    );
 }

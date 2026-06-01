@@ -354,11 +354,7 @@ impl AttestationContract {
         Self::execute_batch_submission(&env, None, &items);
     }
 
-    pub fn submit_batch_as_attestor(
-        env: Env,
-        attestor: Address,
-        items: Vec<BatchAttestationItem>,
-    ) {
+    pub fn submit_batch_as_attestor(env: Env, attestor: Address, items: Vec<BatchAttestationItem>) {
         access_control::require_attestor(&env, &attestor);
 
         let staking_addr = Self::get_attestor_staking_contract(env.clone())
@@ -505,11 +501,7 @@ impl AttestationContract {
         }
     }
 
-    pub fn get_attestation(
-        env: Env,
-        business: Address,
-        period: String,
-    ) -> Option<AttestationData> {
+    pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
         let key = DataKey::Attestation(business, period);
         env.storage().instance().get(&key)
     }
@@ -535,7 +527,10 @@ impl AttestationContract {
         caller.require_auth();
         let caller_is_admin = caller == dynamic_fees::get_admin(&env)
             || access_control::has_role(&env, &caller, ROLE_ADMIN);
-        assert!(caller_is_admin || caller == business, "caller must be ADMIN or the business owner");
+        assert!(
+            caller_is_admin || caller == business,
+            "caller must be ADMIN or the business owner"
+        );
 
         let key = DataKey::Attestation(business.clone(), period.clone());
         let attestation: AttestationData = env
@@ -885,7 +880,6 @@ impl AttestationContract {
         events::emit_attestation_expiry_extended(&env, &business, &period, old_expiry, new_expiry);
     }
 
-
     pub fn get_proof_hash(env: Env, business: Address, period: String) -> Option<BytesN<32>> {
         Self::get_attestation(env, business, period).and_then(|data| data.4)
     }
@@ -984,7 +978,7 @@ impl AttestationContract {
 
     pub fn revoke_multi_period_attestation(env: Env, business: Address, merkle_root: BytesN<32>) {
         business.require_auth();
-        
+
         // O(1) lookup via index instead of O(n) linear scan
         let index_key = MultiPeriodKey::RootIndex(business.clone(), merkle_root.clone());
         let range_index: u32 = env
@@ -1137,8 +1131,8 @@ impl AttestationContract {
 
     pub fn cancel_key_rotation(env: Env) {
         let admin = dynamic_fees::require_admin(&env);
-    admin.require_auth();
-    veritasor_common::key_rotation::cancel_rotation(&env, &admin);
+        admin.require_auth();
+        veritasor_common::key_rotation::cancel_rotation(&env, &admin);
     }
 
     pub fn has_pending_key_rotation(env: Env) -> bool {
@@ -1387,24 +1381,6 @@ impl AttestationContract {
         (results, current_cursor)
     }
 
-    pub fn close_dispute(env: Env, dispute_id: u64) {
-        let mut dispute_record = dispute::validate_dispute_closure(&env, dispute_id).unwrap();
-        dispute_record.status = DisputeStatus::Closed;
-        dispute::store_dispute(&env, &dispute_record);
-    }
-
-    pub fn get_dispute(env: Env, dispute_id: u64) -> Option<Dispute> {
-        dispute::get_dispute(&env, dispute_id)
-    }
-
-    pub fn get_disputes_by_attestation(env: Env, business: Address, period: String) -> Vec<u64> {
-        dispute::get_dispute_ids_by_attestation(&env, &business, &period)
-    }
-
-    pub fn get_disputes_by_challenger(env: Env, challenger: Address) -> Vec<u64> {
-        dispute::get_dispute_ids_by_challenger(&env, &challenger)
-    }
-
     pub fn initialize_multisig(env: Env, owners: Vec<Address>, threshold: u32, _nonce: u64) {
         multisig::initialize_multisig(&env, &owners, threshold);
     }
@@ -1472,24 +1448,39 @@ impl AttestationContract {
             }
             ProposalAction::ChangeThreshold(new_threshold) => {
                 let owners_len = multisig::get_owners(&env).len();
-                assert!(new_threshold > 0 && new_threshold <= owners_len, "invalid threshold");
-                env.storage().instance().set(&multisig::MultisigKey::Threshold, &new_threshold);
+                assert!(
+                    new_threshold > 0 && new_threshold <= owners_len,
+                    "invalid threshold"
+                );
+                env.storage()
+                    .instance()
+                    .set(&multisig::MultisigKey::Threshold, &new_threshold);
             }
             ProposalAction::GrantRole(account, role) => {
-                access_control::grant_role(&env, &account, role);
+                access_control::grant_role(&env, &account, role, &executor);
                 events::emit_role_granted(&env, &account, role, &executor);
             }
             ProposalAction::RevokeRole(account, role) => {
-                access_control::revoke_role(&env, &account, role);
+                access_control::revoke_role(&env, &account, role, &executor);
                 events::emit_role_revoked(&env, &account, role, &executor);
             }
             ProposalAction::UpdateFeeConfig(token, collector, base_fee, enabled) => {
-                let config = dynamic_fees::FeeConfig { token, collector, base_fee, enabled };
+                let config = dynamic_fees::FeeConfig {
+                    token,
+                    collector,
+                    base_fee,
+                    enabled,
+                };
                 dynamic_fees::set_fee_config(&env, &config);
             }
             ProposalAction::EmergencyRotateAdmin(new_admin) => {
                 dynamic_fees::set_admin(&env, &new_admin);
-                access_control::grant_role(&env, &new_admin, access_control::ROLE_ADMIN, &new_admin);
+                access_control::grant_role(
+                    &env,
+                    &new_admin,
+                    access_control::ROLE_ADMIN,
+                    &new_admin,
+                );
             }
         }
     }

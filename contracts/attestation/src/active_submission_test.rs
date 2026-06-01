@@ -157,7 +157,9 @@ fn test_submit_attestation_accepts_active_business() {
         &None,
         &None,
     );
-    let stored = client.get_attestation(&business, &period).expect("expected attestation");
+    let stored = client
+        .get_attestation(&business, &period)
+        .expect("expected attestation");
     assert_eq!(stored.0, root);
 }
 
@@ -230,5 +232,7 @@ fn test_submit_attestations_batch_accepts_reactivated_business() {
     });
 
     client.submit_attestations_batch(&items);
-    assert!(client.get_attestation(&business, &SorobanString::from_str(&env, "2026-02")).is_some());
+    assert!(client
+        .get_attestation(&business, &SorobanString::from_str(&env, "2026-02"))
+        .is_some());
 }

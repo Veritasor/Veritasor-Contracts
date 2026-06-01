@@ -148,7 +148,10 @@ fn test_collect_flat_fee_success() {
     assert_eq!(balance(&t.env, &t.token_addr, &business), 500);
     assert_eq!(balance(&t.env, &t.token_addr, &t.collector), 500);
 
-    let record = t.client.get_attestation(&business, &String::from_str(&t.env, "2026-02")).unwrap();
+    let record = t
+        .client
+        .get_attestation(&business, &String::from_str(&t.env, "2026-02"))
+        .unwrap();
     assert_eq!(record.3, 500);
 }
 
@@ -156,13 +159,17 @@ fn test_collect_flat_fee_success() {
 #[test]
 fn test_flat_fee_disabled() {
     let t = setup_with_flat_fees(500);
-    t.client.configure_flat_fee(&t.token_addr, &t.collector, &500, &false);
+    t.client
+        .configure_flat_fee(&t.token_addr, &t.collector, &500, &false);
 
     let business = Address::generate(&t.env);
     submit(&t.client, &t.env, &business, "2026-02", 1);
 
     assert_eq!(balance(&t.env, &t.token_addr, &t.collector), 0);
-    let record = t.client.get_attestation(&business, &String::from_str(&t.env, "2026-02")).unwrap();
+    let record = t
+        .client
+        .get_attestation(&business, &String::from_str(&t.env, "2026-02"))
+        .unwrap();
     assert_eq!(record.3, 0);
 }
 
@@ -192,7 +199,8 @@ fn test_flat_fee_insufficient_balance() {
 fn test_combined_fees() {
     let t = setup_with_flat_fees(500);
     let dyn_collector = Address::generate(&t.env);
-    t.client.configure_fees(&t.token_addr, &dyn_collector, &1_000, &true);
+    t.client
+        .configure_fees(&t.token_addr, &dyn_collector, &1_000, &true);
 
     let business = Address::generate(&t.env);
     mint(&t.env, &t.token_addr, &business, 2_000);
@@ -204,7 +212,10 @@ fn test_combined_fees() {
     assert_eq!(balance(&t.env, &t.token_addr, &t.collector), 500);
     assert_eq!(balance(&t.env, &t.token_addr, &dyn_collector), 1_000);
 
-    let record = t.client.get_attestation(&business, &String::from_str(&t.env, "2026-02")).unwrap();
+    let record = t
+        .client
+        .get_attestation(&business, &String::from_str(&t.env, "2026-02"))
+        .unwrap();
     assert_eq!(record.3, 1_500);
 }
 
@@ -238,8 +249,14 @@ fn test_only_flat_fee_transfers_to_flat_collector() {
         "flat-fee collector should receive exactly the flat fee"
     );
 
-    let record = t.client.get_attestation(&business, &String::from_str(&t.env, "2026-03")).unwrap();
-    assert_eq!(record.3, 300, "fee_paid must equal flat fee when dynamic is absent");
+    let record = t
+        .client
+        .get_attestation(&business, &String::from_str(&t.env, "2026-03"))
+        .unwrap();
+    assert_eq!(
+        record.3, 300,
+        "fee_paid must equal flat fee when dynamic is absent"
+    );
 }
 
 // ── Only dynamic fee enabled ─────────────────────────────────────────
@@ -280,8 +297,13 @@ fn test_only_dynamic_fee_transfers_to_dynamic_collector() {
         "dynamic-fee collector should receive exactly the dynamic fee"
     );
 
-    let record = client.get_attestation(&business, &String::from_str(&env, "2026-03")).unwrap();
-    assert_eq!(record.3, 1_000, "fee_paid must equal dynamic fee when flat is absent");
+    let record = client
+        .get_attestation(&business, &String::from_str(&env, "2026-03"))
+        .unwrap();
+    assert_eq!(
+        record.3, 1_000,
+        "fee_paid must equal dynamic fee when flat is absent"
+    );
 }
 
 // ── Both fees disabled ───────────────────────────────────────────────
@@ -292,11 +314,13 @@ fn test_only_dynamic_fee_transfers_to_dynamic_collector() {
 fn test_both_fees_disabled_no_transfer() {
     let t = setup_with_flat_fees(500);
     // Disable flat fee.
-    t.client.configure_flat_fee(&t.token_addr, &t.collector, &500, &false);
+    t.client
+        .configure_flat_fee(&t.token_addr, &t.collector, &500, &false);
 
     // Configure dynamic fee but immediately disable it.
     let dyn_collector = Address::generate(&t.env);
-    t.client.configure_fees(&t.token_addr, &dyn_collector, &1_000, &false);
+    t.client
+        .configure_fees(&t.token_addr, &dyn_collector, &1_000, &false);
 
     // Business has no tokens — any transfer would panic.
     let business = Address::generate(&t.env);
@@ -313,8 +337,14 @@ fn test_both_fees_disabled_no_transfer() {
         "dynamic-fee collector must receive nothing when disabled"
     );
 
-    let record = t.client.get_attestation(&business, &String::from_str(&t.env, "2026-04")).unwrap();
-    assert_eq!(record.3, 0, "fee_paid must be 0 when both fees are disabled");
+    let record = t
+        .client
+        .get_attestation(&business, &String::from_str(&t.env, "2026-04"))
+        .unwrap();
+    assert_eq!(
+        record.3, 0,
+        "fee_paid must be 0 when both fees are disabled"
+    );
 }
 
 // ── Combined fees: exact decomposition ──────────────────────────────
@@ -358,10 +388,15 @@ fn test_fee_paid_equals_dynamic_plus_flat_exact_decomposition() {
 
     // Each collector receives exactly its configured fee.
     assert_eq!(flat_delta, 400, "flat collector delta must equal flat fee");
-    assert_eq!(dyn_delta, 600, "dynamic collector delta must equal dynamic fee");
+    assert_eq!(
+        dyn_delta, 600,
+        "dynamic collector delta must equal dynamic fee"
+    );
 
     // Stored fee_paid must equal the sum of both deltas.
-    let record = client.get_attestation(&business, &String::from_str(&env, "2026-05")).unwrap();
+    let record = client
+        .get_attestation(&business, &String::from_str(&env, "2026-05"))
+        .unwrap();
     assert_eq!(
         record.3,
         flat_delta + dyn_delta,
@@ -421,11 +456,22 @@ fn test_tier_discount_reduces_dynamic_fee_and_record() {
     let dyn_delta = balance(&env, &dyn_token, &dyn_collector) - dyn_before;
     let flat_delta = balance(&env, &flat_token, &flat_collector) - flat_before;
 
-    assert_eq!(dyn_delta, 800_000, "dynamic collector must receive discounted fee");
-    assert_eq!(flat_delta, 200, "flat collector must be unaffected by tier discount");
+    assert_eq!(
+        dyn_delta, 800_000,
+        "dynamic collector must receive discounted fee"
+    );
+    assert_eq!(
+        flat_delta, 200,
+        "flat collector must be unaffected by tier discount"
+    );
 
-    let record = client.get_attestation(&business, &String::from_str(&env, "2026-06")).unwrap();
-    assert_eq!(record.3, 800_200, "fee_paid must equal discounted dynamic (800_000) + flat (200)");
+    let record = client
+        .get_attestation(&business, &String::from_str(&env, "2026-06"))
+        .unwrap();
+    assert_eq!(
+        record.3, 800_200,
+        "fee_paid must equal discounted dynamic (800_000) + flat (200)"
+    );
 }
 
 // ── Volume discount reduces dynamic fee ─────────────────────────────
@@ -475,11 +521,22 @@ fn test_volume_discount_reduces_dynamic_fee_after_threshold() {
     let dyn_delta = balance(&env, &token_addr, &dyn_collector) - dyn_before;
     let biz_delta = biz_before - balance(&env, &token_addr, &business);
 
-    assert_eq!(dyn_delta, 750, "dynamic collector must receive volume-discounted fee");
-    assert_eq!(biz_delta, 750, "business must be debited the discounted fee");
+    assert_eq!(
+        dyn_delta, 750,
+        "dynamic collector must receive volume-discounted fee"
+    );
+    assert_eq!(
+        biz_delta, 750,
+        "business must be debited the discounted fee"
+    );
 
-    let record = client.get_attestation(&business, &String::from_str(&env, "2026-04")).unwrap();
-    assert_eq!(record.3, 750, "fee_paid must equal volume-discounted dynamic fee");
+    let record = client
+        .get_attestation(&business, &String::from_str(&env, "2026-04"))
+        .unwrap();
+    assert_eq!(
+        record.3, 750,
+        "fee_paid must equal volume-discounted dynamic fee"
+    );
 }
 
 // ── Collector balance accumulates across multiple submissions ────────
@@ -546,7 +603,10 @@ fn test_balance_delta_equals_fee_quote() {
 
     // `get_fee_quote` returns dynamic + flat = 850 + 150 = 1_000.
     let total_quote = client.get_fee_quote(&business);
-    assert_eq!(total_quote, 1_000, "get_fee_quote must return dynamic + flat");
+    assert_eq!(
+        total_quote, 1_000,
+        "get_fee_quote must return dynamic + flat"
+    );
 
     let flat_before = balance(&env, &flat_token, &flat_collector);
     let dyn_before = balance(&env, &dyn_token, &dyn_collector);
@@ -558,7 +618,10 @@ fn test_balance_delta_equals_fee_quote() {
 
     // Each collector receives exactly its configured fee.
     assert_eq!(flat_delta, 150, "flat delta must equal configured flat fee");
-    assert_eq!(dyn_delta, 850, "dynamic delta must equal configured dynamic fee");
+    assert_eq!(
+        dyn_delta, 850,
+        "dynamic delta must equal configured dynamic fee"
+    );
 
     // Sum of deltas must equal the pre-submission quote.
     assert_eq!(
@@ -567,7 +630,9 @@ fn test_balance_delta_equals_fee_quote() {
         "flat_delta + dyn_delta must equal get_fee_quote"
     );
 
-    let record = client.get_attestation(&business, &String::from_str(&env, "2026-07")).unwrap();
+    let record = client
+        .get_attestation(&business, &String::from_str(&env, "2026-07"))
+        .unwrap();
     assert_eq!(record.3, total_quote, "fee_paid must equal get_fee_quote");
     assert_eq!(record.3, 1_000);
 }
@@ -626,6 +691,11 @@ fn test_tier_and_volume_combined_discount_balance_delta() {
     assert_eq!(dyn_delta, 720_000, "combined discount must yield 720_000");
     assert_eq!(biz_delta, 720_000);
 
-    let record = client.get_attestation(&business, &String::from_str(&env, "2026-03")).unwrap();
-    assert_eq!(record.3, 720_000, "fee_paid must equal combined-discounted fee");
+    let record = client
+        .get_attestation(&business, &String::from_str(&env, "2026-03"))
+        .unwrap();
+    assert_eq!(
+        record.3, 720_000,
+        "fee_paid must equal combined-discounted fee"
+    );
 }

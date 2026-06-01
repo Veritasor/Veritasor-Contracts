@@ -135,7 +135,11 @@ fn other_fields_unchanged_after_update() {
     assert_eq!(stored_root, merkle_root, "merkle_root should be unchanged");
     assert_eq!(stored_ts, timestamp, "timestamp should be unchanged");
     assert_eq!(stored_ver, version, "version should be unchanged");
-    assert_eq!(stored_proof, Some(new_proof_hash), "proof_hash should be updated");
+    assert_eq!(
+        stored_proof,
+        Some(new_proof_hash),
+        "proof_hash should be updated"
+    );
 }
 
 #[test]
