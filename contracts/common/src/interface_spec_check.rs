@@ -37,37 +37,37 @@ impl VerificationResult {
         }
     }
 
-    pub fn add_missing_method(&mut self, env: &Env, method: String) {
+    pub fn add_missing_method(&mut self, _env: &Env, method: String) {
         self.passed = false;
         self.missing_methods.push_back(method);
     }
 
-    pub fn add_undocumented_method(&mut self, env: &Env, method: String) {
+    pub fn add_undocumented_method(&mut self, _env: &Env, method: String) {
         self.passed = false;
         self.undocumented_methods.push_back(method);
     }
 
-    pub fn add_missing_event(&mut self, env: &Env, event: String) {
+    pub fn add_missing_event(&mut self, _env: &Env, event: String) {
         self.passed = false;
         self.missing_events.push_back(event);
     }
 
-    pub fn add_missing_struct(&mut self, env: &Env, struct_name: String) {
+    pub fn add_missing_struct(&mut self, _env: &Env, struct_name: String) {
         self.passed = false;
         self.missing_structs.push_back(struct_name);
     }
 
-    pub fn add_error(&mut self, env: &Env, error: String) {
+    pub fn add_error(&mut self, _env: &Env, error: String) {
         self.passed = false;
         self.errors.push_back(error);
     }
 
-    pub fn add_version_mismatch(&mut self, env: &Env, msg: String) {
+    pub fn add_version_mismatch(&mut self, _env: &Env, msg: String) {
         self.passed = false;
         self.version_mismatches.push_back(msg);
     }
 
-    pub fn add_cross_crate_violation(&mut self, env: &Env, msg: String) {
+    pub fn add_cross_crate_violation(&mut self, _env: &Env, msg: String) {
         self.passed = false;
         self.cross_crate_violations.push_back(msg);
     }
