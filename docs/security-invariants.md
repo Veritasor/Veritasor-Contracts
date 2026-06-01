@@ -255,6 +255,34 @@ new_version)`
 
 ### SI-007 — submit_multi_period_attestation: business auth, no overlap
 
+---
+
+### SI-008 — submit_attestations_batch: per-business auth dedup cannot skip distinct addresses
+
+**Applies to:** `submit_attestations_batch(items)`
+
+**Statement:**
+
+1. Every **distinct** `item.business` address in the batch must pass `require_auth()` before
+   processing proceeds.
+2. The dedup tracker (`authed_businesses`) records **addresses** only. Reusing an already-authed
+   address in a later item must **not** skip `require_auth()` for a different `item.business`.
+3. A caller who authorized only business A must not submit attestations for business B in the
+   same batch (ordering must not affect this).
+
+**Tests:** `test_batch_same_business_twice_succeeds`,
+`test_batch_same_business_auth_observed_once_in_dedup_phase`,
+`test_batch_second_business_unauthorized_panics`,
+`test_batch_second_business_unauthorized_no_partial_write`,
+`test_batch_reverse_order_unauthorized_panics`,
+`test_batch_three_businesses_only_two_authed_panics`,
+`test_batch_max_25_three_businesses_all_authed_succeeds`,
+`test_batch_max_25_partial_auth_panics`
+
+(File: `contracts/attestation/src/batch_auth_dedup_test.rs`)
+
+---
+
 ## Attack Vectors Considered and Mitigated
 
 ### Unauthorized Access

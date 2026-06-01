@@ -330,8 +330,12 @@ impl AttestationContract {
         if items.is_empty() {
             panic!("batch cannot be empty");
         }
+        if items.len() > MAX_BATCH_SIZE as usize {
+            panic!("batch exceeds maximum size");
+        }
 
-        // Standard batch submission requires authorization from the businesses
+        // Each entry is a business Address; dedup skips require_auth only for repeats
+        // of the same address, never for a different item.business value.
         let mut authed_businesses = Vec::new(&env);
         for item in items.iter() {
             let mut already_authed = false;
@@ -438,6 +442,9 @@ impl AttestationContract {
         if items.is_empty() {
             panic!("batch cannot be empty");
         }
+        if items.len() > MAX_BATCH_SIZE as usize {
+            panic!("batch exceeds maximum size");
+        }
 
         // 1. Validation Phase
         let mut seen = Vec::new(env);
@@ -474,12 +481,13 @@ impl AttestationContract {
 
             dynamic_fees::increment_business_count(env, &item.business);
 
+            let key = DataKey::Attestation(item.business.clone(), item.period.clone());
             let data: AttestationData = (
                 item.merkle_root.clone(),
                 item.timestamp,
                 item.version,
-                fee,
-                proof_hash.clone(),
+                total_fee,
+                item.proof_hash.clone(),
                 item.expiry_timestamp,
             );
             env.storage().instance().set(&key, &data);
@@ -491,13 +499,17 @@ impl AttestationContract {
                 &item.merkle_root,
                 item.timestamp,
                 item.version,
-                fee,
-                &proof_hash,
+                total_fee,
+                &item.proof_hash,
                 item.expiry_timestamp,
             );
 
             rate_limit::record_submission(env, &item.business);
         }
+
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
     }
 
     pub fn get_attestation(
@@ -1425,6 +1437,8 @@ mod access_control_test;
 mod anomaly_test;
 #[cfg(test)]
 mod attestor_staking_integration_test;
+#[cfg(test)]
+mod batch_auth_dedup_test;
 #[cfg(test)]
 mod batch_submission_test;
 #[cfg(test)]
