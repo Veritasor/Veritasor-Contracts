@@ -1387,6 +1387,118 @@ impl AttestationContract {
         (results, current_cursor)
     }
 
+    pub fn close_dispute(env: Env, dispute_id: u64) {
+        let mut dispute_record = dispute::validate_dispute_closure(&env, dispute_id).unwrap();
+        dispute_record.status = DisputeStatus::Closed;
+        dispute::store_dispute(&env, &dispute_record);
+    }
+
+    pub fn get_dispute(env: Env, dispute_id: u64) -> Option<Dispute> {
+        dispute::get_dispute(&env, dispute_id)
+    }
+
+    pub fn get_disputes_by_attestation(env: Env, business: Address, period: String) -> Vec<u64> {
+        dispute::get_dispute_ids_by_attestation(&env, &business, &period)
+    }
+
+    pub fn get_disputes_by_challenger(env: Env, challenger: Address) -> Vec<u64> {
+        dispute::get_dispute_ids_by_challenger(&env, &challenger)
+    }
+
+    pub fn initialize_multisig(env: Env, owners: Vec<Address>, threshold: u32, _nonce: u64) {
+        multisig::initialize_multisig(&env, &owners, threshold);
+    }
+
+    pub fn get_multisig_owners(env: Env) -> Vec<Address> {
+        multisig::get_owners(&env)
+    }
+
+    pub fn get_multisig_threshold(env: Env) -> u32 {
+        multisig::get_threshold(&env)
+    }
+
+    pub fn is_multisig_owner(env: Env, address: Address) -> bool {
+        multisig::is_owner(&env, &address)
+    }
+
+    pub fn create_proposal(
+        env: Env,
+        proposer: Address,
+        action: ProposalAction,
+        _nonce: u64,
+    ) -> u64 {
+        multisig::create_proposal(&env, &proposer, action)
+    }
+
+    pub fn get_proposal(env: Env, id: u64) -> Option<Proposal> {
+        multisig::get_proposal(&env, id)
+    }
+
+    pub fn approve_proposal(env: Env, approver: Address, id: u64, _nonce: u64) {
+        multisig::approve_proposal(&env, &approver, id)
+    }
+
+    pub fn reject_proposal(env: Env, rejecter: Address, id: u64, _nonce: u64) {
+        multisig::reject_proposal(&env, &rejecter, id)
+    }
+
+    pub fn execute_proposal(env: Env, executor: Address, proposal_id: u64, _nonce: u64) {
+        multisig::require_owner(&env, &executor);
+        let proposal = multisig::get_proposal(&env, proposal_id).expect("proposal not found");
+        multisig::mark_executed(&env, proposal_id);
+
+        match proposal.action {
+            ProposalAction::Pause => {
+                access_control::set_paused(&env, true);
+                events::emit_paused(&env, &executor);
+            }
+            ProposalAction::Unpause => {
+                access_control::set_paused(&env, false);
+                events::emit_unpaused(&env, &executor);
+            }
+            ProposalAction::AddOwner(new_owner) => {
+                let mut owners = multisig::get_owners(&env);
+                if !owners.contains(&new_owner) {
+                    owners.push_back(new_owner);
+                    multisig::set_owners(&env, &owners);
+                }
+            }
+            ProposalAction::RemoveOwner(owner_to_remove) => {
+                let mut owners = multisig::get_owners(&env);
+                if let Some(index) = owners.first_index_of(&owner_to_remove) {
+                    owners.remove(index);
+                    multisig::set_owners(&env, &owners);
+                }
+            }
+            ProposalAction::ChangeThreshold(new_threshold) => {
+                let owners_len = multisig::get_owners(&env).len();
+                assert!(new_threshold > 0 && new_threshold <= owners_len, "invalid threshold");
+                env.storage().instance().set(&multisig::MultisigKey::Threshold, &new_threshold);
+            }
+            ProposalAction::GrantRole(account, role) => {
+                access_control::grant_role(&env, &account, role);
+                events::emit_role_granted(&env, &account, role, &executor);
+            }
+            ProposalAction::RevokeRole(account, role) => {
+                access_control::revoke_role(&env, &account, role);
+                events::emit_role_revoked(&env, &account, role, &executor);
+            }
+            ProposalAction::UpdateFeeConfig(token, collector, base_fee, enabled) => {
+                let config = dynamic_fees::FeeConfig { token, collector, base_fee, enabled };
+                dynamic_fees::set_fee_config(&env, &config);
+            }
+            ProposalAction::EmergencyRotateAdmin(new_admin) => {
+                dynamic_fees::set_admin(&env, &new_admin);
+                access_control::grant_role(&env, &new_admin, access_control::ROLE_ADMIN, &new_admin);
+            }
+        }
+    }
+
+    pub fn clear_anomaly_escalation(env: Env, caller: Address, business: Address) {
+        access_control::require_admin(&env, &caller);
+        dispute::clear_anomaly_escalation(&env, &business);
+    }
+
     // ── Internal Helpers ──────────────────────────────────────────────
 
     /// REQUIREMENT: Rejects empty or malformed strings to avoid permanent unvalidated storage poisoning.
