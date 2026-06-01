@@ -11,7 +11,7 @@ extern crate std;
 use super::*;
 use soroban_sdk::testutils::{Address as _, MockAuth, MockAuthInvoke};
 use soroban_sdk::{Address, BytesN, Env, IntoVal, String, Symbol, Vec};
-use std::panic::catch_unwind;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 struct Ctx {
     env: Env,
@@ -66,26 +66,34 @@ fn batch_item(
     }
 }
 
+/// Submit with selective mocks (negative / impersonation tests).
 fn mock_batch_submit(
     ctx: &Ctx,
     authorized: &[Address],
     items: &Vec<BatchAttestationItem>,
 ) {
-    let mut mocks: Vec<MockAuth> = Vec::new(&ctx.env);
-    for addr in authorized {
-        mocks.push_back(MockAuth {
+    let invoke = MockAuthInvoke {
+        contract: &ctx.contract_id,
+        fn_name: "submit_attestations_batch",
+        args: (items.clone(),).into_val(&ctx.env),
+        sub_invokes: &[],
+    };
+    let mocks: std::vec::Vec<MockAuth> = authorized
+        .iter()
+        .map(|addr| MockAuth {
             address: addr,
-            invoke: &MockAuthInvoke {
-                contract: &ctx.contract_id,
-                fn_name: "submit_attestations_batch",
-                args: (items,).into_val(&ctx.env),
-                sub_invokes: &[],
-            },
-        });
-    }
+            invoke: &invoke,
+        })
+        .collect();
     ctx.client
         .mock_auths(&mocks)
         .submit_attestations_batch(items);
+}
+
+/// Submit when every business in the batch is expected to authorize (positive paths).
+/// Relies on `setup()` having enabled `mock_all_auths` for the whole test.
+fn submit_batch_all_businesses_authed(ctx: &Ctx, items: &Vec<BatchAttestationItem>) {
+    ctx.client.submit_attestations_batch(items);
 }
 
 fn count_auths_for(env: &Env, addr: &Address) -> usize {
@@ -105,8 +113,7 @@ fn test_batch_same_business_twice_succeeds() {
     items.push_back(batch_item(&ctx.env, &business, "2026-01", 1));
     items.push_back(batch_item(&ctx.env, &business, "2026-02", 2));
 
-    ctx.env.mock_auths(&[]);
-    mock_batch_submit(&ctx, &[business.clone()], &items);
+    submit_batch_all_businesses_authed(&ctx, &items);
 
     assert!(ctx
         .client
@@ -129,15 +136,14 @@ fn test_batch_same_business_auth_observed_once_in_dedup_phase() {
     items.push_back(batch_item(&ctx.env, &business, "2026-02", 2));
     items.push_back(batch_item(&ctx.env, &business, "2026-03", 3));
 
-    ctx.env.mock_auths(&[]);
-    mock_batch_submit(&ctx, &[business.clone()], &items);
+    submit_batch_all_businesses_authed(&ctx, &items);
 
-    // Dedup loop: 1 require_auth; validation phase: 1 per item (defense in depth).
-    // Without dedup the entry loop would add 3 more (6 total for this address).
+    // Dedup loop: one require_auth per unique business; validation does not re-auth
+    // when called from submit_attestations_batch (see require_business_auth flag).
     let auth_count = count_auths_for(&ctx.env, &business);
     assert_eq!(
-        auth_count, 4,
-        "expected 1 dedup + 3 validation auths for one business with 3 items"
+        auth_count, 1,
+        "expected exactly one require_auth for one business with 3 items in the dedup loop"
     );
 }
 
@@ -171,7 +177,8 @@ fn test_batch_second_business_unauthorized_no_partial_write() {
     items.push_back(batch_item(&ctx.env, &biz_b, "2026-01", 2));
 
     ctx.env.mock_auths(&[]);
-    let result = catch_unwind(|| mock_batch_submit(&ctx, &[biz_a.clone()], &items));
+    let result =
+        catch_unwind(AssertUnwindSafe(|| mock_batch_submit(&ctx, &[biz_a.clone()], &items)));
     assert!(result.is_err(), "unauthorized business B must fail the batch");
 
     assert!(ctx
@@ -243,12 +250,7 @@ fn test_batch_max_25_three_businesses_all_authed_succeeds() {
     }
     assert_eq!(items.len(), 25);
 
-    ctx.env.mock_auths(&[]);
-    mock_batch_submit(
-        &ctx,
-        &[biz_a.clone(), biz_b.clone(), biz_c.clone()],
-        &items,
-    );
+    submit_batch_all_businesses_authed(&ctx, &items);
 
     assert_eq!(ctx.client.get_business_count(&biz_a), 9);
     assert_eq!(ctx.client.get_business_count(&biz_b), 8);
@@ -281,9 +283,9 @@ fn test_batch_max_25_partial_auth_panics() {
     }
 
     ctx.env.mock_auths(&[]);
-    let result = catch_unwind(|| {
+    let result = catch_unwind(AssertUnwindSafe(|| {
         mock_batch_submit(&ctx, &[biz_a.clone(), biz_b.clone()], &items);
-    });
+    }));
     assert!(result.is_err(), "third business must not be authorized");
 
     assert_eq!(ctx.client.get_business_count(&biz_a), 0);

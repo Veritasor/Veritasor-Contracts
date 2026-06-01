@@ -55,8 +55,9 @@ identity or batch position.
   `business` field is **B**.
 - The Soroban host evaluates each `require_auth(address)` for the **exact** address passed
   at that call site; one signature cannot be reused for a different address.
-- The validation phase in `execute_batch_submission` calls `require_auth()` again per item
-  (defense in depth).
+- `execute_batch_submission` accepts a `require_business_auth` flag: business-submitted
+  batches skip per-item re-auth because the dedup loop already enforced it; attestor-submitted
+  batches still require each `item.business` to authorize.
 
 Regression tests: `contracts/attestation/src/batch_auth_dedup_test.rs` (selective
 `mock_auths`, order-reversal, and 25-item multi-business cases).
