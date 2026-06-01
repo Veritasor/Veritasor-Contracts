@@ -79,9 +79,9 @@ fn submit(client: &AttestationContractClient, env: &Env, business: &Address, ind
         &root,
         &1_700_000_000u64,
         &1u32,
+        &0i128,
         &None,
         &None,
-        &0u64,
     );
 }
 
@@ -290,7 +290,7 @@ fn test_no_fee_config_free() {
 
     let period = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1u64, &1u32, &None, &None, &0u64);
+    client.submit_attestation(&business, &period, &root, &1u64, &1u32, &0i128, &None, &None);
 
     let (_, _, _, fee_paid, _, _) = client.get_attestation(&business, &period).unwrap();
     assert_eq!(fee_paid, 0);

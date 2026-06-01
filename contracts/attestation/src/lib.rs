@@ -176,6 +176,10 @@ impl AttestationContract {
         dynamic_fees::set_business_tier(&env, &business, tier);
     }
 
+    pub fn get_business_tier(env: Env, business: Address) -> u32 {
+        dynamic_fees::get_business_tier(&env, &business)
+    }
+
     pub fn set_volume_brackets(env: Env, thresholds: Vec<u64>, discounts: Vec<u32>) {
         dynamic_fees::require_admin(&env);
         dynamic_fees::set_volume_brackets(&env, &thresholds, &discounts);

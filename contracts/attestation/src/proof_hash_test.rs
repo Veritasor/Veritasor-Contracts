@@ -169,6 +169,7 @@ fn proof_hash_preserved_after_migration() {
         &old_root,
         &1_700_000_000u64,
         &1u32,
+        &0i128,
         &Some(proof.clone()),
         &None,
     );

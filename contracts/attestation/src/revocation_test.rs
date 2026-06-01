@@ -1112,8 +1112,9 @@ fn test_revoke_then_resubmit_is_blocked() {
         &BytesN::from_array(&env, &[6u8; 32]),
         &1_700_000_001u64,
         &2u32,
+        &0i128,
         &None,
-        &1u64,
+        &None,
     );
     assert!(result.is_err(), "resubmit after revocation must be rejected");
 }
@@ -1156,6 +1157,8 @@ fn test_multi_period_revocation_bumps_sequence() {
         &root,
         &1_700_000_000u64,
         &1u32,
+        &None,
+        &None,
     );
 
     let seq_before = client.get_revocation_sequence();
@@ -1178,6 +1181,8 @@ fn test_multi_period_double_revocation_rejected() {
         &root,
         &1_700_000_000u64,
         &1u32,
+        &None,
+        &None,
     );
 
     client.revoke_multi_period_attestation(&business, &root);
