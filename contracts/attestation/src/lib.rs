@@ -350,11 +350,7 @@ impl AttestationContract {
         Self::execute_batch_submission(&env, None, &items);
     }
 
-    pub fn submit_batch_as_attestor(
-        env: Env,
-        attestor: Address,
-        items: Vec<BatchAttestationItem>,
-    ) {
+    pub fn submit_batch_as_attestor(env: Env, attestor: Address, items: Vec<BatchAttestationItem>) {
         access_control::require_attestor(&env, &attestor);
 
         let staking_addr = Self::get_attestor_staking_contract(env.clone())
@@ -478,10 +474,11 @@ impl AttestationContract {
                 item.merkle_root.clone(),
                 item.timestamp,
                 item.version,
-                fee,
-                proof_hash.clone(),
+                total_fee,
+                item.proof_hash.clone(),
                 item.expiry_timestamp,
             );
+            let key = DataKey::Attestation(item.business.clone(), item.period.clone());
             env.storage().instance().set(&key, &data);
 
             events::emit_attestation_submitted(
@@ -491,8 +488,8 @@ impl AttestationContract {
                 &item.merkle_root,
                 item.timestamp,
                 item.version,
-                fee,
-                &proof_hash,
+                total_fee,
+                &item.proof_hash,
                 item.expiry_timestamp,
             );
 
@@ -500,11 +497,7 @@ impl AttestationContract {
         }
     }
 
-    pub fn get_attestation(
-        env: Env,
-        business: Address,
-        period: String,
-    ) -> Option<AttestationData> {
+    pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
         let key = DataKey::Attestation(business, period);
         env.storage().instance().get(&key)
     }
@@ -528,9 +521,12 @@ impl AttestationContract {
         period: String,
     ) {
         caller.require_auth();
-        let caller_is_admin = *caller == dynamic_fees::get_admin(&env)
+        let caller_is_admin = caller == dynamic_fees::get_admin(&env)
             || access_control::has_role(&env, &caller, ROLE_ADMIN);
-        assert!(caller_is_admin || caller == business, "caller must be ADMIN or the business owner");
+        assert!(
+            caller_is_admin || caller == business,
+            "caller must be ADMIN or the business owner"
+        );
 
         let key = DataKey::Attestation(business.clone(), period.clone());
         let attestation: AttestationData = env
@@ -880,11 +876,6 @@ impl AttestationContract {
         events::emit_attestation_expiry_extended(&env, &business, &period, old_expiry, new_expiry);
     }
 
-    pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
-        let key = DataKey::Attestation(business, period);
-        env.storage().instance().get(&key)
-    }
-
     pub fn get_proof_hash(env: Env, business: Address, period: String) -> Option<BytesN<32>> {
         Self::get_attestation(env, business, period).and_then(|data| data.4)
     }
@@ -983,7 +974,7 @@ impl AttestationContract {
 
     pub fn revoke_multi_period_attestation(env: Env, business: Address, merkle_root: BytesN<32>) {
         business.require_auth();
-        
+
         // O(1) lookup via index instead of O(n) linear scan
         let index_key = MultiPeriodKey::RootIndex(business.clone(), merkle_root.clone());
         let range_index: u32 = env
@@ -1136,8 +1127,8 @@ impl AttestationContract {
 
     pub fn cancel_key_rotation(env: Env) {
         let admin = dynamic_fees::require_admin(&env);
-    admin.require_auth();
-    veritasor_common::key_rotation::cancel_rotation(&env, &admin);
+        admin.require_auth();
+        veritasor_common::key_rotation::cancel_rotation(&env, &admin);
     }
 
     pub fn has_pending_key_rotation(env: Env) -> bool {
@@ -1348,12 +1339,12 @@ impl AttestationContract {
             current_cursor += 1;
 
             if let Some(ref start) = period_start {
-                if compare_strings(&period, start) == Ordering::Less {
+                if period.partial_cmp(start) == Some(Ordering::Less) {
                     continue;
                 }
             }
             if let Some(ref end) = period_end {
-                if compare_strings(&period, end) == Ordering::Greater {
+                if period.partial_cmp(end) == Some(Ordering::Greater) {
                     continue;
                 }
             }
