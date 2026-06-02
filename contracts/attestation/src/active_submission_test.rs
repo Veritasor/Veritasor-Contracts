@@ -204,7 +204,7 @@ fn test_submit_attestations_batch_rejects_pending_business() {
         expiry_timestamp: None,
     });
 
-    let result = catch_unwind(|| client.submit_attestations_batch(&items));
+    let result = catch_unwind(std::panic::AssertUnwindSafe(|| client.submit_attestations_batch(&items)));
     assert!(result.is_err(), "pending business in batch should panic");
     assert_eq!(
         panic_message(result.unwrap_err()),
@@ -236,3 +236,5 @@ fn test_submit_attestations_batch_accepts_reactivated_business() {
         .get_attestation(&business, &SorobanString::from_str(&env, "2026-02"))
         .is_some());
 }
+
+

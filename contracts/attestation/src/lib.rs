@@ -392,6 +392,7 @@ impl AttestationContract {
             panic!("attestation already exists for this business and period");
         }
         Self::validate_expiry(env, timestamp, expiry_timestamp);
+        Self::validate_proof_hash(proof_hash);
 
         let dynamic_fee = dynamic_fees::collect_fee_from(env, payer, business);
         let flat_fee = fees::collect_flat_fee(env, payer);
@@ -464,6 +465,7 @@ impl AttestationContract {
             }
 
             Self::validate_expiry(env, item.timestamp, item.expiry_timestamp);
+            Self::validate_proof_hash(&item.proof_hash);
         }
 
         for item in items.iter() {
@@ -1511,6 +1513,27 @@ impl AttestationContract {
             if expiry <= env.ledger().timestamp() {
                 panic!("attestation expired on arrival");
             }
+        }
+    }
+
+    /// Rejects an all-zero 32-byte proof hash.
+    ///
+    /// An all-zero hash (`[0u8; 32]`) is almost certainly an operator error rather
+    /// than a real SHA-256 digest of an off-chain bundle. `None` is explicitly
+    /// allowed because the proof hash field is optional.
+    ///
+    /// # Panics
+    /// Panics with "proof_hash must not be all-zero" when the supplied hash is
+    /// `Some([0u8; 32])`.
+    fn validate_proof_hash(proof_hash: &Option<BytesN<32>>) {
+        if let Some(hash) = proof_hash {
+            let bytes = hash.to_array();
+            for b in bytes.iter() {
+                if *b != 0 {
+                    return;
+                }
+            }
+            panic!("proof_hash must not be all-zero");
         }
     }
 

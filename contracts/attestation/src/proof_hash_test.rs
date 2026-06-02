@@ -1,4 +1,4 @@
-//! Off-chain proof hash correlation tests — verifies storage, retrieval,
+﻿//! Off-chain proof hash correlation tests - verifies storage, retrieval,
 //! backward compatibility, and migration preservation of the optional
 //! SHA-256 proof hash field on attestations.
 
@@ -6,7 +6,6 @@ use super::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, BytesN, Env, String};
 
-/// Helper: register the contract and return a client.
 fn setup() -> (Env, AttestationContractClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
@@ -16,7 +15,6 @@ fn setup() -> (Env, AttestationContractClient<'static>) {
     (env, client)
 }
 
-/// Helper: register the contract and return a client with admin address.
 fn setup_with_admin() -> (Env, AttestationContractClient<'static>, Address) {
     let env = Env::default();
     env.mock_all_auths();
@@ -27,14 +25,12 @@ fn setup_with_admin() -> (Env, AttestationContractClient<'static>, Address) {
     (env, client, admin)
 }
 
-// ════════════════════════════════════════════════════════════════════
-//  Submit with proof hash
-// ════════════════════════════════════════════════════════════════════
+// -- validate_proof_hash tests ------------------------------------------------
 
 #[test]
-fn submit_with_proof_hash_and_retrieve() {
+#[should_panic(expected = "proof_hash must not be all-zero")]
+fn test_submit_attestation_rejects_all_zero_proof_hash() {
     let (env, client) = setup();
-
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-03");
     let root = BytesN::from_array(&env, &[1u8; 32]);
@@ -458,3 +454,4 @@ fn test_prevent_proof_hash_overwrite() {
         &None,
     );
 }
+

@@ -463,3 +463,4 @@ fn removed_analytics_set_anomaly_panics() {
     client.remove_authorized_analytics(&admin, &analytics);
     client.set_anomaly(&analytics, &business, &period, &2u32, &60u32);
 }
+

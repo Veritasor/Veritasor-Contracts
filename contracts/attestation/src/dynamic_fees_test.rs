@@ -707,3 +707,4 @@ fn test_volume_brackets_descending_thresholds_rejected() {
     let discounts = vec![&t.env, 500u32, 1_000u32, 1_500u32];
     t.client.set_volume_brackets(&thresholds, &discounts);
 }
+
