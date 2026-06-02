@@ -68,7 +68,10 @@ fn test_configure_rate_limit_with_burst_controls() {
     let (_env, client, admin) = setup();
 
     assert!(client.get_rate_limit_config().is_none());
-    assert_eq!(client.get_replay_nonce(&admin, &crate::NONCE_CHANNEL_ADMIN), 1);
+    assert_eq!(
+        client.get_replay_nonce(&admin, &crate::NONCE_CHANNEL_ADMIN),
+        1
+    );
 
     configure_rate_limit(&client, 5, 3600, 2, 60, true, 1);
 
@@ -78,7 +81,10 @@ fn test_configure_rate_limit_with_burst_controls() {
     assert_eq!(config.burst_max_submissions, 2);
     assert_eq!(config.burst_window_seconds, 60);
     assert!(config.enabled);
-    assert_eq!(client.get_replay_nonce(&admin, &crate::NONCE_CHANNEL_ADMIN), 2);
+    assert_eq!(
+        client.get_replay_nonce(&admin, &crate::NONCE_CHANNEL_ADMIN),
+        2
+    );
 }
 
 #[test]

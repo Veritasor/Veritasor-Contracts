@@ -1108,15 +1108,12 @@ fn test_batch_stress_max_size_ceiling_25_items_mixed_businesses() {
     let (env, client) = setup();
 
     let mut items = Vec::new(&env);
-    
+
     // Generate 5 businesses, 5 unique periods each
     for b_idx in 0..5 {
         let business = Address::generate(&env);
         for p_idx in 0..5 {
-            let period = String::from_str(
-                &env,
-                &std::format!("2026-{:02}", b_idx * 5 + p_idx + 1),
-            );
+            let period = String::from_str(&env, &std::format!("2026-{:02}", b_idx * 5 + p_idx + 1));
             let mut root = [0u8; 32];
             root[0] = (b_idx * 5 + p_idx) as u8;
             items.push_back(BatchAttestationItem {
@@ -1132,7 +1129,7 @@ fn test_batch_stress_max_size_ceiling_25_items_mixed_businesses() {
     }
 
     assert_eq!(items.len() as u32, MAX_BATCH_SIZE);
-    
+
     // Should succeed: 25 items is at ceiling
     client.submit_attestations_batch(&items);
 }
@@ -1141,18 +1138,13 @@ fn test_batch_stress_max_size_ceiling_25_items_mixed_businesses() {
 fn test_batch_stress_max_size_all_items_created() {
     // Verify all 25 items are stored after batch submission.
     let (env, client) = setup();
-    
+
     let mut items = Vec::new(&env);
-    let businesses: Vec<Address> = (0..5)
-        .map(|_| Address::generate(&env))
-        .collect::<Vec<_>>();
-    
+    let businesses: Vec<Address> = (0..5).map(|_| Address::generate(&env)).collect::<Vec<_>>();
+
     for b_idx in 0..5 {
         for p_idx in 0..5 {
-            let period = String::from_str(
-                &env,
-                &std::format!("2026-B{}-P{}", b_idx, p_idx),
-            );
+            let period = String::from_str(&env, &std::format!("2026-B{}-P{}", b_idx, p_idx));
             let mut root = [0u8; 32];
             root[0] = (b_idx * 5 + p_idx) as u8;
             root[1] = 0xABu8;
@@ -1183,7 +1175,7 @@ fn test_batch_stress_one_over_ceiling_panics() {
     let (env, client) = setup();
 
     let mut items = Vec::new(&env);
-    
+
     // Generate 26 items (one over MAX_BATCH_SIZE = 25)
     for i in 0..26 {
         let business = Address::generate(&env);
@@ -1249,7 +1241,7 @@ fn test_batch_stress_duplicates_within_batch_panic() {
             proof_hash: None,
             expiry_timestamp: None,
         });
-        
+
         // Add duplicate to the same batch (same period, different root)
         let mut root2 = [0u8; 32];
         root2[0] = (i + 100) as u8;
@@ -1293,4 +1285,3 @@ fn test_batch_stress_boundary_24_items_succeeds() {
     assert_eq!(items.len() as u32, 24);
     client.submit_attestations_batch(&items);
 }
-

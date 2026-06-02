@@ -72,7 +72,16 @@ fn setup(env: &Env, n: u32) -> (Address, AttestationContractClient<'_>, Vec<Stri
         periods.push_back(p.clone());
         let root = BytesN::from_array(env, &[i as u8; 32]);
         // submit_attestation(business, period, root, timestamp, version, _fee_paid, proof_hash, expiry)
-        client.submit_attestation(&business, &p, &root, &1_700_000_000u64, &i, &0i128, &None, &None);
+        client.submit_attestation(
+            &business,
+            &p,
+            &root,
+            &1_700_000_000u64,
+            &i,
+            &0i128,
+            &None,
+            &None,
+        );
     }
     (business, client, periods)
 }
@@ -96,7 +105,16 @@ fn setup_sparse<'a>(
         periods.push_back(p.clone());
         if submit_at.contains(&i) {
             let root = BytesN::from_array(env, &[i as u8; 32]);
-            client.submit_attestation(&business, &p, &root, &1_700_000_000u64, &i, &0i128, &None, &None);
+            client.submit_attestation(
+                &business,
+                &p,
+                &root,
+                &1_700_000_000u64,
+                &i,
+                &0i128,
+                &None,
+                &None,
+            );
         }
     }
     (business, client, periods)
@@ -122,7 +140,16 @@ fn revoke_direct(env: &Env, contract_id: &Address, business: &Address, p: &Strin
 fn limit_greater_than_30_is_clamped() {
     let env = Env::default();
     let (biz, client, periods) = setup(&env, 12);
-    let (out, next) = client.get_attestations_page(&biz, &periods, &None, &None, &STATUS_FILTER_ALL, &None, &100, &0);
+    let (out, next) = client.get_attestations_page(
+        &biz,
+        &periods,
+        &None,
+        &None,
+        &STATUS_FILTER_ALL,
+        &None,
+        &100,
+        &0,
+    );
     assert!(out.len() <= 30, "result must never exceed 30");
     assert_eq!(out.len(), 12);
     assert_eq!(next, 12);
@@ -143,9 +170,27 @@ fn limit_clamped_returns_exactly_30() {
         let p = String::from_str(&env, &s);
         periods.push_back(p.clone());
         let root = BytesN::from_array(&env, &[i as u8; 32]);
-        client.submit_attestation(&biz, &p, &root, &1_700_000_000u64, &(i + 1), &0i128, &None, &None);
+        client.submit_attestation(
+            &biz,
+            &p,
+            &root,
+            &1_700_000_000u64,
+            &(i + 1),
+            &0i128,
+            &None,
+            &None,
+        );
     }
-    let (out, next) = client.get_attestations_page(&biz, &periods, &None, &None, &STATUS_FILTER_ALL, &None, &100, &0);
+    let (out, next) = client.get_attestations_page(
+        &biz,
+        &periods,
+        &None,
+        &None,
+        &STATUS_FILTER_ALL,
+        &None,
+        &100,
+        &0,
+    );
     assert_eq!(out.len(), 30);
     assert_eq!(next, 30);
 }
@@ -159,7 +204,16 @@ fn resume_from_next_cursor_no_skips_no_repeats() {
     let mut collected: Vec<(String, BytesN<32>, u64, u32, u32)> = Vec::new(&env);
     let mut cursor = 0u32;
     loop {
-        let (page, next) = client.get_attestations_page(&biz, &periods, &None, &None, &STATUS_FILTER_ALL, &None, &5, &cursor);
+        let (page, next) = client.get_attestations_page(
+            &biz,
+            &periods,
+            &None,
+            &None,
+            &STATUS_FILTER_ALL,
+            &None,
+            &5,
+            &cursor,
+        );
         for i in 0..page.len() {
             collected.push_back(page.get(i).unwrap());
         }
@@ -184,7 +238,16 @@ fn resume_from_next_cursor_no_skips_no_repeats() {
 fn cursor_past_end_returns_empty() {
     let env = Env::default();
     let (biz, client, periods) = setup(&env, 3);
-    let (out, next) = client.get_attestations_page(&biz, &periods, &None, &None, &STATUS_FILTER_ALL, &None, &10, &99);
+    let (out, next) = client.get_attestations_page(
+        &biz,
+        &periods,
+        &None,
+        &None,
+        &STATUS_FILTER_ALL,
+        &None,
+        &10,
+        &99,
+    );
     assert_eq!(out.len(), 0);
     assert_eq!(next, 99); // unchanged — already past end
 }
@@ -195,8 +258,17 @@ fn all_periods_outside_range_returns_empty_cursor_at_end() {
     let env = Env::default();
     let (biz, client, periods) = setup(&env, 5);
     let start = Some(String::from_str(&env, "2027-01"));
-    let end   = Some(String::from_str(&env, "2027-12"));
-    let (out, next) = client.get_attestations_page(&biz, &periods, &start, &end, &STATUS_FILTER_ALL, &None, &10, &0);
+    let end = Some(String::from_str(&env, "2027-12"));
+    let (out, next) = client.get_attestations_page(
+        &biz,
+        &periods,
+        &start,
+        &end,
+        &STATUS_FILTER_ALL,
+        &None,
+        &10,
+        &0,
+    );
     assert_eq!(out.len(), 0);
     assert_eq!(next, 5); // cursor advanced through all 5 periods
 }
@@ -207,7 +279,16 @@ fn single_period_range_returns_one_result() {
     let env = Env::default();
     let (biz, client, periods) = setup(&env, 5);
     let p3 = Some(period(&env, 3));
-    let (out, _next) = client.get_attestations_page(&biz, &periods, &p3.clone(), &p3, &STATUS_FILTER_ALL, &None, &10, &0);
+    let (out, _next) = client.get_attestations_page(
+        &biz,
+        &periods,
+        &p3.clone(),
+        &p3,
+        &STATUS_FILTER_ALL,
+        &None,
+        &10,
+        &0,
+    );
     assert_eq!(out.len(), 1);
     assert_eq!(out.get(0).unwrap().0, period(&env, 3));
 }
@@ -217,7 +298,16 @@ fn single_period_range_returns_one_result() {
 fn version_filter_no_match_cursor_advances_to_end() {
     let env = Env::default();
     let (biz, client, periods) = setup(&env, 5); // versions 1-5
-    let (out, next) = client.get_attestations_page(&biz, &periods, &None, &None, &STATUS_FILTER_ALL, &Some(99), &10, &0);
+    let (out, next) = client.get_attestations_page(
+        &biz,
+        &periods,
+        &None,
+        &None,
+        &STATUS_FILTER_ALL,
+        &Some(99),
+        &10,
+        &0,
+    );
     assert_eq!(out.len(), 0);
     assert_eq!(next, 5); // scanned all 5 periods
 }
@@ -227,7 +317,16 @@ fn version_filter_no_match_cursor_advances_to_end() {
 fn version_filter_matches_one() {
     let env = Env::default();
     let (biz, client, periods) = setup(&env, 5);
-    let (out, _) = client.get_attestations_page(&biz, &periods, &None, &None, &STATUS_FILTER_ALL, &Some(3), &10, &0);
+    let (out, _) = client.get_attestations_page(
+        &biz,
+        &periods,
+        &None,
+        &None,
+        &STATUS_FILTER_ALL,
+        &Some(3),
+        &10,
+        &0,
+    );
     assert_eq!(out.len(), 1);
     assert_eq!(out.get(0).unwrap().3, 3u32); // version field
 }
@@ -245,11 +344,21 @@ fn status_filter_active_excludes_revoked() {
     for i in 1u32..=3 {
         let p = period(&env, i);
         periods.push_back(p.clone());
-        client.submit_attestation(&biz, &p, &BytesN::from_array(&env, &[i as u8; 32]), &1_700_000_000u64, &i, &0i128, &None, &None);
+        client.submit_attestation(
+            &biz,
+            &p,
+            &BytesN::from_array(&env, &[i as u8; 32]),
+            &1_700_000_000u64,
+            &i,
+            &0i128,
+            &None,
+            &None,
+        );
     }
     revoke_direct(&env, &contract_id, &biz, &period(&env, 2));
 
-    let (out, _) = client.get_attestations_page(&biz, &periods, &None, &None, &STATUS_ACTIVE, &None, &10, &0);
+    let (out, _) =
+        client.get_attestations_page(&biz, &periods, &None, &None, &STATUS_ACTIVE, &None, &10, &0);
     assert_eq!(out.len(), 2);
     for i in 0..out.len() {
         assert_eq!(out.get(i).unwrap().4, STATUS_ACTIVE);
@@ -269,11 +378,29 @@ fn status_filter_revoked_returns_only_revoked() {
     for i in 1u32..=3 {
         let p = period(&env, i);
         periods.push_back(p.clone());
-        client.submit_attestation(&biz, &p, &BytesN::from_array(&env, &[i as u8; 32]), &1_700_000_000u64, &i, &0i128, &None, &None);
+        client.submit_attestation(
+            &biz,
+            &p,
+            &BytesN::from_array(&env, &[i as u8; 32]),
+            &1_700_000_000u64,
+            &i,
+            &0i128,
+            &None,
+            &None,
+        );
     }
     revoke_direct(&env, &contract_id, &biz, &period(&env, 2));
 
-    let (out, _) = client.get_attestations_page(&biz, &periods, &None, &None, &STATUS_REVOKED, &None, &10, &0);
+    let (out, _) = client.get_attestations_page(
+        &biz,
+        &periods,
+        &None,
+        &None,
+        &STATUS_REVOKED,
+        &None,
+        &10,
+        &0,
+    );
     assert_eq!(out.len(), 1);
     assert_eq!(out.get(0).unwrap().0, period(&env, 2));
     assert_eq!(out.get(0).unwrap().4, STATUS_REVOKED);
@@ -285,7 +412,16 @@ fn gap_in_periods_list_is_skipped_cursor_advances() {
     let env = Env::default();
     // Submit only periods 1 and 3; period 2 is in the list but has no attestation.
     let (biz, client, periods) = setup_sparse(&env, 3, &[1, 3]);
-    let (out, next) = client.get_attestations_page(&biz, &periods, &None, &None, &STATUS_FILTER_ALL, &None, &10, &0);
+    let (out, next) = client.get_attestations_page(
+        &biz,
+        &periods,
+        &None,
+        &None,
+        &STATUS_FILTER_ALL,
+        &None,
+        &10,
+        &0,
+    );
     assert_eq!(out.len(), 2);
     assert_eq!(out.get(0).unwrap().0, period(&env, 1));
     assert_eq!(out.get(1).unwrap().0, period(&env, 3));
@@ -301,18 +437,45 @@ fn cursor_resumes_correctly_after_filtered_gap() {
     let (biz, client, periods) = setup_sparse(&env, 6, &[1, 2, 6]);
 
     // Page 1: limit=2 → gets periods 1 and 2, cursor=2.
-    let (page1, next1) = client.get_attestations_page(&biz, &periods, &None, &None, &STATUS_FILTER_ALL, &None, &2, &0);
+    let (page1, next1) = client.get_attestations_page(
+        &biz,
+        &periods,
+        &None,
+        &None,
+        &STATUS_FILTER_ALL,
+        &None,
+        &2,
+        &0,
+    );
     assert_eq!(page1.len(), 2);
     assert_eq!(next1, 2);
 
     // Page 2: resume from cursor=2 → skips gaps 3,4,5, finds period 6, cursor=6.
-    let (page2, next2) = client.get_attestations_page(&biz, &periods, &None, &None, &STATUS_FILTER_ALL, &None, &2, &next1);
+    let (page2, next2) = client.get_attestations_page(
+        &biz,
+        &periods,
+        &None,
+        &None,
+        &STATUS_FILTER_ALL,
+        &None,
+        &2,
+        &next1,
+    );
     assert_eq!(page2.len(), 1);
     assert_eq!(page2.get(0).unwrap().0, period(&env, 6));
     assert_eq!(next2, 6);
 
     // No more items.
-    let (page3, next3) = client.get_attestations_page(&biz, &periods, &None, &None, &STATUS_FILTER_ALL, &None, &2, &next2);
+    let (page3, next3) = client.get_attestations_page(
+        &biz,
+        &periods,
+        &None,
+        &None,
+        &STATUS_FILTER_ALL,
+        &None,
+        &2,
+        &next2,
+    );
     assert_eq!(page3.len(), 0);
     assert_eq!(next3, 6); // cursor at end, unchanged
 }
@@ -322,7 +485,16 @@ fn cursor_resumes_correctly_after_filtered_gap() {
 fn limit_zero_returns_empty() {
     let env = Env::default();
     let (biz, client, periods) = setup(&env, 3);
-    let (out, next) = client.get_attestations_page(&biz, &periods, &None, &None, &STATUS_FILTER_ALL, &None, &0, &0);
+    let (out, next) = client.get_attestations_page(
+        &biz,
+        &periods,
+        &None,
+        &None,
+        &STATUS_FILTER_ALL,
+        &None,
+        &0,
+        &0,
+    );
     assert_eq!(out.len(), 0);
     assert_eq!(next, 0); // cursor did not advance
 }
@@ -335,7 +507,16 @@ fn limit_one_roundtrip_collects_all_in_order() {
     let mut collected: Vec<String> = Vec::new(&env);
     let mut cursor = 0u32;
     loop {
-        let (page, next) = client.get_attestations_page(&biz, &periods, &None, &None, &STATUS_FILTER_ALL, &None, &1, &cursor);
+        let (page, next) = client.get_attestations_page(
+            &biz,
+            &periods,
+            &None,
+            &None,
+            &STATUS_FILTER_ALL,
+            &None,
+            &1,
+            &cursor,
+        );
         if page.len() == 0 {
             break;
         }
@@ -358,8 +539,17 @@ fn period_range_boundaries_are_inclusive() {
     let (biz, client, periods) = setup(&env, 5);
     // Range [2026-02, 2026-04] should include periods 2, 3, 4.
     let start = Some(period(&env, 2));
-    let end   = Some(period(&env, 4));
-    let (out, next) = client.get_attestations_page(&biz, &periods, &start, &end, &STATUS_FILTER_ALL, &None, &10, &0);
+    let end = Some(period(&env, 4));
+    let (out, next) = client.get_attestations_page(
+        &biz,
+        &periods,
+        &start,
+        &end,
+        &STATUS_FILTER_ALL,
+        &None,
+        &10,
+        &0,
+    );
     assert_eq!(out.len(), 3);
     assert_eq!(out.get(0).unwrap().0, period(&env, 2));
     assert_eq!(out.get(1).unwrap().0, period(&env, 3));
@@ -375,8 +565,17 @@ fn combined_range_and_version_filter_no_match_cursor_at_end() {
     let (biz, client, periods) = setup(&env, 5);
     // Range covers periods 1-3 (versions 1-3), but version_filter=99 matches none.
     let start = Some(period(&env, 1));
-    let end   = Some(period(&env, 3));
-    let (out, next) = client.get_attestations_page(&biz, &periods, &start, &end, &STATUS_FILTER_ALL, &Some(99), &10, &0);
+    let end = Some(period(&env, 3));
+    let (out, next) = client.get_attestations_page(
+        &biz,
+        &periods,
+        &start,
+        &end,
+        &STATUS_FILTER_ALL,
+        &Some(99),
+        &10,
+        &0,
+    );
     assert_eq!(out.len(), 0);
     assert_eq!(next, 5); // scanned all 5 periods
 }

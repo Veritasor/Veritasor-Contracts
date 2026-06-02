@@ -41,7 +41,8 @@ fn extend_expiry_updates_correctly() {
     client.extend_expiry(&business, &period, &3000u64);
 
     // Verify new expiry
-    let (root, ts, ver, fee, proof_hash, new_expiry) = client.get_attestation(&business, &period).unwrap();
+    let (root, ts, ver, fee, proof_hash, new_expiry) =
+        client.get_attestation(&business, &period).unwrap();
     assert_eq!(root, merkle_root);
     assert_eq!(ts, 1000);
     assert_eq!(ver, 1);
@@ -176,7 +177,7 @@ fn extend_expiry_rejected_if_less_than_timestamp() {
         &business,
         &period,
         &merkle_root,
-        &2000u64,  // attestation timestamp is 2000
+        &2000u64, // attestation timestamp is 2000
         &1u32,
         &0i128,
         &None,
@@ -211,7 +212,7 @@ fn extend_expiry_accepts_auth_business() {
 
     // Business can extend their own attestation when authenticated
     client.extend_expiry(&business, &period, &3000u64);
-    
+
     let (_, _, _, _, _, new_expiry) = client.get_attestation(&business, &period).unwrap();
     assert_eq!(new_expiry, Some(3000u64));
 }

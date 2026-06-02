@@ -176,6 +176,10 @@ impl AttestationContract {
         dynamic_fees::set_business_tier(&env, &business, tier);
     }
 
+    pub fn get_business_tier(env: Env, business: Address) -> u32 {
+        dynamic_fees::get_business_tier(&env, &business)
+    }
+
     pub fn set_volume_brackets(env: Env, thresholds: Vec<u64>, discounts: Vec<u32>) {
         dynamic_fees::require_admin(&env);
         dynamic_fees::set_volume_brackets(&env, &thresholds, &discounts);
@@ -354,11 +358,7 @@ impl AttestationContract {
         Self::execute_batch_submission(&env, None, &items, false);
     }
 
-    pub fn submit_batch_as_attestor(
-        env: Env,
-        attestor: Address,
-        items: Vec<BatchAttestationItem>,
-    ) {
+    pub fn submit_batch_as_attestor(env: Env, attestor: Address, items: Vec<BatchAttestationItem>) {
         access_control::require_attestor(&env, &attestor);
 
         let staking_addr = Self::get_attestor_staking_contract(env.clone())
@@ -396,6 +396,7 @@ impl AttestationContract {
             panic!("attestation already exists for this business and period");
         }
         Self::validate_expiry(env, timestamp, expiry_timestamp);
+        Self::validate_proof_hash(proof_hash);
 
         let dynamic_fee = dynamic_fees::collect_fee_from(env, payer, business);
         let flat_fee = fees::collect_flat_fee(env, payer);
@@ -474,6 +475,7 @@ impl AttestationContract {
             }
 
             Self::validate_expiry(env, item.timestamp, item.expiry_timestamp);
+            Self::validate_proof_hash(&item.proof_hash);
         }
 
         for item in items.iter() {
@@ -493,6 +495,7 @@ impl AttestationContract {
                 item.proof_hash.clone(),
                 item.expiry_timestamp,
             );
+            let key = DataKey::Attestation(item.business.clone(), item.period.clone());
             env.storage().instance().set(&key, &data);
 
             events::emit_attestation_submitted(
@@ -515,11 +518,7 @@ impl AttestationContract {
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
     }
 
-    pub fn get_attestation(
-        env: Env,
-        business: Address,
-        period: String,
-    ) -> Option<AttestationData> {
+    pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
         let key = DataKey::Attestation(business, period);
         env.storage().instance().get(&key)
     }
@@ -545,7 +544,10 @@ impl AttestationContract {
         caller.require_auth();
         let caller_is_admin = caller == dynamic_fees::get_admin(&env)
             || access_control::has_role(&env, &caller, ROLE_ADMIN);
-        assert!(caller_is_admin || caller == business, "caller must be ADMIN or the business owner");
+        assert!(
+            caller_is_admin || caller == business,
+            "caller must be ADMIN or the business owner"
+        );
 
         let key = DataKey::Attestation(business.clone(), period.clone());
         let attestation: AttestationData = env
@@ -1100,7 +1102,7 @@ impl AttestationContract {
 
     pub fn revoke_multi_period_attestation(env: Env, business: Address, merkle_root: BytesN<32>) {
         business.require_auth();
-        
+
         // O(1) lookup via index instead of O(n) linear scan
         let index_key = MultiPeriodKey::RootIndex(business.clone(), merkle_root.clone());
         let range_index: u32 = env
@@ -1253,8 +1255,8 @@ impl AttestationContract {
 
     pub fn cancel_key_rotation(env: Env) {
         let admin = dynamic_fees::require_admin(&env);
-    admin.require_auth();
-    veritasor_common::key_rotation::cancel_rotation(&env, &admin);
+        admin.require_auth();
+        veritasor_common::key_rotation::cancel_rotation(&env, &admin);
     }
 
     pub fn has_pending_key_rotation(env: Env) -> bool {
@@ -1503,6 +1505,118 @@ impl AttestationContract {
         (results, current_cursor)
     }
 
+    pub fn close_dispute(env: Env, dispute_id: u64) {
+        let mut dispute_record = dispute::validate_dispute_closure(&env, dispute_id).unwrap();
+        dispute_record.status = DisputeStatus::Closed;
+        dispute::store_dispute(&env, &dispute_record);
+    }
+
+    pub fn get_dispute(env: Env, dispute_id: u64) -> Option<Dispute> {
+        dispute::get_dispute(&env, dispute_id)
+    }
+
+    pub fn get_disputes_by_attestation(env: Env, business: Address, period: String) -> Vec<u64> {
+        dispute::get_dispute_ids_by_attestation(&env, &business, &period)
+    }
+
+    pub fn get_disputes_by_challenger(env: Env, challenger: Address) -> Vec<u64> {
+        dispute::get_dispute_ids_by_challenger(&env, &challenger)
+    }
+
+    pub fn initialize_multisig(env: Env, owners: Vec<Address>, threshold: u32, _nonce: u64) {
+        multisig::initialize_multisig(&env, &owners, threshold);
+    }
+
+    pub fn get_multisig_owners(env: Env) -> Vec<Address> {
+        multisig::get_owners(&env)
+    }
+
+    pub fn get_multisig_threshold(env: Env) -> u32 {
+        multisig::get_threshold(&env)
+    }
+
+    pub fn is_multisig_owner(env: Env, address: Address) -> bool {
+        multisig::is_owner(&env, &address)
+    }
+
+    pub fn create_proposal(
+        env: Env,
+        proposer: Address,
+        action: ProposalAction,
+        _nonce: u64,
+    ) -> u64 {
+        multisig::create_proposal(&env, &proposer, action)
+    }
+
+    pub fn get_proposal(env: Env, id: u64) -> Option<Proposal> {
+        multisig::get_proposal(&env, id)
+    }
+
+    pub fn approve_proposal(env: Env, approver: Address, id: u64, _nonce: u64) {
+        multisig::approve_proposal(&env, &approver, id)
+    }
+
+    pub fn reject_proposal(env: Env, rejecter: Address, id: u64, _nonce: u64) {
+        multisig::reject_proposal(&env, &rejecter, id)
+    }
+
+    pub fn execute_proposal(env: Env, executor: Address, proposal_id: u64, _nonce: u64) {
+        multisig::require_owner(&env, &executor);
+        let proposal = multisig::get_proposal(&env, proposal_id).expect("proposal not found");
+        multisig::mark_executed(&env, proposal_id);
+
+        match proposal.action {
+            ProposalAction::Pause => {
+                access_control::set_paused(&env, true);
+                events::emit_paused(&env, &executor);
+            }
+            ProposalAction::Unpause => {
+                access_control::set_paused(&env, false);
+                events::emit_unpaused(&env, &executor);
+            }
+            ProposalAction::AddOwner(new_owner) => {
+                let mut owners = multisig::get_owners(&env);
+                if !owners.contains(&new_owner) {
+                    owners.push_back(new_owner);
+                    multisig::set_owners(&env, &owners);
+                }
+            }
+            ProposalAction::RemoveOwner(owner_to_remove) => {
+                let mut owners = multisig::get_owners(&env);
+                if let Some(index) = owners.first_index_of(&owner_to_remove) {
+                    owners.remove(index);
+                    multisig::set_owners(&env, &owners);
+                }
+            }
+            ProposalAction::ChangeThreshold(new_threshold) => {
+                let owners_len = multisig::get_owners(&env).len();
+                assert!(new_threshold > 0 && new_threshold <= owners_len, "invalid threshold");
+                env.storage().instance().set(&multisig::MultisigKey::Threshold, &new_threshold);
+            }
+            ProposalAction::GrantRole(account, role) => {
+                access_control::grant_role(&env, &account, role);
+                events::emit_role_granted(&env, &account, role, &executor);
+            }
+            ProposalAction::RevokeRole(account, role) => {
+                access_control::revoke_role(&env, &account, role);
+                events::emit_role_revoked(&env, &account, role, &executor);
+            }
+            ProposalAction::UpdateFeeConfig(token, collector, base_fee, enabled) => {
+                let config = dynamic_fees::FeeConfig { token, collector, base_fee, enabled };
+                dynamic_fees::set_fee_config(&env, &config);
+            }
+            ProposalAction::EmergencyRotateAdmin(new_admin) => {
+                dynamic_fees::set_admin(&env, &new_admin);
+                access_control::grant_role(&env, &new_admin, access_control::ROLE_ADMIN, &new_admin);
+            }
+        }
+    }
+
+    pub fn clear_anomaly_escalation(env: Env, caller: Address, business: Address) {
+        access_control::require_admin(&env, &caller);
+        dispute::clear_anomaly_escalation(&env, &business);
+    }
+
     // ── Internal Helpers ──────────────────────────────────────────────
 
     /// Apply an approved multisig action. Called only from `execute_proposal` after
@@ -1574,6 +1688,27 @@ impl AttestationContract {
             if expiry <= env.ledger().timestamp() {
                 panic!("attestation expired on arrival");
             }
+        }
+    }
+
+    /// Rejects an all-zero 32-byte proof hash.
+    ///
+    /// An all-zero hash (`[0u8; 32]`) is almost certainly an operator error rather
+    /// than a real SHA-256 digest of an off-chain bundle. `None` is explicitly
+    /// allowed because the proof hash field is optional.
+    ///
+    /// # Panics
+    /// Panics with "proof_hash must not be all-zero" when the supplied hash is
+    /// `Some([0u8; 32])`.
+    fn validate_proof_hash(proof_hash: &Option<BytesN<32>>) {
+        if let Some(hash) = proof_hash {
+            let bytes = hash.to_array();
+            for b in bytes.iter() {
+                if *b != 0 {
+                    return;
+                }
+            }
+            panic!("proof_hash must not be all-zero");
         }
     }
 
@@ -1675,3 +1810,7 @@ mod ttl_test;
 mod verify_attestation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod verify_attestations_batch_test;
+
+fn compare_strings(a: &String, b: &String) -> Ordering {
+    a.cmp(b)
+}
