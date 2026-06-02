@@ -255,6 +255,63 @@ new_version)`
 
 ### SI-007 — submit_multi_period_attestation: business auth, no overlap
 
+---
+
+### SI-008 — submit_attestations_batch: per-business auth dedup cannot skip distinct addresses
+
+**Applies to:** `submit_attestations_batch(items)`
+
+**Statement:**
+
+1. Every **distinct** `item.business` address in the batch must pass `require_auth()` before
+   processing proceeds.
+2. The dedup tracker (`authed_businesses`) records **addresses** only. Reusing an already-authed
+   address in a later item must **not** skip `require_auth()` for a different `item.business`.
+3. A caller who authorized only business A must not submit attestations for business B in the
+   same batch (ordering must not affect this).
+
+**Tests:** `test_batch_same_business_twice_succeeds`,
+`test_batch_same_business_auth_observed_once_in_dedup_phase`,
+`test_batch_second_business_unauthorized_panics`,
+`test_batch_second_business_unauthorized_no_partial_write`,
+`test_batch_reverse_order_unauthorized_panics`,
+`test_batch_three_businesses_only_two_authed_panics`,
+`test_batch_max_25_three_businesses_all_authed_succeeds`,
+`test_batch_max_25_partial_auth_panics`
+
+(File: `contracts/attestation/src/batch_auth_dedup_test.rs`)
+
+---
+
+### SI-014 — multisig: threshold, expiry, and execute ordering
+
+**Applies to:** `create_proposal`, `approve_proposal`, `execute_proposal`
+
+**Statement:**
+
+1. Execution requires approval count ≥ threshold at the time `mark_executed` runs.
+2. `execute_proposal` marks the proposal executed **before** applying side effects so threshold/owner changes during dispatch cannot invalidate the approval check.
+3. Expired proposals cannot be approved or executed (`is_proposal_expired` uses ledger sequence vs stored expiry).
+4. Each owner may approve a given proposal at most once.
+
+**Tests:** `multisig_e2e_test::*` (see `docs/multisig-e2e-testing.md`)
+
+---
+
+### SI-015 — fee collection matches `get_fee_quote` at submission time
+
+**Applies to:** `submit_attestation`, `get_fee_quote`, `get_fee_quote_detailed`
+
+**Statement:**
+
+1. Stored `fee_paid` (attestation tuple index `.3`) equals `dynamic_fee + flat_fee` collected in `execute_submission`.
+2. That total equals the pre-submit `get_fee_quote(business)` snapshot (same `calculate_fee` + `calculate_flat_fee` path).
+3. The legacy `_fee_paid` submit argument is ignored; fees cannot be under-reported by callers.
+
+**Tests:** `fee_reconciliation_test::*` (see `docs/fee-reconciliation.md`)
+
+---
+
 ## Attack Vectors Considered and Mitigated
 
 ### Unauthorized Access

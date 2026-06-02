@@ -582,11 +582,7 @@ pub fn emit_attestation_migrated(
 /// # Events
 ///
 /// Publishes `(att_cl, business)` → `AttestationCleanedUpEvent`.
-pub fn emit_attestation_cleaned_up(
-    env: &Env,
-    business: &Address,
-    period: &String,
-) {
+pub fn emit_attestation_cleaned_up(env: &Env, business: &Address, period: &String) {
     let event = AttestationCleanedUpEvent {
         business: business.clone(),
         period: period.clone(),

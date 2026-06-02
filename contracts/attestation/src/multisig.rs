@@ -273,3 +273,32 @@ pub fn require_owner(env: &Env, caller: &Address) {
     caller.require_auth();
     assert!(is_owner(env, caller), "caller is not a multisig owner");
 }
+
+/// Add an address to the owner set (used when executing `AddOwner` proposals).
+pub fn add_owner(env: &Env, owner: &Address) {
+    let mut owners = get_owners(env);
+    assert!(!owners.contains(owner), "already an owner");
+    owners.push_back(owner.clone());
+    set_owners(env, &owners);
+}
+
+/// Remove an address from the owner set (used when executing `RemoveOwner` proposals).
+pub fn remove_owner(env: &Env, owner: &Address) {
+    let owners = get_owners(env);
+    assert!(owners.contains(owner), "not an owner");
+    assert!(owners.len() > 1, "cannot remove last owner");
+
+    let threshold = get_threshold(env);
+    let mut next = Vec::new(env);
+    for i in 0..owners.len() {
+        let candidate = owners.get(i).unwrap();
+        if candidate != *owner {
+            next.push_back(candidate);
+        }
+    }
+    assert!(
+        next.len() as u32 >= threshold,
+        "cannot remove owner: would drop below threshold"
+    );
+    set_owners(env, &next);
+}

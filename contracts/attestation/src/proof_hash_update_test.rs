@@ -62,7 +62,7 @@ fn missing_attestation_panics() {
     let new_proof_hash = BytesN::from_array(&_env, &[3u8; 32]);
 
     // No attestation submitted - should panic
-    client.update_proof_hash(&admin, &business, &period, &Some(new_proof_hash));
+    client.update_proof_hash(&admin, &business, &period, &Some(new_proof_hash.clone()));
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -126,7 +126,7 @@ fn other_fields_unchanged_after_update() {
     );
 
     // Update proof hash
-    client.update_proof_hash(&admin, &business, &period, &Some(new_proof_hash));
+    client.update_proof_hash(&admin, &business, &period, &Some(new_proof_hash.clone()));
 
     // Verify other fields unchanged
     let (stored_root, stored_ts, stored_ver, _fee, stored_proof, _expiry) =
@@ -135,7 +135,11 @@ fn other_fields_unchanged_after_update() {
     assert_eq!(stored_root, merkle_root, "merkle_root should be unchanged");
     assert_eq!(stored_ts, timestamp, "timestamp should be unchanged");
     assert_eq!(stored_ver, version, "version should be unchanged");
-    assert_eq!(stored_proof, Some(new_proof_hash), "proof_hash should be updated");
+    assert_eq!(
+        stored_proof,
+        Some(new_proof_hash),
+        "proof_hash should be updated"
+    );
 }
 
 #[test]

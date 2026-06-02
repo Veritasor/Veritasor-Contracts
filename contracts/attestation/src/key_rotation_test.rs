@@ -147,7 +147,6 @@ fn test_cancel_key_rotation() {
     assert_eq!(history.len(), 0);
 }
 
-
 #[test]
 #[should_panic(expected = "timelock has not elapsed")]
 fn test_confirm_before_timelock_fails() {
