@@ -744,13 +744,15 @@ impl AttestationContract {
         merkle_root: BytesN<32>,
         timestamp: u64,
         version: u32,
-        _proof_hash: Option<BytesN<32>>,
-        _expiry_timestamp: Option<u64>,
+        proof_hash: Option<BytesN<32>>,
+        expiry_timestamp: Option<u64>,
     ) {
         business.require_auth();
         if start_period > end_period {
             panic!("start_period must be <= end_period");
         }
+
+        Self::validate_expiry(&env, timestamp, expiry_timestamp);
 
         let key = MultiPeriodKey::Ranges(business.clone());
         let mut ranges: Vec<AttestationRange> =
@@ -774,8 +776,8 @@ impl AttestationContract {
             timestamp,
             version,
             fee_paid,
-            proof_hash: None,
-            expiry_timestamp: None,
+            proof_hash,
+            expiry_timestamp,
             revoked: false,
         });
 
@@ -933,6 +935,12 @@ impl AttestationContract {
         Self::get_attestation(env, business, period)
     }
 
+    /// Verify a multi-period attestation.
+    ///
+    /// Verifies that:
+    /// 1. An active, non-revoked range exists that covers the target period
+    /// 2. The merkle root matches
+    /// 3. The range is not expired (if an expiry timestamp is set)
     pub fn verify_multi_period_attestation(
         env: Env,
         business: Address,
@@ -950,11 +958,24 @@ impl AttestationContract {
                     && target_period >= range.start_period
                     && target_period <= range.end_period
                 {
-                    return range.merkle_root == merkle_root;
+                    // Check if the range is expired
+                    let is_expired = if let Some(expiry) = range.expiry_timestamp {
+                        env.ledger().timestamp() >= expiry
+                    } else {
+                        false
+                    };
+                    if !is_expired && range.merkle_root == merkle_root {
+                        return true;
+                    }
                 }
             }
         }
         false
+    }
+
+    pub fn get_multi_period_ranges(env: Env, business: Address) -> Vec<AttestationRange> {
+        let key = MultiPeriodKey::Ranges(business);
+        env.storage().instance().get(&key).unwrap_or(Vec::new(&env))
     }
 
     pub fn add_authorized_analytics(env: Env, caller: Address, analytics: Address) {
