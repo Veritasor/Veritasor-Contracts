@@ -240,17 +240,15 @@ fn cleanup_revoked_attestation_panics() {
     let challenger = Address::generate(&env);
 
     env.ledger().set_timestamp(0);
-    client.submit_attestation(
+    client.submit_attestation(&business, &period, &root, &1u64, &1u32, &None, &Some(10u64));
+    env.ledger().set_timestamp(20);
+    client.revoke_attestation(
+        &admin,
         &business,
         &period,
-        &root,
-        &1u64,
-        &1u32,
-        &None,
-        &Some(10u64),
+        &String::from_str(&env, "revoked"),
+        &0u64,
     );
-    env.ledger().set_timestamp(20);
-    client.revoke_attestation(&admin, &business, &period, &String::from_str(&env, "revoked"), &0u64);
 
     env.ledger().set_timestamp(30);
     client.cleanup_expired_attestation(&admin, &business, &period);
@@ -266,15 +264,7 @@ fn cleanup_with_open_dispute_panics() {
     let challenger = Address::generate(&env);
 
     env.ledger().set_timestamp(0);
-    client.submit_attestation(
-        &business,
-        &period,
-        &root,
-        &1u64,
-        &1u32,
-        &None,
-        &Some(10u64),
-    );
+    client.submit_attestation(&business, &period, &root, &1u64, &1u32, &None, &Some(10u64));
     env.ledger().set_timestamp(20);
     client.open_dispute(
         &challenger,
