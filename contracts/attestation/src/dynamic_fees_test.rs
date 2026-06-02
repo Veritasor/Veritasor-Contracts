@@ -79,9 +79,9 @@ fn submit(client: &AttestationContractClient, env: &Env, business: &Address, ind
         &root,
         &1_700_000_000u64,
         &1u32,
+        &0i128,
         &None,
         &None,
-        &0u64,
     );
 }
 
@@ -290,7 +290,7 @@ fn test_no_fee_config_free() {
 
     let period = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    client.submit_attestation(&business, &period, &root, &1u64, &1u32, &None, &None, &0u64);
+    client.submit_attestation(&business, &period, &root, &1u64, &1u32, &0i128, &None, &None);
 
     let (_, _, _, fee_paid, _, _) = client.get_attestation(&business, &period).unwrap();
     assert_eq!(fee_paid, 0);
@@ -375,7 +375,8 @@ fn test_volume_discount_over_100_pct_panics() {
 #[should_panic(expected = "base_fee must be non-negative")]
 fn test_negative_base_fee_panics() {
     let t = setup_with_fees(1_000_000);
-    t.client.configure_fees(&t.token_addr, &t.collector, &-1i128, &true);
+    t.client
+        .configure_fees(&t.token_addr, &t.collector, &-1i128, &true);
 }
 
 #[test]
@@ -445,10 +446,13 @@ fn test_compute_fee_rounding_and_precision() {
 fn test_compute_fee_magnitudes() {
     // Extremely large base_fee (e.g. for high-precision tokens)
     let large_fee = 1_000_000_000_000_000_000_000_000i128; // 10^24
-    // 10% discount across both (1000 bps)
-    // factor = 9000 * 9000 = 81,000,000
-    // result = 10^24 * 0.81 = 8.1 * 10^23
-    assert_eq!(compute_fee(large_fee, 1_000, 1_000), 810_000_000_000_000_000_000_000i128);
+                                                           // 10% discount across both (1000 bps)
+                                                           // factor = 9000 * 9000 = 81,000,000
+                                                           // result = 10^24 * 0.81 = 8.1 * 10^23
+    assert_eq!(
+        compute_fee(large_fee, 1_000, 1_000),
+        810_000_000_000_000_000_000_000i128
+    );
 
     // Zero base fee
     assert_eq!(compute_fee(0, 1_000, 1_000), 0);
@@ -490,8 +494,9 @@ fn test_config_change_mid_period_consistency() {
     assert_eq!(balance(&t.env, &t.token_addr, &t.collector), 1_000_000);
 
     // Admin changes base fee mid-period
-    t.client.configure_fees(&t.token_addr, &t.collector, &500_000, &true);
-    
+    t.client
+        .configure_fees(&t.token_addr, &t.collector, &500_000, &true);
+
     // Second submission should be at 500k
     submit(&t.client, &t.env, &business, 2);
     assert_eq!(balance(&t.env, &t.token_addr, &t.collector), 1_500_000);
@@ -507,8 +512,8 @@ fn test_config_change_mid_period_consistency() {
 fn test_max_discount_combinations() {
     let t = setup_with_fees(1_000_000);
     t.client.set_tier_discount(&1, &10_000); // 100% discount
-    t.client.set_tier_discount(&2, &5_000);  // 50% discount
-    
+    t.client.set_tier_discount(&2, &5_000); // 50% discount
+
     let thresholds = vec![&t.env, 5u64];
     let discounts = vec![&t.env, 10_000u32]; // 100% discount
     t.client.set_volume_brackets(&thresholds, &discounts);
@@ -534,7 +539,6 @@ fn test_max_discount_combinations() {
     }
     assert_eq!(t.client.get_fee_quote(&biz_combined), 0);
 }
-
 
 #[test]
 fn test_get_volume_brackets_empty() {
@@ -701,3 +705,4 @@ fn test_volume_brackets_descending_thresholds_rejected() {
     let discounts = vec![&t.env, 500u32, 1_000u32, 1_500u32];
     t.client.set_volume_brackets(&thresholds, &discounts);
 }
+

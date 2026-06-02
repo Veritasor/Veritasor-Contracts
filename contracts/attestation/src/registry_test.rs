@@ -616,7 +616,8 @@ fn update_tags_updates_updated_at() {
     ctx.env.ledger().with_mut(|l| l.timestamp = 1_700_005_000);
     let mut tags = Vec::new(&ctx.env);
     tags.push_back(symbol_short!("kyb"));
-    ctx.client.update_business_tags(&ctx.admin, &business, &tags);
+    ctx.client
+        .update_business_tags(&ctx.admin, &business, &tags);
 
     let record = ctx.client.get_business(&business).unwrap();
     assert_eq!(record.updated_at, 1_700_005_000);
@@ -910,11 +911,7 @@ fn submit_attestation_accepts_reactivated_business() {
 
 // ========================= submit_attestations_batch registry gate =========================
 
-fn batch_item(
-    env: &Env,
-    business: &Address,
-    period: &str,
-) -> BatchAttestationItem {
+fn batch_item(env: &Env, business: &Address, period: &str) -> BatchAttestationItem {
     BatchAttestationItem {
         business: business.clone(),
         period: soroban_sdk::String::from_str(env, period),
