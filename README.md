@@ -1,3 +1,5 @@
+
+
 # Veritasor Contracts
 
 Soroban smart contracts for the Veritasor revenue attestation protocol on Stellar. Store revenue Merkle roots and metadata on-chain; full data remains off-chain.
