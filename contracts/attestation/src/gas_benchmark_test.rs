@@ -255,7 +255,7 @@ fn bench_migrate_attestation() {
     client.submit_attestation(&business, &period, &old_root, &1_700_000_000u64, &1u32, &0i128, &None, &None);
 
     let before = BudgetSnapshot::capture(&env);
-    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32, &0u64);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
     let after = BudgetSnapshot::capture(&env);
 
     let cost = before.delta(&after);
@@ -360,6 +360,95 @@ fn bench_submit_batch_large() {
         avg_cpu,
         avg_mem
     );
+}
+
+#[test]
+fn bench_batch_vs_single_profiling() {
+    let (env, client, admin) = setup_basic();
+    let business = Address::generate(&env);
+    
+    client.grant_role(&admin, &business, &4u32);
+    client.register_business(
+        &business,
+        &BytesN::from_array(&env, &[0; 32]),
+        &soroban_sdk::Symbol::new(&env, "US"),
+        &soroban_sdk::vec![&env],
+    );
+    client.approve_business(&admin, &business);
+    
+    // Read baseline
+    let baseline_content = std::fs::read_to_string("benchmark_results_sample.txt")
+        .unwrap_or_default();
+    let mut baseline_cpu: u64 = 500_000;
+    let mut baseline_mem: u64 = 10_000;
+    
+    let lines: std::vec::Vec<&str> = baseline_content.lines().collect();
+    let mut found_section = false;
+    for line in lines {
+        if line.contains("=== submit_attestation (no fee) ===") {
+            found_section = true;
+        } else if found_section && line.starts_with("CPU instructions: ") {
+            baseline_cpu = line.trim_start_matches("CPU instructions: ").parse().unwrap_or(500_000);
+        } else if found_section && line.starts_with("Memory bytes: ") {
+            baseline_mem = line.trim_start_matches("Memory bytes: ").parse().unwrap_or(10_000);
+            break;
+        }
+    }
+    
+    let sizes = [1, 5, 10, 25];
+    
+    for &size in sizes.iter() {
+        let mut items = soroban_sdk::Vec::new(&env);
+        for i in 0..size {
+            let period = String::from_str(&env, &std::format!("2026-{}-{:02}", size, i));
+            let root = BytesN::from_array(&env, &[i as u8; 32]);
+            items.push_back(BatchAttestationItem {
+                business: business.clone(),
+                period,
+                merkle_root: root,
+                timestamp: 1_700_000_000u64,
+                version: 1u32,
+                proof_hash: None,
+                expiry_timestamp: None,
+            });
+        }
+        
+        let before = BudgetSnapshot::capture(&env);
+        client.submit_attestations_batch(&items);
+        let after = BudgetSnapshot::capture(&env);
+        
+        let cost = before.delta(&after);
+        let cost_per_item_cpu = cost.cpu_insns / (size as u64);
+        let cost_per_item_mem = cost.mem_bytes / (size as u64);
+        
+        std::println!(
+            "{{\"operation\": \"batch_profiling\", \"batch_size\": {}, \"total_cpu\": {}, \"total_mem\": {}, \"per_item_cpu\": {}, \"per_item_mem\": {}}}",
+            size, cost.cpu_insns, cost.mem_bytes, cost_per_item_cpu, cost_per_item_mem
+        );
+        
+        let overhead_pct = match size {
+            1 => 100, 
+            5 => 150,
+            10 => 200,
+            25 => 250,
+            _ => 300,
+        };
+        let threshold_cpu = baseline_cpu + (baseline_cpu * overhead_pct / 100);
+        let threshold_mem = baseline_mem + (baseline_mem * overhead_pct / 100);
+        
+        // Only assert CPU, as memory overhead per-item might not scale down linearly 
+        // due to Vec allocation costs
+        assert!(
+            cost_per_item_cpu <= threshold_cpu,
+            "Batch size {} per-item CPU {} exceeds threshold {}",
+            size, cost_per_item_cpu, threshold_cpu
+        );
+        assert!(
+            cost_per_item_mem <= threshold_mem,
+            "Batch size {} per-item Mem {} exceeds threshold {}",
+            size, cost_per_item_mem, threshold_mem
+        );
+    }
 }
 
 // ── Fee Calculation Benchmarks ──────────────────────────────────────
@@ -653,7 +742,7 @@ fn regression_migrate_attestation_threshold() {
     client.submit_attestation(&business, &period, &old_root, &1_700_000_000u64, &1u32, &0i128, &None, &None);
 
     let before = BudgetSnapshot::capture(&env);
-    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32, &0u64);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
     let after = BudgetSnapshot::capture(&env);
 
     let cost = before.delta(&after);
@@ -937,7 +1026,7 @@ fn migration_does_not_accumulate() {
     // Multiple migrations
     for version in 2..=5 {
         let new_root = BytesN::from_array(&env, &[version as u8; 32]);
-        client.migrate_attestation(&admin, &business, &period, &new_root, &version, &0u64);
+        client.migrate_attestation(&admin, &business, &period, &new_root, &version);
     }
 
     // Should still have only one attestation stored
@@ -972,7 +1061,7 @@ fn revocation_linear_storage() {
         client.revoke_attestation(
             &admin,
             &business,
-            period,
+            &period,
             &String::from_str(&env, "test"),
             &1u64,
         );

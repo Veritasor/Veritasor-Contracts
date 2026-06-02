@@ -9,6 +9,7 @@
 #   --core        Run only core operation benchmarks
 #   --batch       Run only batch operation benchmarks
 #   --fee         Run only fee calculation benchmarks
+#   --profiling   Run batch vs single gas profiling
 #   --summary     Show summary report only
 #   --help        Show this help message
 
@@ -52,6 +53,7 @@ show_help() {
     echo "  --core        Run only core operation benchmarks"
     echo "  --batch       Run only batch operation benchmarks"
     echo "  --fee         Run only fee calculation benchmarks"
+    echo "  --profiling   Run batch vs single gas profiling"
     echo "  --summary     Show summary report only"
     echo "  --help        Show this help message"
     echo ""
@@ -88,6 +90,10 @@ case "${1:-}" in
         run_benchmarks "gas_benchmark_test::bench_fee_with_volume_discount" "fee with volume discount"
         run_benchmarks "gas_benchmark_test::bench_fee_with_combined_discounts" "fee with combined discounts"
         run_benchmarks "gas_benchmark_test::bench_get_fee_quote" "get_fee_quote"
+        ;;
+    --profiling)
+        print_header
+        run_benchmarks "gas_benchmark_test::bench_batch_vs_single_profiling" "batch vs single profiling"
         ;;
     --summary)
         print_header
