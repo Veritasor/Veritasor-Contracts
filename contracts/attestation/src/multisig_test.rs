@@ -195,7 +195,7 @@ fn test_execute_unpause_proposal() {
     let owner2 = owners.get(1).unwrap();
 
     // First pause (admin nonce 2 after init 0, init_multisig 1)
-    client.pause(&admin, &2u64);
+    client.pause(&admin);
     assert!(client.is_paused());
 
     // Create unpause proposal (admin multisig nonce 0)
@@ -331,7 +331,7 @@ fn test_proposal_expiration() {
     let owner2 = owners.get(1).unwrap();
 
     let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
-    
+
     // Advance ledger sequence beyond expiry
     let current_seq = env.ledger().sequence();
     env.ledger().set_sequence_number(current_seq + DEFAULT_PROPOSAL_EXPIRY + 1);
@@ -351,7 +351,7 @@ fn test_approve_expired_proposal_panics() {
     let owner2 = owners.get(1).unwrap();
 
     let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
-    
+
     let current_seq = env.ledger().sequence();
     env.ledger().set_sequence_number(current_seq + DEFAULT_PROPOSAL_EXPIRY + 1);
 
@@ -364,7 +364,7 @@ fn test_expired_proposal_status_update() {
     let owner2 = owners.get(1).unwrap();
 
     let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
-    
+
     let current_seq = env.ledger().sequence();
     env.ledger().set_sequence_number(current_seq + DEFAULT_PROPOSAL_EXPIRY + 1);
 
@@ -384,10 +384,10 @@ fn test_execute_expired_proposal_panics() {
     let owner2 = owners.get(1).unwrap();
 
     let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
-    
+
     // Approve BEFORE expiration
     client.approve_proposal(&owner2, &proposal_id, &0u64);
-    
+
     // Advance ledger sequence beyond expiry
     let current_seq = env.ledger().sequence();
     env.ledger().set_sequence_number(current_seq + DEFAULT_PROPOSAL_EXPIRY + 1);
@@ -416,8 +416,16 @@ fn test_concurrent_proposals_different_actions() {
     let target1 = Address::generate(&env);
     let target2 = Address::generate(&env);
 
-    let id1 = client.create_proposal(&admin, &ProposalAction::GrantRole(target1.clone(), ROLE_ATTESTOR), &0u64);
-    let id2 = client.create_proposal(&admin, &ProposalAction::GrantRole(target2.clone(), ROLE_OPERATOR), &1u64);
+    let id1 = client.create_proposal(
+        &admin,
+        &ProposalAction::GrantRole(target1.clone(), ROLE_ATTESTOR),
+        &0u64,
+    );
+    let id2 = client.create_proposal(
+        &admin,
+        &ProposalAction::GrantRole(target2.clone(), ROLE_OPERATOR),
+        &1u64,
+    );
 
     client.approve_proposal(&owner2, &id1, &0u64);
     client.approve_proposal(&owner2, &id2, &0u64);
@@ -429,7 +437,6 @@ fn test_concurrent_proposals_different_actions() {
     client.execute_proposal(&admin, &id1, &3u64);
     assert!(client.has_role(&target1, &ROLE_ATTESTOR));
 }
-
 
 // --------------------------------------------------------------------
 //  Edge Cases
@@ -572,13 +579,12 @@ fn test_owner_cannot_approve_twice() {
 
     approve_proposal(&env, &owner, id);
 
-    let result = std::panic::catch_unwind(|| {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         approve_proposal(&env, &owner, id);
-    });
+    }));
 
     assert!(result.is_err());
 }
-
 
 #[test]
 fn test_non_owner_cannot_approve() {
@@ -589,14 +595,9 @@ fn test_non_owner_cannot_approve() {
 
     let id = create_proposal(&env, &owner, ProposalAction::Pause);
 
-    let result = std::panic::catch_unwind(|| {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         approve_proposal(&env, &attacker, id);
-    });
+    }));
 
     assert!(result.is_err());
 }
-
-
-
-
-

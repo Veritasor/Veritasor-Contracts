@@ -97,6 +97,16 @@ fn balance(env: &Env, token_addr: &Address, who: &Address) -> i128 {
     TokenClient::new(env, token_addr).balance(who)
 }
 
+/// Read the SAC balance of an address via the actual Stellar Asset client.
+fn sac_balance(env: &Env, token_addr: &Address, who: &Address) -> i128 {
+    StellarAssetClient::new(env, token_addr).balance(who)
+}
+
+/// Read the SAC allowance for a spender from an owner.
+fn sac_allowance(env: &Env, token_addr: &Address, owner: &Address, spender: &Address) -> i128 {
+    TokenClient::new(env, token_addr).allowance(owner, spender)
+}
+
 /// Deploy a fresh Stellar asset token, mint `amount` to `to`, and return
 /// the token address.  Reuses the same `env` so all contracts share the
 /// same ledger state.
@@ -148,7 +158,10 @@ fn test_collect_flat_fee_success() {
     assert_eq!(balance(&t.env, &t.token_addr, &business), 500);
     assert_eq!(balance(&t.env, &t.token_addr, &t.collector), 500);
 
-    let record = t.client.get_attestation(&business, &String::from_str(&t.env, "2026-02")).unwrap();
+    let record = t
+        .client
+        .get_attestation(&business, &String::from_str(&t.env, "2026-02"))
+        .unwrap();
     assert_eq!(record.3, 500);
 }
 
@@ -156,13 +169,17 @@ fn test_collect_flat_fee_success() {
 #[test]
 fn test_flat_fee_disabled() {
     let t = setup_with_flat_fees(500);
-    t.client.configure_flat_fee(&t.token_addr, &t.collector, &500, &false);
+    t.client
+        .configure_flat_fee(&t.token_addr, &t.collector, &500, &false);
 
     let business = Address::generate(&t.env);
     submit(&t.client, &t.env, &business, "2026-02", 1);
 
     assert_eq!(balance(&t.env, &t.token_addr, &t.collector), 0);
-    let record = t.client.get_attestation(&business, &String::from_str(&t.env, "2026-02")).unwrap();
+    let record = t
+        .client
+        .get_attestation(&business, &String::from_str(&t.env, "2026-02"))
+        .unwrap();
     assert_eq!(record.3, 0);
 }
 
@@ -192,7 +209,8 @@ fn test_flat_fee_insufficient_balance() {
 fn test_combined_fees() {
     let t = setup_with_flat_fees(500);
     let dyn_collector = Address::generate(&t.env);
-    t.client.configure_fees(&t.token_addr, &dyn_collector, &1_000, &true);
+    t.client
+        .configure_fees(&t.token_addr, &dyn_collector, &1_000, &true);
 
     let business = Address::generate(&t.env);
     mint(&t.env, &t.token_addr, &business, 2_000);
@@ -204,7 +222,10 @@ fn test_combined_fees() {
     assert_eq!(balance(&t.env, &t.token_addr, &t.collector), 500);
     assert_eq!(balance(&t.env, &t.token_addr, &dyn_collector), 1_000);
 
-    let record = t.client.get_attestation(&business, &String::from_str(&t.env, "2026-02")).unwrap();
+    let record = t
+        .client
+        .get_attestation(&business, &String::from_str(&t.env, "2026-02"))
+        .unwrap();
     assert_eq!(record.3, 1_500);
 }
 
@@ -238,8 +259,14 @@ fn test_only_flat_fee_transfers_to_flat_collector() {
         "flat-fee collector should receive exactly the flat fee"
     );
 
-    let record = t.client.get_attestation(&business, &String::from_str(&t.env, "2026-03")).unwrap();
-    assert_eq!(record.3, 300, "fee_paid must equal flat fee when dynamic is absent");
+    let record = t
+        .client
+        .get_attestation(&business, &String::from_str(&t.env, "2026-03"))
+        .unwrap();
+    assert_eq!(
+        record.3, 300,
+        "fee_paid must equal flat fee when dynamic is absent"
+    );
 }
 
 // ── Only dynamic fee enabled ─────────────────────────────────────────
@@ -280,8 +307,13 @@ fn test_only_dynamic_fee_transfers_to_dynamic_collector() {
         "dynamic-fee collector should receive exactly the dynamic fee"
     );
 
-    let record = client.get_attestation(&business, &String::from_str(&env, "2026-03")).unwrap();
-    assert_eq!(record.3, 1_000, "fee_paid must equal dynamic fee when flat is absent");
+    let record = client
+        .get_attestation(&business, &String::from_str(&env, "2026-03"))
+        .unwrap();
+    assert_eq!(
+        record.3, 1_000,
+        "fee_paid must equal dynamic fee when flat is absent"
+    );
 }
 
 // ── Both fees disabled ───────────────────────────────────────────────
@@ -292,11 +324,13 @@ fn test_only_dynamic_fee_transfers_to_dynamic_collector() {
 fn test_both_fees_disabled_no_transfer() {
     let t = setup_with_flat_fees(500);
     // Disable flat fee.
-    t.client.configure_flat_fee(&t.token_addr, &t.collector, &500, &false);
+    t.client
+        .configure_flat_fee(&t.token_addr, &t.collector, &500, &false);
 
     // Configure dynamic fee but immediately disable it.
     let dyn_collector = Address::generate(&t.env);
-    t.client.configure_fees(&t.token_addr, &dyn_collector, &1_000, &false);
+    t.client
+        .configure_fees(&t.token_addr, &dyn_collector, &1_000, &false);
 
     // Business has no tokens — any transfer would panic.
     let business = Address::generate(&t.env);
@@ -313,8 +347,14 @@ fn test_both_fees_disabled_no_transfer() {
         "dynamic-fee collector must receive nothing when disabled"
     );
 
-    let record = t.client.get_attestation(&business, &String::from_str(&t.env, "2026-04")).unwrap();
-    assert_eq!(record.3, 0, "fee_paid must be 0 when both fees are disabled");
+    let record = t
+        .client
+        .get_attestation(&business, &String::from_str(&t.env, "2026-04"))
+        .unwrap();
+    assert_eq!(
+        record.3, 0,
+        "fee_paid must be 0 when both fees are disabled"
+    );
 }
 
 // ── Combined fees: exact decomposition ──────────────────────────────
@@ -358,10 +398,15 @@ fn test_fee_paid_equals_dynamic_plus_flat_exact_decomposition() {
 
     // Each collector receives exactly its configured fee.
     assert_eq!(flat_delta, 400, "flat collector delta must equal flat fee");
-    assert_eq!(dyn_delta, 600, "dynamic collector delta must equal dynamic fee");
+    assert_eq!(
+        dyn_delta, 600,
+        "dynamic collector delta must equal dynamic fee"
+    );
 
     // Stored fee_paid must equal the sum of both deltas.
-    let record = client.get_attestation(&business, &String::from_str(&env, "2026-05")).unwrap();
+    let record = client
+        .get_attestation(&business, &String::from_str(&env, "2026-05"))
+        .unwrap();
     assert_eq!(
         record.3,
         flat_delta + dyn_delta,
@@ -421,11 +466,22 @@ fn test_tier_discount_reduces_dynamic_fee_and_record() {
     let dyn_delta = balance(&env, &dyn_token, &dyn_collector) - dyn_before;
     let flat_delta = balance(&env, &flat_token, &flat_collector) - flat_before;
 
-    assert_eq!(dyn_delta, 800_000, "dynamic collector must receive discounted fee");
-    assert_eq!(flat_delta, 200, "flat collector must be unaffected by tier discount");
+    assert_eq!(
+        dyn_delta, 800_000,
+        "dynamic collector must receive discounted fee"
+    );
+    assert_eq!(
+        flat_delta, 200,
+        "flat collector must be unaffected by tier discount"
+    );
 
-    let record = client.get_attestation(&business, &String::from_str(&env, "2026-06")).unwrap();
-    assert_eq!(record.3, 800_200, "fee_paid must equal discounted dynamic (800_000) + flat (200)");
+    let record = client
+        .get_attestation(&business, &String::from_str(&env, "2026-06"))
+        .unwrap();
+    assert_eq!(
+        record.3, 800_200,
+        "fee_paid must equal discounted dynamic (800_000) + flat (200)"
+    );
 }
 
 // ── Volume discount reduces dynamic fee ─────────────────────────────
@@ -475,11 +531,22 @@ fn test_volume_discount_reduces_dynamic_fee_after_threshold() {
     let dyn_delta = balance(&env, &token_addr, &dyn_collector) - dyn_before;
     let biz_delta = biz_before - balance(&env, &token_addr, &business);
 
-    assert_eq!(dyn_delta, 750, "dynamic collector must receive volume-discounted fee");
-    assert_eq!(biz_delta, 750, "business must be debited the discounted fee");
+    assert_eq!(
+        dyn_delta, 750,
+        "dynamic collector must receive volume-discounted fee"
+    );
+    assert_eq!(
+        biz_delta, 750,
+        "business must be debited the discounted fee"
+    );
 
-    let record = client.get_attestation(&business, &String::from_str(&env, "2026-04")).unwrap();
-    assert_eq!(record.3, 750, "fee_paid must equal volume-discounted dynamic fee");
+    let record = client
+        .get_attestation(&business, &String::from_str(&env, "2026-04"))
+        .unwrap();
+    assert_eq!(
+        record.3, 750,
+        "fee_paid must equal volume-discounted dynamic fee"
+    );
 }
 
 // ── Collector balance accumulates across multiple submissions ────────
@@ -546,7 +613,10 @@ fn test_balance_delta_equals_fee_quote() {
 
     // `get_fee_quote` returns dynamic + flat = 850 + 150 = 1_000.
     let total_quote = client.get_fee_quote(&business);
-    assert_eq!(total_quote, 1_000, "get_fee_quote must return dynamic + flat");
+    assert_eq!(
+        total_quote, 1_000,
+        "get_fee_quote must return dynamic + flat"
+    );
 
     let flat_before = balance(&env, &flat_token, &flat_collector);
     let dyn_before = balance(&env, &dyn_token, &dyn_collector);
@@ -558,7 +628,10 @@ fn test_balance_delta_equals_fee_quote() {
 
     // Each collector receives exactly its configured fee.
     assert_eq!(flat_delta, 150, "flat delta must equal configured flat fee");
-    assert_eq!(dyn_delta, 850, "dynamic delta must equal configured dynamic fee");
+    assert_eq!(
+        dyn_delta, 850,
+        "dynamic delta must equal configured dynamic fee"
+    );
 
     // Sum of deltas must equal the pre-submission quote.
     assert_eq!(
@@ -567,7 +640,9 @@ fn test_balance_delta_equals_fee_quote() {
         "flat_delta + dyn_delta must equal get_fee_quote"
     );
 
-    let record = client.get_attestation(&business, &String::from_str(&env, "2026-07")).unwrap();
+    let record = client
+        .get_attestation(&business, &String::from_str(&env, "2026-07"))
+        .unwrap();
     assert_eq!(record.3, total_quote, "fee_paid must equal get_fee_quote");
     assert_eq!(record.3, 1_000);
 }
@@ -626,6 +701,203 @@ fn test_tier_and_volume_combined_discount_balance_delta() {
     assert_eq!(dyn_delta, 720_000, "combined discount must yield 720_000");
     assert_eq!(biz_delta, 720_000);
 
-    let record = client.get_attestation(&business, &String::from_str(&env, "2026-03")).unwrap();
-    assert_eq!(record.3, 720_000, "fee_paid must equal combined-discounted fee");
+    let record = client
+        .get_attestation(&business, &String::from_str(&env, "2026-03"))
+        .unwrap();
+    assert_eq!(
+        record.3, 720_000,
+        "fee_paid must equal combined-discounted fee"
+    );
+}
+
+/// End-to-end SAC-backed fee transfer integration.
+///
+/// Uses the actual Stellar Asset contract id as the fee token and reads
+/// collector balance via the SAC client.
+#[test]
+fn test_sac_integration_fee_transfer_reads_collector_balance_via_sac_client() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    let business = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = token_contract.address().clone();
+
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &0u64);
+
+    client.configure_flat_fee(&token_addr, &collector, &250, &true);
+    client.configure_fees(&token_addr, &collector, &750, &true);
+
+    mint(&env, &token_addr, &business, 2_000);
+    let collector_before = sac_balance(&env, &token_addr, &collector);
+
+    submit(&client, &env, &business, "2026-09", 9);
+
+    assert_eq!(
+        sac_balance(&env, &token_addr, &collector),
+        collector_before + 1_000,
+        "collector must receive dynamic + flat fees through the SAC contract"
+    );
+
+    let record = client.get_attestation(&business, &String::from_str(&env, "2026-09")).unwrap();
+    assert_eq!(record.3, 1_000);
+}
+
+/// The fee transfer must succeed even when no allowance is set on the SAC.
+#[test]
+fn test_sac_integration_unset_allowance_does_not_block_direct_fee_transfer() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    let business = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = token_contract.address().clone();
+
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &0u64);
+
+    client.configure_fees(&token_addr, &collector, &500, &true);
+
+    mint(&env, &token_addr, &business, 1_000);
+    assert_eq!(sac_allowance(&env, &token_addr, &business, &contract_id), 0);
+
+    submit(&client, &env, &business, "2026-10", 10);
+
+    assert_eq!(
+        sac_balance(&env, &token_addr, &collector),
+        500,
+        "collector must receive the fee even with no allowance"
+    );
+
+    let record = client.get_attestation(&business, &String::from_str(&env, "2026-10")).unwrap();
+    assert_eq!(record.3, 500);
+}
+
+/// The SAC integration must fail when the payer's balance is insufficient.
+#[test]
+#[should_panic]
+fn test_sac_integration_insufficient_balance_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    let business = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = token_contract.address().clone();
+
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &0u64);
+    client.configure_fees(&token_addr, &collector, &1_000, &true);
+
+    mint(&env, &token_addr, &business, 999);
+    submit(&client, &env, &business, "2026-11", 11);
+}
+
+/// The SAC integration must fail when the payer is deauthorized by the token admin.
+#[test]
+#[should_panic]
+fn test_sac_integration_deauthorized_token_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    let business = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = token_contract.address().clone();
+
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &0u64);
+    client.configure_fees(&token_addr, &collector, &500, &true);
+
+    mint(&env, &token_addr, &business, 1_000);
+    StellarAssetClient::new(&env, &token_addr).set_authorized(&business, &false);
+
+    submit(&client, &env, &business, "2026-12", 12);
+}
+
+/// If a fee configuration rounds to zero, the SAC collector receives nothing
+/// and the recorded fee remains zero.
+#[test]
+fn test_sac_integration_rounds_to_zero_with_high_discounts() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    let business = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = token_contract.address().clone();
+
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &0u64);
+
+    client.configure_fees(&token_addr, &collector, &1, &true);
+    client.set_tier_discount(&1, &9_900);
+    client.set_business_tier(&business, &1);
+    let thresholds = vec![&env, 1u64];
+    let discounts = vec![&env, 1_000u32];
+    client.set_volume_brackets(&thresholds, &discounts);
+
+    mint(&env, &token_addr, &business, 1_000);
+
+    // After applying both discounts, the dynamic fee should truncate to zero.
+    assert_eq!(client.get_fee_quote(&business), 0);
+
+    submit(&client, &env, &business, "2027-01", 13);
+
+    assert_eq!(sac_balance(&env, &token_addr, &collector), 0);
+    let record = client.get_attestation(&business, &String::from_str(&env, "2027-01")).unwrap();
+    assert_eq!(record.3, 0);
+}
+
+/// A fee collector may equal the business address; the contract must still
+/// record the fee correctly and preserve the business's own balance.
+#[test]
+fn test_sac_integration_collector_equal_to_business_records_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let business = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = token_contract.address().clone();
+
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &0u64);
+
+    client.configure_fees(&token_addr, &business, &500, &true);
+
+    mint(&env, &token_addr, &business, 1_000);
+    let before = sac_balance(&env, &token_addr, &business);
+
+    submit(&client, &env, &business, "2027-02", 14);
+
+    assert_eq!(sac_balance(&env, &token_addr, &business), before, "self-transfer should preserve business balance");
+    let record = client.get_attestation(&business, &String::from_str(&env, "2027-02")).unwrap();
+    assert_eq!(record.3, 500);
 }

@@ -80,9 +80,9 @@ fn set_anomaly_and_get_anomaly() {
         &root,
         &1700000000u64,
         &1u32,
+        &0i128,
         &None,
         &None,
-        &0u64,
     );
     client.set_anomaly(&analytics, &business, &period, &1u32, &50u32);
     let out = client.get_anomaly(&business, &period).unwrap();
@@ -105,9 +105,9 @@ fn set_anomaly_multiple_updates_overwrites() {
         &root,
         &1700000000u64,
         &1u32,
+        &0i128,
         &None,
         &None,
-        &0u64,
     );
     client.set_anomaly(&analytics, &business, &period, &1u32, &10u32);
     client.set_anomaly(&analytics, &business, &period, &2u32, &90u32);
@@ -133,9 +133,9 @@ fn set_anomaly_unauthorized_panics() {
         &root,
         &1700000000u64,
         &1u32,
+        &0i128,
         &None,
         &None,
-        &0u64,
     );
     client.set_anomaly(&unauthorized, &business, &period, &1u32, &50u32);
 }
@@ -168,9 +168,9 @@ fn set_anomaly_score_out_of_range_panics() {
         &root,
         &1700000000u64,
         &1u32,
+        &0i128,
         &None,
         &None,
-        &0u64,
     );
     client.set_anomaly(&analytics, &business, &period, &0u32, &101u32);
 }
@@ -190,9 +190,9 @@ fn set_anomaly_score_boundary_100() {
         &root,
         &1700000000u64,
         &1u32,
+        &0i128,
         &None,
         &None,
-        &0u64,
     );
     client.set_anomaly(&analytics, &business, &period, &0u32, &100u32);
     let out = client.get_anomaly(&business, &period).unwrap();
@@ -214,9 +214,9 @@ fn get_anomaly_escalation_none_for_low_score() {
         &root,
         &1700000000u64,
         &1u32,
+        &0i128,
         &None,
         &None,
-        &0u64,
     );
     client.set_anomaly(&analytics, &business, &period, &0u32, &49u32);
     assert_eq!(client.get_anomaly_escalation(&business), None);
@@ -238,9 +238,9 @@ fn get_anomaly_escalation_levels_monotonic() {
         &root,
         &1700000000u64,
         &1u32,
+        &0i128,
         &None,
         &None,
-        &0u64,
     );
     client.submit_attestation(
         &business,
@@ -248,9 +248,9 @@ fn get_anomaly_escalation_levels_monotonic() {
         &root,
         &1700000000u64,
         &1u32,
+        &0i128,
         &None,
         &None,
-        &0u64,
     );
 
     client.set_anomaly(&analytics, &business, &period1, &0u32, &60u32);
@@ -281,9 +281,9 @@ fn clear_anomaly_escalation_admin_path() {
         &root,
         &1700000000u64,
         &1u32,
+        &0i128,
         &None,
         &None,
-        &0u64,
     );
     client.set_anomaly(&analytics, &business, &period, &0u32, &95u32);
     assert_eq!(client.get_anomaly_escalation(&business), Some(3u32));
@@ -308,9 +308,9 @@ fn clear_anomaly_escalation_non_admin_panics() {
         &root,
         &1700000000u64,
         &1u32,
+        &0i128,
         &None,
         &None,
-        &0u64,
     );
     client.set_anomaly(&analytics, &business, &period, &0u32, &95u32);
     client.clear_anomaly_escalation(&unauthorized, &business);
@@ -329,9 +329,9 @@ fn get_anomaly_none_when_not_set() {
         &root,
         &1700000000u64,
         &1u32,
+        &0i128,
         &None,
         &None,
-        &0u64,
     );
     let out = client.get_anomaly(&business, &period);
     assert!(out.is_none());
@@ -351,7 +351,7 @@ fn attestation_without_anomaly_data_unchanged() {
     let timestamp = 1700000000u64;
     let version = 2u32;
     client.submit_attestation(
-        &business, &period, &root, &timestamp, &version, &None, &None, &0u64,
+        &business, &period, &root, &timestamp, &version, &0i128, &None, &None,
     );
     assert!(client.get_anomaly(&business, &period).is_none());
     let stored = client.get_attestation(&business, &period).unwrap();
@@ -373,7 +373,7 @@ fn anomaly_update_does_not_corrupt_attestation() {
     let timestamp = 1700000001u64;
     let version = 3u32;
     client.submit_attestation(
-        &business, &period, &root, &timestamp, &version, &None, &None, &0u64,
+        &business, &period, &root, &timestamp, &version, &0i128, &None, &None,
     );
     client.set_anomaly(&analytics, &business, &period, &0xFFu32, &75u32);
     let stored = client.get_attestation(&business, &period).unwrap();
@@ -403,9 +403,9 @@ fn two_authorized_updaters_can_both_set_anomaly() {
         &root,
         &1700000000u64,
         &1u32,
+        &0i128,
         &None,
         &None,
-        &0u64,
     );
     client.set_anomaly(&analytics1, &business, &period, &1u32, &25u32);
     client.set_anomaly(&analytics2, &business, &period, &2u32, &50u32);
@@ -429,9 +429,9 @@ fn removed_analytics_cannot_set_anomaly() {
         &root,
         &1700000000u64,
         &1u32,
+        &0i128,
         &None,
         &None,
-        &0u64,
     );
     client.set_anomaly(&analytics, &business, &period, &1u32, &50u32);
     client.remove_authorized_analytics(&admin, &analytics);
@@ -456,10 +456,11 @@ fn removed_analytics_set_anomaly_panics() {
         &root,
         &1700000000u64,
         &1u32,
+        &0i128,
         &None,
         &None,
-        &0u64,
     );
     client.remove_authorized_analytics(&admin, &analytics);
     client.set_anomaly(&analytics, &business, &period, &2u32, &60u32);
 }
+
