@@ -29,12 +29,12 @@ fn setup() -> (Env, AttestationContractClient<'static>, Address) {
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
     client.initialize(&admin, &0u64);
-    access_control::grant_role(&env, &admin, ROLE_ADMIN);
+    access_control::grant_role(&env, &admin, ROLE_ADMIN, &admin);
     (env, client, admin)
 }
 
 fn register_pending_business(env: &Env, business: &Address) {
-    access_control::grant_role(env, business, ROLE_BUSINESS);
+    access_control::grant_role(env, business, ROLE_BUSINESS, business);
     let name_hash = BytesN::from_array(env, &[0u8; 32]);
     let tags: Vec<Symbol> = Vec::new(env);
     registry::register_business(env, business, name_hash, symbol_short!("US"), tags);
@@ -202,7 +202,7 @@ fn test_submit_attestations_batch_rejects_pending_business() {
         expiry_timestamp: None,
     });
 
-    let result = catch_unwind(|| client.submit_attestations_batch(&items));
+    let result = catch_unwind(std::panic::AssertUnwindSafe(|| client.submit_attestations_batch(&items)));
     assert!(result.is_err(), "pending business in batch should panic");
     assert_eq!(
         panic_message(result.unwrap_err()),
@@ -230,5 +230,9 @@ fn test_submit_attestations_batch_accepts_reactivated_business() {
     });
 
     client.submit_attestations_batch(&items);
-    assert!(client.get_attestation(&business, &SorobanString::from_str(&env, "2026-02")).is_some());
+    assert!(client
+        .get_attestation(&business, &SorobanString::from_str(&env, "2026-02"))
+        .is_some());
 }
+
+

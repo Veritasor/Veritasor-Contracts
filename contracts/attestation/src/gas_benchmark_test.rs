@@ -451,7 +451,7 @@ fn bench_grant_role() {
     let account = Address::generate(&env);
 
     let before = BudgetSnapshot::capture(&env);
-    client.grant_role(&admin, &account, &ROLE_ATTESTOR, &1u64);
+    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
     let after = BudgetSnapshot::capture(&env);
 
     let cost = before.delta(&after);
@@ -464,7 +464,7 @@ fn bench_has_role() {
     let (env, client, admin) = setup_basic();
 
     let account = Address::generate(&env);
-    client.grant_role(&admin, &account, &ROLE_ATTESTOR, &1u64);
+    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
 
     let before = BudgetSnapshot::capture(&env);
     let result = client.has_role(&account, &ROLE_ATTESTOR);
@@ -687,7 +687,7 @@ fn regression_grant_role_threshold() {
     let account = Address::generate(&env);
 
     let before = BudgetSnapshot::capture(&env);
-    client.grant_role(&admin, &account, &ROLE_ATTESTOR, &1u64);
+    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
     let after = BudgetSnapshot::capture(&env);
 
     let cost = before.delta(&after);
@@ -729,7 +729,10 @@ fn regression_is_revoked_after_revoke_threshold() {
     let after = BudgetSnapshot::capture(&env);
 
     // is_revoked is currently a stub returning false; assert it is consistent
-    assert!(!result, "is_revoked stub should return false (implementation pending)");
+    assert!(
+        !result,
+        "is_revoked stub should return false (implementation pending)"
+    );
     let cost = before.delta(&after);
     cost.print("regression: is_revoked (after revoke)");
     cost.assert_within_target("regression_is_revoked_revoked", 250_000, 6_000);
@@ -905,7 +908,12 @@ fn batch_submission_linear_scaling() {
         let cost = before.delta(&after);
 
         // Cost should scale roughly linearly with batch size
-        std::println!("Batch size {}: CPU {} Mem {}", size, cost.cpu_insns, cost.mem_bytes);
+        std::println!(
+            "Batch size {}: CPU {} Mem {}",
+            size,
+            cost.cpu_insns,
+            cost.mem_bytes
+        );
 
         // Linear scaling means each addition costs similar amount
         // If cost per item grows with batch size, indicates O(n²) or worse
@@ -935,7 +943,10 @@ fn migration_does_not_accumulate() {
     // Should still have only one attestation stored
     // Migration updates existing entry, doesn't add new ones
     let result = client.get_attestation(&business, &period);
-    assert!(result.is_some(), "Attestation should exist after migrations");
+    assert!(
+        result.is_some(),
+        "Attestation should exist after migrations"
+    );
 }
 
 /// Test that revocation doesn't add unexpected storage.
@@ -958,7 +969,13 @@ fn revocation_linear_storage() {
 
     // Revoke all - storage should remain bounded
     for period in periods.iter() {
-        client.revoke_attestation(&admin, &business, period, &String::from_str(&env, "test"), &1u64);
+        client.revoke_attestation(
+            &admin,
+            &business,
+            period,
+            &String::from_str(&env, "test"),
+            &1u64,
+        );
     }
 
     std::println!("10 attestations revoked, storage remains bounded");

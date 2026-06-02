@@ -22,9 +22,7 @@ struct MockDaoEnabled;
 
 #[contractimpl]
 impl MockDaoEnabled {
-    pub fn get_attestation_fee_config(
-        env: Env,
-    ) -> Option<(Address, Address, i128, bool)> {
+    pub fn get_attestation_fee_config(env: Env) -> Option<(Address, Address, i128, bool)> {
         let token = Address::generate(&env);
         let collector = Address::generate(&env);
         Some((token, collector, 2_000i128, true))
@@ -37,9 +35,7 @@ struct MockDaoNone;
 
 #[contractimpl]
 impl MockDaoNone {
-    pub fn get_attestation_fee_config(
-        _env: Env,
-    ) -> Option<(Address, Address, i128, bool)> {
+    pub fn get_attestation_fee_config(_env: Env) -> Option<(Address, Address, i128, bool)> {
         None
     }
 }
@@ -50,9 +46,7 @@ struct MockDaoDisabled;
 
 #[contractimpl]
 impl MockDaoDisabled {
-    pub fn get_attestation_fee_config(
-        env: Env,
-    ) -> Option<(Address, Address, i128, bool)> {
+    pub fn get_attestation_fee_config(env: Env) -> Option<(Address, Address, i128, bool)> {
         let token = Address::generate(&env);
         let collector = Address::generate(&env);
         Some((token, collector, 5_000i128, false))
@@ -176,9 +170,7 @@ fn test_dao_override_charges_dao_fee_on_submit() {
     struct MockDaoSameToken;
     #[contractimpl]
     impl MockDaoSameToken {
-        pub fn get_attestation_fee_config(
-            env: Env,
-        ) -> Option<(Address, Address, i128, bool)> {
+        pub fn get_attestation_fee_config(env: Env) -> Option<(Address, Address, i128, bool)> {
             // We can't easily share the outer token_addr here, so we verify
             // via get_fee_quote instead of balance checks.
             let token = Address::generate(&env);

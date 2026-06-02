@@ -1,4 +1,4 @@
-//! Off-chain proof hash correlation tests — verifies storage, retrieval,
+﻿//! Off-chain proof hash correlation tests - verifies storage, retrieval,
 //! backward compatibility, and migration preservation of the optional
 //! SHA-256 proof hash field on attestations.
 
@@ -6,7 +6,6 @@ use super::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, BytesN, Env, String};
 
-/// Helper: register the contract and return a client.
 fn setup() -> (Env, AttestationContractClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
@@ -16,7 +15,6 @@ fn setup() -> (Env, AttestationContractClient<'static>) {
     (env, client)
 }
 
-/// Helper: register the contract and return a client with admin address.
 fn setup_with_admin() -> (Env, AttestationContractClient<'static>, Address) {
     let env = Env::default();
     env.mock_all_auths();
@@ -27,14 +25,12 @@ fn setup_with_admin() -> (Env, AttestationContractClient<'static>, Address) {
     (env, client, admin)
 }
 
-// ════════════════════════════════════════════════════════════════════
-//  Submit with proof hash
-// ════════════════════════════════════════════════════════════════════
+// -- validate_proof_hash tests ------------------------------------------------
 
 #[test]
-fn submit_with_proof_hash_and_retrieve() {
+#[should_panic(expected = "proof_hash must not be all-zero")]
+fn test_submit_attestation_rejects_all_zero_proof_hash() {
     let (env, client) = setup();
-
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-03");
     let root = BytesN::from_array(&env, &[1u8; 32]);
@@ -304,7 +300,7 @@ fn test_collision_resistance_minimal_change() {
     let root = BytesN::from_array(&env, &[12u8; 32]);
 
     // Two hashes that differ by only one bit.
-    let mut hash1_bytes = [0xAAu8; 32];
+    let hash1_bytes = [0xAAu8; 32];
     let mut hash2_bytes = [0xAAu8; 32];
     hash2_bytes[31] ^= 1; // Flip the last bit
 
@@ -315,8 +311,8 @@ fn test_collision_resistance_minimal_change() {
     client.submit_attestation(&business2, &period, &root, &1_700_000_000u64, &1u32, &0i128, &Some(hash2.clone()), &None);
 
     // Verify they are stored as distinct values.
-    assert_eq!(client.get_proof_hash(&business1, &period), Some(hash1));
-    assert_eq!(client.get_proof_hash(&business2, &period), Some(hash2));
+    assert_eq!(client.get_proof_hash(&business1, &period), Some(hash1.clone()));
+    assert_eq!(client.get_proof_hash(&business2, &period), Some(hash2.clone()));
     assert_ne!(hash1, hash2);
 }
 
@@ -335,8 +331,14 @@ fn test_adversarial_edge_hashes() {
     client.submit_attestation(&business_zero, &period, &root, &1_700_000_000u64, &1u32, &0i128, &Some(zero_hash.clone()), &None);
     client.submit_attestation(&business_max, &period, &root, &1_700_000_000u64, &1u32, &0i128, &Some(max_hash.clone()), &None);
 
-    assert_eq!(client.get_proof_hash(&business_zero, &period), Some(zero_hash));
-    assert_eq!(client.get_proof_hash(&business_max, &period), Some(max_hash));
+    assert_eq!(
+        client.get_proof_hash(&business_zero, &period),
+        Some(zero_hash)
+    );
+    assert_eq!(
+        client.get_proof_hash(&business_max, &period),
+        Some(max_hash)
+    );
 }
 
 #[test]
@@ -354,8 +356,14 @@ fn test_hash_uniqueness_across_records() {
     client.submit_attestation(&business1, &period1, &root, &1_700_000_000u64, &1u32, &0i128, &Some(shared_hash.clone()), &None);
     client.submit_attestation(&business2, &period2, &root, &1_700_000_000u64, &1u32, &0i128, &Some(shared_hash.clone()), &None);
 
-    assert_eq!(client.get_proof_hash(&business1, &period1), Some(shared_hash.clone()));
-    assert_eq!(client.get_proof_hash(&business2, &period2), Some(shared_hash));
+    assert_eq!(
+        client.get_proof_hash(&business1, &period1),
+        Some(shared_hash.clone())
+    );
+    assert_eq!(
+        client.get_proof_hash(&business2, &period2),
+        Some(shared_hash)
+    );
 }
 
 #[test]
@@ -374,3 +382,4 @@ fn test_prevent_proof_hash_overwrite() {
     // Attempting to overwrite with a different hash should panic.
     client.submit_attestation(&business, &period, &root, &1_700_000_001u64, &1u32, &0i128, &Some(hash2), &None);
 }
+

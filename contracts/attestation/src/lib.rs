@@ -354,11 +354,7 @@ impl AttestationContract {
         Self::execute_batch_submission(&env, None, &items);
     }
 
-    pub fn submit_batch_as_attestor(
-        env: Env,
-        attestor: Address,
-        items: Vec<BatchAttestationItem>,
-    ) {
+    pub fn submit_batch_as_attestor(env: Env, attestor: Address, items: Vec<BatchAttestationItem>) {
         access_control::require_attestor(&env, &attestor);
 
         let staking_addr = Self::get_attestor_staking_contract(env.clone())
@@ -396,6 +392,7 @@ impl AttestationContract {
             panic!("attestation already exists for this business and period");
         }
         Self::validate_expiry(env, timestamp, expiry_timestamp);
+        Self::validate_proof_hash(proof_hash);
 
         let dynamic_fee = dynamic_fees::collect_fee_from(env, payer, business);
         let flat_fee = fees::collect_flat_fee(env, payer);
@@ -468,6 +465,7 @@ impl AttestationContract {
             }
 
             Self::validate_expiry(env, item.timestamp, item.expiry_timestamp);
+            Self::validate_proof_hash(&item.proof_hash);
         }
 
         for item in items.iter() {
@@ -505,11 +503,7 @@ impl AttestationContract {
         }
     }
 
-    pub fn get_attestation(
-        env: Env,
-        business: Address,
-        period: String,
-    ) -> Option<AttestationData> {
+    pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
         let key = DataKey::Attestation(business, period);
         env.storage().instance().get(&key)
     }
@@ -535,7 +529,10 @@ impl AttestationContract {
         caller.require_auth();
         let caller_is_admin = caller == dynamic_fees::get_admin(&env)
             || access_control::has_role(&env, &caller, ROLE_ADMIN);
-        assert!(caller_is_admin || caller == business, "caller must be ADMIN or the business owner");
+        assert!(
+            caller_is_admin || caller == business,
+            "caller must be ADMIN or the business owner"
+        );
 
         let key = DataKey::Attestation(business.clone(), period.clone());
         let attestation: AttestationData = env
@@ -984,7 +981,7 @@ impl AttestationContract {
 
     pub fn revoke_multi_period_attestation(env: Env, business: Address, merkle_root: BytesN<32>) {
         business.require_auth();
-        
+
         // O(1) lookup via index instead of O(n) linear scan
         let index_key = MultiPeriodKey::RootIndex(business.clone(), merkle_root.clone());
         let range_index: u32 = env
@@ -1137,8 +1134,8 @@ impl AttestationContract {
 
     pub fn cancel_key_rotation(env: Env) {
         let admin = dynamic_fees::require_admin(&env);
-    admin.require_auth();
-    veritasor_common::key_rotation::cancel_rotation(&env, &admin);
+        admin.require_auth();
+        veritasor_common::key_rotation::cancel_rotation(&env, &admin);
     }
 
     pub fn has_pending_key_rotation(env: Env) -> bool {
@@ -1520,6 +1517,27 @@ impl AttestationContract {
             if expiry <= env.ledger().timestamp() {
                 panic!("attestation expired on arrival");
             }
+        }
+    }
+
+    /// Rejects an all-zero 32-byte proof hash.
+    ///
+    /// An all-zero hash (`[0u8; 32]`) is almost certainly an operator error rather
+    /// than a real SHA-256 digest of an off-chain bundle. `None` is explicitly
+    /// allowed because the proof hash field is optional.
+    ///
+    /// # Panics
+    /// Panics with "proof_hash must not be all-zero" when the supplied hash is
+    /// `Some([0u8; 32])`.
+    fn validate_proof_hash(proof_hash: &Option<BytesN<32>>) {
+        if let Some(hash) = proof_hash {
+            let bytes = hash.to_array();
+            for b in bytes.iter() {
+                if *b != 0 {
+                    return;
+                }
+            }
+            panic!("proof_hash must not be all-zero");
         }
     }
 

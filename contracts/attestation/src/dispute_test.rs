@@ -73,7 +73,7 @@ fn test_duplicate_dispute_prevention() {
     let result =
         client.try_open_dispute(&challenger, &business, &period, &dispute_type, &evidence2);
     assert!(result.is_err());
-    
+
     // Verify first dispute still exists and is unchanged
     let dispute = client.get_dispute(&dispute_id1).unwrap();
     assert_eq!(dispute.evidence, evidence);
@@ -325,7 +325,10 @@ fn test_business_vs_lender_dispute_scenario() {
 
     // Admin resolves dispute in their favor
     let outcome = DisputeOutcome::Rejected; // Business wins, attestation stands
-    let notes = String::from_str(&env, "Audited financial records confirm reported revenue of $100k");
+    let notes = String::from_str(
+        &env,
+        "Audited financial records confirm reported revenue of $100k",
+    );
     let admin = Address::generate(&env);
     client.resolve_dispute(&dispute_id, &admin, &outcome, &notes);
 

@@ -287,6 +287,16 @@ fn get_votes(env: &Env, id: u64) -> (u32, u32) {
     (f, a)
 }
 
+/// Return the number of approval votes cast for a proposal.
+pub fn get_approval_count(env: &Env, proposal_id: u64) -> u32 {
+    get_votes(env, proposal_id).0
+}
+
+/// Check whether a proposal currently satisfies DAO approval rules.
+pub fn is_proposal_approved(env: &Env, proposal_id: u64) -> bool {
+    quorum_met(env, proposal_id) && has_majority(env, proposal_id)
+}
+
 fn has_voted(env: &Env, id: u64, voter: &Address) -> bool {
     env.storage()
         .instance()
@@ -706,6 +716,14 @@ impl ProtocolDao {
 
     pub fn get_votes_against(env: Env, id: u64) -> u32 {
         get_votes(&env, id).1
+    }
+
+    pub fn get_approval_count(env: Env, id: u64) -> u32 {
+        get_approval_count(&env, id)
+    }
+
+    pub fn is_proposal_approved(env: Env, id: u64) -> bool {
+        is_proposal_approved(&env, id)
     }
 
     /// Returns `(admin, governance_token, min_votes, proposal_duration)`.
