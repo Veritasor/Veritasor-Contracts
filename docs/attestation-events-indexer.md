@@ -9,6 +9,7 @@ This specification covers the following events only:
 - `AttestationSubmittedEvent` with topic `(att_sub, business)`
 - `AttestationRevokedEvent` with topic `(att_rev, business)`
 - `AttestationMigratedEvent` with topic `(att_mig, business)`
+- `AttestationCleanedUpEvent` with topic `(att_cl, business)`
 
 Source of truth for payload structs and topic symbols:
 - `contracts/attestation/src/events.rs`
@@ -88,6 +89,24 @@ Payload fields:
 Emission conditions:
 - Emitted once after migrated attestation data is written.
 - Not emitted if migration fails (for example version monotonicity failure, missing attestation, failed auth).
+
+### 4. AttestationCleanedUpEvent
+
+Topic:
+- Primary: `att_cl`
+- Secondary: `business` (`Address`)
+
+Payload fields:
+- `business: Address`
+  - Business whose expired attestation was cleaned up.
+- `period: String`
+  - Period identifier of the cleaned attestation.
+- `cleanup_timestamp: u64`
+  - Ledger timestamp when cleanup occurred.
+
+Emission conditions:
+- Emitted once after an expired, non-revoked attestation and its metadata are removed.
+- Not emitted if cleanup fails (for example attestation not found, not expired, revoked, or open dispute).
 
 ## Schema Versioning Rules
 

@@ -859,3 +859,44 @@ fn get_quorum_info_reflects_current_state() {
     assert!(!quorum_ok); // 2 < 3
     assert!(!majority_ok); // 1 == 1, not strictly greater
 }
+
+#[test]
+fn approval_count_tracks_for_votes() {
+    let (env, client, _, gov_token) = setup_with_token(2, 100);
+    let voter1 = Address::generate(&env);
+    let voter2 = Address::generate(&env);
+    mint(&env, &gov_token, &voter1, 100);
+    mint(&env, &gov_token, &voter2, 100);
+    let fee_token = Address::generate(&env);
+    let collector = Address::generate(&env);
+    let id = client.create_fee_config_proposal(&voter1, &fee_token, &collector, &500, &true);
+
+    assert_eq!(client.get_approval_count(&id), 0);
+    assert!(!client.is_proposal_approved(&id));
+
+    client.vote_for(&voter1, &id);
+    assert_eq!(client.get_approval_count(&id), 1);
+    assert!(!client.is_proposal_approved(&id));
+
+    client.vote_for(&voter2, &id);
+    assert_eq!(client.get_approval_count(&id), 2);
+    assert!(client.is_proposal_approved(&id));
+}
+
+#[test]
+fn tied_votes_are_not_approved_even_when_quorum_is_met() {
+    let (env, client, _, gov_token) = setup_with_token(2, 100);
+    let voter1 = Address::generate(&env);
+    let voter2 = Address::generate(&env);
+    mint(&env, &gov_token, &voter1, 100);
+    mint(&env, &gov_token, &voter2, 100);
+    let fee_token = Address::generate(&env);
+    let collector = Address::generate(&env);
+    let id = client.create_fee_config_proposal(&voter1, &fee_token, &collector, &500, &true);
+
+    client.vote_for(&voter1, &id);
+    client.vote_against(&voter2, &id);
+
+    assert_eq!(client.get_approval_count(&id), 1);
+    assert!(!client.is_proposal_approved(&id));
+}

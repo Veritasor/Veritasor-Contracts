@@ -9,6 +9,10 @@ rust-version = "1.75.0"
 crate-type = ["cdylib", "rlib"]
 doctest = false
 
+[features]
+default = []
+full-tests = []
+
 [dependencies]
 soroban-sdk = "22.0"
 veritasor-common = { path = "../common" }

@@ -45,6 +45,23 @@ For each item in the batch:
 
 All businesses in the batch must authorize before any processing begins. Each unique business is authorized exactly once, even if it appears multiple times in the batch.
 
+#### Security: authorization deduplication
+
+`submit_attestations_batch` deduplicates `require_auth()` calls using a linear scan over
+`authed_businesses`, keyed by **`Address` equality** (`b == item.business`), not by caller
+identity or batch position.
+
+- Authorizing as business **A** does **not** satisfy `require_auth()` for items whose
+  `business` field is **B**.
+- The Soroban host evaluates each `require_auth(address)` for the **exact** address passed
+  at that call site; one signature cannot be reused for a different address.
+- `execute_batch_submission` accepts a `require_business_auth` flag: business-submitted
+  batches skip per-item re-auth because the dedup loop already enforced it; attestor-submitted
+  batches still require each `item.business` to authorize.
+
+Regression tests: `contracts/attestation/src/batch_auth_dedup_test.rs` (selective
+`mock_auths`, order-reversal, and 25-item multi-business cases).
+
 #### Business Status Requirements
 
 Each batch item is accepted only for a business that is both registered and currently `Active`. Submissions from:

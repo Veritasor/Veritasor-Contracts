@@ -141,6 +141,10 @@ fn test_cancel_key_rotation() {
 
     client.cancel_key_rotation();
     assert!(!client.has_pending_key_rotation());
+    // Ensure no rotation recorded
+    assert_eq!(client.get_key_rotation_count(), 0);
+    let history = client.get_key_rotation_history();
+    assert_eq!(history.len(), 0);
 }
 
 #[test]
@@ -327,10 +331,26 @@ fn test_sequential_rotations_with_cooldown() {
 }
 
 #[test]
-fn test_cancel_then_repropose() {
+#[should_panic(expected = "no pending")]
+fn test_confirm_after_cancel_fails() {
+    let (env, client, _admin) = setup_with_short_rotation_config();
+    let new_admin = Address::generate(&env);
+
+    client.propose_key_rotation(&new_admin);
+    // Cancel the pending rotation
+    client.cancel_key_rotation();
+    // Attempt to confirm should panic because there is no pending rotation
+    client.confirm_key_rotation(&new_admin);
+}
+
+#[test]
+fn test_cancel_then_repropose_and_count() {
     let (env, client, _admin) = setup_with_short_rotation_config();
     let wrong_admin = Address::generate(&env);
     let right_admin = Address::generate(&env);
+
+    // Initial count should be zero
+    assert_eq!(client.get_key_rotation_count(), 0);
 
     // Propose to wrong address
     client.propose_key_rotation(&wrong_admin);
