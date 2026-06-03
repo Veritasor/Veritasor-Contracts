@@ -240,7 +240,16 @@ fn cleanup_revoked_attestation_panics() {
     let challenger = Address::generate(&env);
 
     env.ledger().set_timestamp(0);
-    client.submit_attestation(&business, &period, &root, &1u64, &1u32, &0i128, &None, &Some(10u64));
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1u64,
+        &1u32,
+        &0i128,
+        &None,
+        &Some(10u64),
+    );
     env.ledger().set_timestamp(20);
     client.revoke_attestation(
         &admin,
@@ -264,7 +273,16 @@ fn cleanup_with_open_dispute_panics() {
     let challenger = Address::generate(&env);
 
     env.ledger().set_timestamp(0);
-    client.submit_attestation(&business, &period, &root, &1u64, &1u32, &0i128, &None, &Some(10u64));
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1u64,
+        &1u32,
+        &0i128,
+        &None,
+        &Some(10u64),
+    );
     env.ledger().set_timestamp(20);
     client.open_dispute(
         &challenger,
@@ -770,7 +788,16 @@ fn test_none_expiry_never_expires() {
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
 
     env.ledger().set_timestamp(1000);
-    client.submit_attestation(&business, &period, &merkle_root, &1000, &1, &0i128, &None, &None);
+    client.submit_attestation(
+        &business,
+        &period,
+        &merkle_root,
+        &1000,
+        &1,
+        &0i128,
+        &None,
+        &None,
+    );
 
     // Advance time very far into the future
     env.ledger().set_timestamp(u64::MAX);

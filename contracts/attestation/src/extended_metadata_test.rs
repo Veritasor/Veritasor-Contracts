@@ -213,8 +213,10 @@ fn test_multiple_attestations_different_metadata() {
         &false,
     );
 
-    let m1 = extended_metadata::get_metadata(&env, &business, &String::from_str(&env, "2026-01")).unwrap();
-    let m2 = extended_metadata::get_metadata(&env, &business, &String::from_str(&env, "2026-02")).unwrap();
+    let m1 = extended_metadata::get_metadata(&env, &business, &String::from_str(&env, "2026-01"))
+        .unwrap();
+    let m2 = extended_metadata::get_metadata(&env, &business, &String::from_str(&env, "2026-02"))
+        .unwrap();
     assert_eq!(m1.currency_code, String::from_str(&env, "USD"));
     assert_eq!(m2.currency_code, String::from_str(&env, "EUR"));
     assert!(m1.is_net);
