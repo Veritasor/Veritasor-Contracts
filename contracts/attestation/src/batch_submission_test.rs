@@ -263,7 +263,7 @@ fn test_batch_submit_when_paused() {
     let admin = client.get_admin();
     let business = Address::generate(&env);
 
-    client.pause(&admin);
+    client.pause(&admin, &1u64);
 
     let mut items = Vec::new(&env);
     items.push_back(create_batch_item(

@@ -127,7 +127,7 @@ fn test_admin_can_pause() {
 
     assert!(!client.is_paused());
 
-    client.pause(&admin);
+    client.pause(&admin, &1u64);
 
     assert!(client.is_paused());
 }
@@ -139,7 +139,7 @@ fn test_operator_can_pause() {
 
     client.grant_role(&admin, &operator, &ROLE_OPERATOR);
 
-    client.pause(&operator);
+    client.pause(&operator, &1u64);
 
     assert!(client.is_paused());
 }
@@ -148,10 +148,10 @@ fn test_operator_can_pause() {
 fn test_admin_can_unpause() {
     let (_env, client, admin) = setup();
 
-    client.pause(&admin);
+    client.pause(&admin, &1u64);
     assert!(client.is_paused());
 
-    client.unpause(&admin);
+    client.unpause(&admin, &2u64);
     assert!(!client.is_paused());
 }
 
@@ -162,7 +162,7 @@ fn test_operator_cannot_unpause() {
     let operator = Address::generate(&env);
 
     client.grant_role(&admin, &operator, &ROLE_OPERATOR);
-    client.pause(&admin);
+    client.pause(&admin, &1u64);
 
     // Operator can pause but cannot unpause
     client.unpause(&operator);
@@ -174,7 +174,7 @@ fn test_non_operator_cannot_pause() {
     let (env, client, _admin) = setup();
     let user = Address::generate(&env);
 
-    client.pause(&user);
+    client.pause(&user, &1u64);
 }
 
 #[test]
@@ -182,7 +182,7 @@ fn test_non_operator_cannot_pause() {
 fn test_submit_attestation_when_paused() {
     let (env, client, admin) = setup();
 
-    client.pause(&admin);
+    client.pause(&admin, &1u64);
 
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
@@ -347,7 +347,7 @@ fn test_revoked_operator_cannot_pause() {
     client.grant_role(&admin, &operator, &ROLE_OPERATOR);
     assert!(client.has_role(&operator, &ROLE_OPERATOR));
 
-    client.pause(&operator);
+    client.pause(&operator, &1u64);
     assert!(client.is_paused());
 
     client.revoke_role(&admin, &operator, &ROLE_OPERATOR);

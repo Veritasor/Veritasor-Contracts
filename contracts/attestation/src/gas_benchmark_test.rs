@@ -721,7 +721,7 @@ fn bench_worst_case_verify_revoked() {
     );
 
     let before = BudgetSnapshot::capture(&env);
-    let result = client.is_revoked(&business, &period);
+    let result = client.verify_attestation(&business, &period, &root);
     let after = BudgetSnapshot::capture(&env);
 
     assert!(!result);
@@ -1048,8 +1048,8 @@ fn regression_is_revoked_after_revoke_threshold() {
 
     // is_revoked is currently a stub returning false; assert it is consistent
     assert!(
-        !result,
-        "is_revoked stub should return false (implementation pending)"
+        result,
+        "is_revoked should return true for revoked attestation"
     );
     let cost = before.delta(&after);
     cost.print("regression: is_revoked (after revoke)");

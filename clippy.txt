@@ -1,0 +1,400 @@
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/gamp/Veritasor-Contracts/contracts/aggregated-attestations/Cargo.toml
+workspace: /home/gamp/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/gamp/Veritasor-Contracts/contracts/attestation/Cargo.toml
+workspace: /home/gamp/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/gamp/Veritasor-Contracts/contracts/attestor-staking/Cargo.toml
+workspace: /home/gamp/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/gamp/Veritasor-Contracts/contracts/attestation-snapshot/Cargo.toml
+workspace: /home/gamp/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/gamp/Veritasor-Contracts/contracts/integration-registry/Cargo.toml
+workspace: /home/gamp/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/gamp/Veritasor-Contracts/contracts/protocol-dao/Cargo.toml
+workspace: /home/gamp/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/gamp/Veritasor-Contracts/contracts/attestation-registry/Cargo.toml
+workspace: /home/gamp/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/gamp/Veritasor-Contracts/contracts/audit-log/Cargo.toml
+workspace: /home/gamp/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/gamp/Veritasor-Contracts/contracts/business-config/Cargo.toml
+workspace: /home/gamp/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/gamp/Veritasor-Contracts/contracts/lender-access-list/Cargo.toml
+workspace: /home/gamp/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/gamp/Veritasor-Contracts/contracts/lender-consumer/Cargo.toml
+workspace: /home/gamp/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/gamp/Veritasor-Contracts/contracts/network-config/Cargo.toml
+workspace: /home/gamp/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/gamp/Veritasor-Contracts/contracts/protocol-simulation/Cargo.toml
+workspace: /home/gamp/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/gamp/Veritasor-Contracts/contracts/revenue-bonds/Cargo.toml
+workspace: /home/gamp/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/gamp/Veritasor-Contracts/contracts/revenue-curve/Cargo.toml
+workspace: /home/gamp/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/gamp/Veritasor-Contracts/contracts/revenue-settlement/Cargo.toml
+workspace: /home/gamp/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/gamp/Veritasor-Contracts/contracts/revenue-share/Cargo.toml
+workspace: /home/gamp/Veritasor-Contracts/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/gamp/Veritasor-Contracts/contracts/revenue-stream/Cargo.toml
+workspace: /home/gamp/Veritasor-Contracts/Cargo.toml
+    Checking stellar-xdr v22.1.0
+    Checking getrandom v0.3.4
+   Compiling soroban-sdk-macros v22.0.11
+   Compiling soroban-sdk v22.0.11
+    Checking rand_core v0.9.5
+    Checking unarray v0.1.4
+    Checking rand_chacha v0.9.0
+    Checking rand_xorshift v0.4.0
+    Checking rand v0.9.4
+    Checking regex-syntax v0.8.10
+    Checking lazy_static v1.5.0
+    Checking bitflags v2.11.1
+    Checking proptest v1.8.0
+    Checking soroban-env-common v22.1.3
+    Checking soroban-env-host v22.1.3
+    Checking soroban-ledger-snapshot v22.0.11
+    Checking veritasor-common v0.1.0 (/home/gamp/Veritasor-Contracts/contracts/common)
+    Checking veritasor-attestor-staking v0.1.0 (/home/gamp/Veritasor-Contracts/contracts/attestor-staking)
+warning: length comparison to zero
+   --> contracts/attestor-staking/src/lib.rs:211:12
+    |
+211 |         if pending_vec.len() > 0 {
+    |            ^^^^^^^^^^^^^^^^^^^^^ help: using `!is_empty` is clearer and more explicit: `!pending_vec.is_empty()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#len_zero
+    = note: `#[warn(clippy::len_zero)]` on by default
+
+warning: length comparison to zero
+   --> contracts/attestor-staking/src/lib.rs:271:12
+    |
+271 |         if remaining_vec.len() == 0 {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^ help: using `is_empty` is clearer and more explicit: `remaining_vec.is_empty()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#len_zero
+
+warning: length comparison to zero
+   --> contracts/attestor-staking/src/lib.rs:445:20
+    |
+445 |                 if v.len() > 0 {
+    |                    ^^^^^^^^^^^ help: using `!is_empty` is clearer and more explicit: `!v.is_empty()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#len_zero
+
+warning: `veritasor-attestor-staking` (lib) generated 3 warnings (run `cargo clippy --fix --lib -p veritasor-attestor-staking -- ` to apply 3 suggestions)
+warning: length comparison to zero
+   --> contracts/common/src/key_rotation.rs:589:8
+    |
+589 |     if history.len() == 0 {
+    |        ^^^^^^^^^^^^^^^^^^ help: using `is_empty` is clearer and more explicit: `history.is_empty()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#len_zero
+    = note: `#[warn(clippy::len_zero)]` on by default
+
+warning: `veritasor-common` (lib) generated 1 warning (run `cargo clippy --fix --lib -p veritasor-common -- ` to apply 1 suggestion)
+    Checking veritasor-attestation v0.1.0 (/home/gamp/Veritasor-Contracts/contracts/attestation)
+warning: unused variable: `key`
+   --> contracts/attestation/src/lib.rs:496:17
+    |
+496 |             let key = DataKey::Attestation(item.business.clone(), item.period.clone());
+    |                 ^^^ help: if this is intentional, prefix it with an underscore: `_key`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: associated function `validate_period` is never used
+    --> contracts/attestation/src/lib.rs:1558:8
+     |
+ 132 | impl AttestationContract {
+     | ------------------------ associated function in this implementation
+...
+1558 |     fn validate_period(period: &String) {
+     |        ^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `compare_strings` is never used
+    --> contracts/attestation/src/lib.rs:1699:4
+     |
+1699 | fn compare_strings(a: &String, b: &String) -> Ordering {
+     |    ^^^^^^^^^^^^^^^
+
+warning: function `emit_role_granted` is never used
+   --> contracts/attestation/src/access_control.rs:386:4
+    |
+386 | fn emit_role_granted(env: &Env, account: &Address, role: u32) {
+    |    ^^^^^^^^^^^^^^^^^
+
+warning: function `emit_role_revoked` is never used
+   --> contracts/attestation/src/access_control.rs:394:4
+    |
+394 | fn emit_role_revoked(env: &Env, account: &Address, role: u32) {
+    |    ^^^^^^^^^^^^^^^^^
+
+warning: field `admin` is never read
+  --> contracts/attestation/src/fee_reconciliation_test.rs:20:5
+   |
+17 | struct Ctx {
+   |        --- field in this struct
+...
+20 |     admin: Address,
+   |     ^^^^^
+
+warning: casting to the same type is unnecessary (`u32` -> `u32`)
+   --> contracts/attestation/src/multisig.rs:243:5
+    |
+243 |     get_approvals(env, id).len() as u32 >= get_threshold(env)
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: try: `get_approvals(env, id).len()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#unnecessary_cast
+    = note: `#[warn(clippy::unnecessary_cast)]` on by default
+
+warning: casting to the same type is unnecessary (`u32` -> `u32`)
+   --> contracts/attestation/src/multisig.rs:247:5
+    |
+247 |     get_approvals(env, id).len() as u32
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: try: `get_approvals(env, id).len()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#unnecessary_cast
+
+warning: casting to the same type is unnecessary (`u32` -> `u32`)
+   --> contracts/attestation/src/multisig.rs:300:9
+    |
+300 |         next.len() as u32 >= threshold,
+    |         ^^^^^^^^^^^^^^^^^ help: try: `next.len()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#unnecessary_cast
+
+warning: this function has too many arguments (9/7)
+   --> contracts/attestation/src/lib.rs:282:5
+    |
+282 | /     pub fn submit_attestation(
+283 | |         env: Env,
+284 | |         business: Address,
+285 | |         period: String,
+...   |
+291 | |         expiry_timestamp: Option<u64>,
+292 | |     ) {
+    | |_____^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#too_many_arguments
+    = note: `#[warn(clippy::too_many_arguments)]` on by default
+
+warning: this function has too many arguments (8/7)
+   --> contracts/attestation/src/lib.rs:307:5
+    |
+307 | /     pub fn submit_attestation_as_attestor(
+308 | |         env: Env,
+309 | |         attestor: Address,
+310 | |         business: Address,
+...   |
+315 | |         expiry_timestamp: Option<u64>,
+316 | |     ) {
+    | |_____^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#too_many_arguments
+
+warning: this function has too many arguments (9/7)
+   --> contracts/attestation/src/lib.rs:382:5
+    |
+382 | /     fn execute_submission(
+383 | |         env: &Env,
+384 | |         payer: &Address,
+385 | |         business: &Address,
+...   |
+391 | |         expiry_timestamp: Option<u64>,
+392 | |     ) {
+    | |_____^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#too_many_arguments
+
+warning: this expression creates a reference which is immediately dereferenced by the compiler
+   --> contracts/attestation/src/lib.rs:465:47
+    |
+465 |             registry::require_active_business(&env, &business);
+    |                                               ^^^^ help: change this to: `env`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#needless_borrow
+    = note: `#[warn(clippy::needless_borrow)]` on by default
+
+warning: this function has too many arguments (8/7)
+   --> contracts/attestation/src/lib.rs:718:5
+    |
+718 | /     pub fn submit_attestation_with_metadata(
+719 | |         env: Env,
+720 | |         business: Address,
+721 | |         period: String,
+...   |
+726 | |         is_net: bool,
+727 | |     ) {
+    | |_____^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#too_many_arguments
+
+warning: this function has too many arguments (9/7)
+   --> contracts/attestation/src/lib.rs:855:5
+    |
+855 | /     pub fn submit_multi_period_attestation(
+856 | |         env: Env,
+857 | |         business: Address,
+858 | |         start_period: u32,
+...   |
+864 | |         _expiry_timestamp: Option<u64>,
+865 | |     ) {
+    | |_____^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#too_many_arguments
+
+warning: this `if` statement can be collapsed
+   --> contracts/attestation/src/lib.rs:876:13
+    |
+876 | /             if !range.revoked {
+877 | |                 if start_period <= range.end_period && end_period >= range.start_period {
+878 | |                     panic!("overlapping attestation range detected");
+879 | |                 }
+880 | |             }
+    | |_____________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#collapsible_if
+    = note: `#[warn(clippy::collapsible_if)]` on by default
+help: collapse nested if block
+    |
+876 ~             if !range.revoked
+877 ~                 && start_period <= range.end_period && end_period >= range.start_period {
+878 |                     panic!("overlapping attestation range detected");
+879 ~                 }
+    |
+
+warning: casting to the same type is unnecessary (`u32` -> `u32`)
+   --> contracts/attestation/src/lib.rs:902:27
+    |
+902 |         let range_index = (ranges.len() - 1) as u32;
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^ help: try: `(ranges.len() - 1)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#unnecessary_cast
+
+warning: very complex type used. Consider factoring parts into `type` definitions
+    --> contracts/attestation/src/lib.rs:1450:10
+     |
+1450 |     ) -> (Vec<(String, BytesN<32>, u64, u32, u32)>, u32) {
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#type_complexity
+     = note: `#[warn(clippy::type_complexity)]` on by default
+
+warning: this function has too many arguments (9/7)
+    --> contracts/attestation/src/lib.rs:1440:5
+     |
+1440 | /     pub fn get_attestations_page(
+1441 | |         env: Env,
+1442 | |         business: Address,
+1443 | |         periods: Vec<String>,
+...    |
+1449 | |         cursor: u32,
+1450 | |     ) -> (Vec<(String, BytesN<32>, u64, u32, u32)>, u32) {
+     | |________________________________________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#too_many_arguments
+
+warning: length comparison to zero
+    --> contracts/attestation/src/lib.rs:1559:12
+     |
+1559 |         if period.len() == 0 {
+     |            ^^^^^^^^^^^^^^^^^ help: using `is_empty` is clearer and more explicit: `period.is_empty()`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#len_zero
+     = note: `#[warn(clippy::len_zero)]` on by default
+
+warning: this function has too many arguments (9/7)
+   --> contracts/attestation/src/lib.rs:131:1
+    |
+131 | #[contractimpl]
+    | ^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#too_many_arguments
+    = note: this warning originates in the attribute macro `soroban_sdk::contractclient` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: this function has too many arguments (8/7)
+   --> contracts/attestation/src/lib.rs:131:1
+    |
+131 | #[contractimpl]
+    | ^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#too_many_arguments
+    = note: this warning originates in the attribute macro `soroban_sdk::contractclient` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: very complex type used. Consider factoring parts into `type` definitions
+    --> contracts/attestation/src/lib.rs:1450:10
+     |
+1450 |     ) -> (Vec<(String, BytesN<32>, u64, u32, u32)>, u32) {
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#type_complexity
+
+warning: this function has too many arguments (8/7)
+   --> contracts/attestation/src/lib.rs:131:1
+    |
+131 | #[contractimpl]
+    | ^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#too_many_arguments
+    = note: this warning originates in the attribute macro `soroban_sdk::contractargs` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: this function has too many arguments (9/7)
+   --> contracts/attestation/src/lib.rs:131:1
+    |
+131 | #[contractimpl]
+    | ^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#too_many_arguments
+    = note: this warning originates in the attribute macro `contractimpl` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: this function has too many arguments (8/7)
+   --> contracts/attestation/src/lib.rs:131:1
+    |
+131 | #[contractimpl]
+    | ^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#too_many_arguments
+    = note: this warning originates in the attribute macro `contractimpl` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: this call to `clone` can be replaced with `core::slice::from_ref`
+   --> contracts/attestation/src/batch_auth_dedup_test.rs:151:29
+    |
+151 |     mock_batch_submit(&ctx, &[biz_a.clone()], &items);
+    |                             ^^^^^^^^^^^^^^^^ help: try: `core::slice::from_ref(&biz_a)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#cloned_ref_to_slice_refs
+    = note: `#[warn(clippy::cloned_ref_to_slice_refs)]` on by default
+
+warning: this call to `clone` can be replaced with `core::slice::from_ref`
+   --> contracts/attestation/src/batch_auth_dedup_test.rs:168:33
+    |
+168 |         mock_batch_submit(&ctx, &[biz_a.clone()], &items)
+    |                                 ^^^^^^^^^^^^^^^^ help: try: `core::slice::from_ref(&biz_a)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#cloned_ref_to_slice_refs
+
+warning: this call to `clone` can be replaced with `core::slice::from_ref`
+   --> contracts/attestation/src/batch_auth_dedup_test.rs:195:29
+    |
+195 |     mock_batch_submit(&ctx, &[biz_a.clone()], &items);
+    |                             ^^^^^^^^^^^^^^^^ help: try: `core::slice::from_ref(&biz_a)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#cloned_ref_to_slice_refs
+
+warning: `veritasor-attestation` (lib test) generated 42 warnings (13 duplicates) (run `cargo clippy --fix --lib -p veritasor-attestation --tests -- ` to apply 8 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 21s

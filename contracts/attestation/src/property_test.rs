@@ -888,7 +888,7 @@ fn prop_pause_blocks_all_submissions() {
             let client = AttestationContractClient::new(&env, &contract_id);
             let admin = Address::generate(&env);
             client.initialize(&admin, &0u64);
-            client.pause(&client.get_admin());
+            client.pause(&client.get_admin(), &1u64);
             let business = Address::generate(&env);
             let period = String::from_str(&env, &period_owned);
             let root = BytesN::from_array(&env, &[1u8; 32]);
@@ -915,8 +915,8 @@ fn prop_unpause_restores_submission() {
     let period = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.pause(&client.get_admin());
-    client.unpause(&client.get_admin());
+    client.pause(&client.get_admin(), &1u64);
+    client.unpause(&client.get_admin(), &2u64);
 
     // Must succeed after unpause.
     client.submit_attestation(&business, &period, &root, &1_000, &1, &0i128, &None, &None);
