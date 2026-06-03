@@ -66,8 +66,7 @@ fn advance_past_proposal_expiry(ctx: &MultisigCtx) {
 fn approve_additional(ctx: &MultisigCtx, proposal_id: u64, additional: u32, nonce: u64) {
     for i in 1..=additional {
         let owner = ctx.owners.get(i).unwrap();
-        ctx.client
-            .approve_proposal(&owner, &proposal_id, &nonce);
+        ctx.client.approve_proposal(&owner, &proposal_id, &nonce);
     }
 }
 
@@ -92,8 +91,7 @@ fn e2e_pause_below_threshold_then_execute_at_threshold() {
     assert!(!ctx.client.is_proposal_approved(&id));
 
     let exec = catch_unwind(AssertUnwindSafe(|| {
-        ctx.client
-            .execute_proposal(&proposer, &id, &0u64);
+        ctx.client.execute_proposal(&proposer, &id, &0u64);
     }));
     assert!(exec.is_err(), "execute must fail below 3-of-5 threshold");
 
@@ -122,7 +120,8 @@ fn e2e_update_fee_config_via_multisig() {
         .configure_fees(&token, &collector, &100i128, &true);
 
     let new_collector = Address::generate(&ctx.env);
-    let action = ProposalAction::UpdateFeeConfig(token.clone(), new_collector.clone(), 250i128, true);
+    let action =
+        ProposalAction::UpdateFeeConfig(token.clone(), new_collector.clone(), 250i128, true);
     let id = ctx.client.create_proposal(&proposer, &action, &0u64);
 
     approve_additional(&ctx, id, 2, 0);
@@ -232,11 +231,9 @@ fn e2e_threshold_increase_blocks_prior_proposal_execution() {
     ctx.client.approve_proposal(&owner3, &pause_id, &0u64);
     assert!(ctx.client.is_proposal_approved(&pause_id));
 
-    let thresh_id = ctx.client.create_proposal(
-        &proposer,
-        &ProposalAction::ChangeThreshold(5),
-        &1u64,
-    );
+    let thresh_id =
+        ctx.client
+            .create_proposal(&proposer, &ProposalAction::ChangeThreshold(5), &1u64);
     ctx.client.approve_proposal(&owner2, &thresh_id, &1u64);
     ctx.client.approve_proposal(&owner3, &thresh_id, &1u64);
     ctx.client.execute_proposal(&proposer, &thresh_id, &2u64);

@@ -742,24 +742,14 @@ impl AttestationContract {
 
     pub fn pause(env: Env, caller: Address, nonce: u64) {
         access_control::require_admin(&env, &caller);
-        replay_protection::verify_and_increment_nonce(
-            &env,
-            &caller,
-            NONCE_CHANNEL_ADMIN,
-            nonce,
-        );
+        replay_protection::verify_and_increment_nonce(&env, &caller, NONCE_CHANNEL_ADMIN, nonce);
         access_control::set_paused(&env, true);
         events::emit_paused(&env, &caller);
     }
 
     pub fn unpause(env: Env, caller: Address, nonce: u64) {
         access_control::require_admin(&env, &caller);
-        replay_protection::verify_and_increment_nonce(
-            &env,
-            &caller,
-            NONCE_CHANNEL_ADMIN,
-            nonce,
-        );
+        replay_protection::verify_and_increment_nonce(&env, &caller, NONCE_CHANNEL_ADMIN, nonce);
         access_control::set_paused(&env, false);
         events::emit_unpaused(&env, &caller);
     }
@@ -780,12 +770,7 @@ impl AttestationContract {
         multisig::initialize_multisig(&env, &owners, threshold);
     }
 
-    pub fn create_proposal(
-        env: Env,
-        proposer: Address,
-        action: ProposalAction,
-        nonce: u64,
-    ) -> u64 {
+    pub fn create_proposal(env: Env, proposer: Address, action: ProposalAction, nonce: u64) -> u64 {
         replay_protection::verify_and_increment_nonce(
             &env,
             &proposer,
@@ -1512,7 +1497,6 @@ impl AttestationContract {
         (results, current_cursor)
     }
 
-
     pub fn clear_anomaly_escalation(env: Env, caller: Address, business: Address) {
         access_control::require_admin(&env, &caller);
         dispute::clear_anomaly_escalation(&env, &business);
@@ -1653,10 +1637,6 @@ mod anomaly_test;
 mod attestor_staking_integration_test;
 #[cfg(test)]
 mod batch_auth_dedup_test;
-#[cfg(test)]
-mod multisig_e2e_test;
-#[cfg(test)]
-mod fee_reconciliation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod batch_submission_test;
 #[cfg(all(test, feature = "full-tests"))]
@@ -1675,6 +1655,8 @@ mod extend_expiry_test;
 mod extended_metadata_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod fee_admin_auth_test;
+#[cfg(test)]
+mod fee_reconciliation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod fees_test;
 #[cfg(test)]
@@ -1683,6 +1665,8 @@ mod gas_benchmark_test;
 mod key_rotation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod multi_period_test;
+#[cfg(test)]
+mod multisig_e2e_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod multisig_test;
 #[cfg(all(test, feature = "full-tests"))]

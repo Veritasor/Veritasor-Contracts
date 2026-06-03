@@ -36,8 +36,7 @@ fn setup() -> Ctx {
 }
 
 fn register_and_approve(ctx: &Ctx, business: &Address) {
-    ctx.client
-        .grant_role(&ctx.admin, business, &ROLE_BUSINESS);
+    ctx.client.grant_role(&ctx.admin, business, &ROLE_BUSINESS);
     ctx.client.register_business(
         business,
         &BytesN::from_array(&ctx.env, &[1u8; 32]),
@@ -47,12 +46,7 @@ fn register_and_approve(ctx: &Ctx, business: &Address) {
     ctx.client.approve_business(&ctx.admin, business);
 }
 
-fn batch_item(
-    env: &Env,
-    business: &Address,
-    period: &str,
-    root_byte: u8,
-) -> BatchAttestationItem {
+fn batch_item(env: &Env, business: &Address, period: &str, root_byte: u8) -> BatchAttestationItem {
     let mut root = [0u8; 32];
     root[0] = root_byte;
     BatchAttestationItem {
@@ -67,11 +61,7 @@ fn batch_item(
 }
 
 /// Submit with selective mocks (negative / impersonation tests).
-fn mock_batch_submit(
-    ctx: &Ctx,
-    authorized: &[Address],
-    items: &Vec<BatchAttestationItem>,
-) {
+fn mock_batch_submit(ctx: &Ctx, authorized: &[Address], items: &Vec<BatchAttestationItem>) {
     let invoke = MockAuthInvoke {
         contract: &ctx.contract_id,
         fn_name: "submit_attestations_batch",
@@ -97,10 +87,7 @@ fn submit_batch_all_businesses_authed(ctx: &Ctx, items: &Vec<BatchAttestationIte
 }
 
 fn count_auths_for(env: &Env, addr: &Address) -> usize {
-    env.auths()
-        .iter()
-        .filter(|(a, _)| a == addr)
-        .count()
+    env.auths().iter().filter(|(a, _)| a == addr).count()
 }
 
 #[test]
@@ -177,9 +164,13 @@ fn test_batch_second_business_unauthorized_no_partial_write() {
     items.push_back(batch_item(&ctx.env, &biz_b, "2026-01", 2));
 
     ctx.env.mock_auths(&[]);
-    let result =
-        catch_unwind(AssertUnwindSafe(|| mock_batch_submit(&ctx, &[biz_a.clone()], &items)));
-    assert!(result.is_err(), "unauthorized business B must fail the batch");
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        mock_batch_submit(&ctx, &[biz_a.clone()], &items)
+    }));
+    assert!(
+        result.is_err(),
+        "unauthorized business B must fail the batch"
+    );
 
     assert!(ctx
         .client

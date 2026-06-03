@@ -2,8 +2,6 @@
 use super::*;
 use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
-
-
 /// Helper shared by boundary tests — registers the contract and grants admin.
 fn setup(env: &Env) -> (Address, AttestationContractClient<'_>) {
     let contract_id = env.register(AttestationContract, ());
