@@ -107,7 +107,9 @@ fn test_submit_attestation_emits_event() {
         &root,
         &1_700_000_000u64,
         &1u32,
-        &0i128, &None, &None,
+        &0i128,
+        &None,
+        &None,
         &0u64,
     );
 
@@ -1217,4 +1219,3 @@ fn test_all_topic_symbols_are_distinct() {
     assert_eq!(topics.len(), 19, "expected 19 distinct topic symbols");
     let _ = env; // env required for Address::generate in other tests
 }
-

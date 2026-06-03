@@ -745,7 +745,9 @@ fn test_sac_integration_fee_transfer_reads_collector_balance_via_sac_client() {
         "collector must receive dynamic + flat fees through the SAC contract"
     );
 
-    let record = client.get_attestation(&business, &String::from_str(&env, "2026-09")).unwrap();
+    let record = client
+        .get_attestation(&business, &String::from_str(&env, "2026-09"))
+        .unwrap();
     assert_eq!(record.3, 1_000);
 }
 
@@ -780,7 +782,9 @@ fn test_sac_integration_unset_allowance_does_not_block_direct_fee_transfer() {
         "collector must receive the fee even with no allowance"
     );
 
-    let record = client.get_attestation(&business, &String::from_str(&env, "2026-10")).unwrap();
+    let record = client
+        .get_attestation(&business, &String::from_str(&env, "2026-10"))
+        .unwrap();
     assert_eq!(record.3, 500);
 }
 
@@ -868,7 +872,9 @@ fn test_sac_integration_rounds_to_zero_with_high_discounts() {
     submit(&client, &env, &business, "2027-01", 13);
 
     assert_eq!(sac_balance(&env, &token_addr, &collector), 0);
-    let record = client.get_attestation(&business, &String::from_str(&env, "2027-01")).unwrap();
+    let record = client
+        .get_attestation(&business, &String::from_str(&env, "2027-01"))
+        .unwrap();
     assert_eq!(record.3, 0);
 }
 
@@ -897,7 +903,13 @@ fn test_sac_integration_collector_equal_to_business_records_fee() {
 
     submit(&client, &env, &business, "2027-02", 14);
 
-    assert_eq!(sac_balance(&env, &token_addr, &business), before, "self-transfer should preserve business balance");
-    let record = client.get_attestation(&business, &String::from_str(&env, "2027-02")).unwrap();
+    assert_eq!(
+        sac_balance(&env, &token_addr, &business),
+        before,
+        "self-transfer should preserve business balance"
+    );
+    let record = client
+        .get_attestation(&business, &String::from_str(&env, "2027-02"))
+        .unwrap();
     assert_eq!(record.3, 500);
 }

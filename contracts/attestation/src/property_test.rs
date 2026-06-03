@@ -1909,13 +1909,13 @@ proptest! {
         // If a new role is added, this reference AND the constant in access_control.rs must be updated.
         let is_valid_reference = (role_mask & !0xF) == 0;
         let actual_validation = access_control::is_valid_role_bitmap(role_mask);
-        
+
         prop_assert_eq!(
             actual_validation, is_valid_reference,
             "validation mismatch for bitmap {:#010X}: expected {}, got {}",
             role_mask, is_valid_reference, actual_validation
         );
-        
+
         // Assert that grant_role panics for any sampled invalid bitmap.
         if !is_valid_reference {
             let result = std::panic::catch_unwind(|| {
