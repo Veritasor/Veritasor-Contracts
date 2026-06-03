@@ -25,7 +25,7 @@ use veritasor_integration_registry::{
 // ---------------------------------------------------------------------------
 
 /// Stand up an initialized attestation contract and return (client, admin).
-fn setup_attestation(env: &Env) -> (AttestationContractClient, Address) {
+fn setup_attestation(env: &Env) -> (AttestationContractClient<'_>, Address) {
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(env, &contract_id);
     let admin = Address::generate(env);
@@ -34,7 +34,7 @@ fn setup_attestation(env: &Env) -> (AttestationContractClient, Address) {
 }
 
 /// Stand up an initialized integration registry and return (client, admin).
-fn setup_registry(env: &Env) -> (IntegrationRegistryContractClient, Address) {
+fn setup_registry(env: &Env) -> (IntegrationRegistryContractClient<'_>, Address) {
     let contract_id = env.register(IntegrationRegistryContract, ());
     let client = IntegrationRegistryContractClient::new(env, &contract_id);
     let admin = Address::generate(env);
