@@ -81,8 +81,21 @@ impl TestEnv {
         self.client.get_attestation_with_status(&business, &period)
     }
 
-    pub fn migrate_attestation(&self, caller: Address, business: Address, period: String, new_merkle_root: BytesN<32>, new_version: u32) {
-        self.client.migrate_attestation(&caller, &business, &period, &new_merkle_root, &new_version);
+    pub fn migrate_attestation(
+        &self,
+        caller: Address,
+        business: Address,
+        period: String,
+        new_merkle_root: BytesN<32>,
+        new_version: u32,
+    ) {
+        self.client.migrate_attestation(
+            &caller,
+            &business,
+            &period,
+            &new_merkle_root,
+            &new_version,
+        );
     }
 }
 use crate::{DisputeOutcome, DisputeStatus, DisputeType, OptionalResolution};
