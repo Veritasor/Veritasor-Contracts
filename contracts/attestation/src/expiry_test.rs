@@ -21,7 +21,7 @@ fn submit_without_expiry_succeeds() {
     let period = String::from_str(&env, "2026-Q1");
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.submit_attestation(&business, &period, &merkle_root, &1000, &1, &None, &None);
+        client.submit_attestation(&business, &period, &merkle_root, &1000, &1, &0i128, &None, &None);
 
     let result = client.get_attestation(&business, &period);
     assert!(result.is_some());
@@ -46,6 +46,7 @@ fn submit_with_future_expiry_succeeds() {
         &root,
         &1_050u64,
         &1u32,
+        &0i128,
         &None,
         &Some(2_000u64),
     );
@@ -62,7 +63,7 @@ fn submit_with_past_expiry_panics() {
     let period = String::from_str(&env, "2026-Q1");
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.submit_attestation(&business, &period, &merkle_root, &1000, &1, &None, &None);
+    client.submit_attestation(&business, &period, &merkle_root, &1000, &1, &0i128, &None, &None);
 
     env.ledger().set_timestamp(2_000);
     client.submit_attestation(
@@ -71,6 +72,7 @@ fn submit_with_past_expiry_panics() {
         &merkle_root,
         &1_500u64,
         &1u32,
+        &0i128,
         &None,
         &Some(1_900u64),
     );
@@ -91,6 +93,7 @@ fn submit_with_expiry_equal_to_ledger_time_panics() {
         &root,
         &1_800u64,
         &1u32,
+        &0i128,
         &None,
         &Some(2_000u64),
     );
@@ -111,6 +114,7 @@ fn submit_with_expiry_before_attestation_timestamp_panics() {
         &root,
         &2_000u64,
         &1u32,
+        &0i128,
         &None,
         &Some(1_500u64),
     );
@@ -130,6 +134,7 @@ fn is_expired_boundary_behavior_is_enforced() {
         &root,
         &1_050u64,
         &1u32,
+        &0i128,
         &None,
         &Some(1_500u64),
     );
@@ -155,6 +160,7 @@ fn verify_attestation_fails_after_expiry() {
         &root,
         &550u64,
         &1u32,
+        &0i128,
         &None,
         &Some(1_000u64),
     );
@@ -180,6 +186,7 @@ fn expired_attestation_remains_queryable() {
         &root,
         &11u64,
         &1u32,
+        &0i128,
         &None,
         &Some(20u64),
     );
@@ -204,6 +211,7 @@ fn cleanup_expired_attestation_removes_data_and_emits_event() {
         &root,
         &10u64,
         &1u32,
+        &0i128,
         &None,
         &Some(20u64),
     );
@@ -214,7 +222,7 @@ fn cleanup_expired_attestation_removes_data_and_emits_event() {
     assert!(client.get_attestation(&business, &period).is_none());
     let events = env.events().all();
     let last = events.last().unwrap();
-    let event = super::events::AttestationCleanedUpEvent::try_from_val(&env, &last.2).unwrap();
+    let event = super::events::AttestationCleanedUpEvent::from_val(&env, &last.2).unwrap();
     assert_eq!(event.business, business);
     assert_eq!(event.period, period);
 }
@@ -873,6 +881,7 @@ fn test_expiry_comparison_semantics_at_boundary() {
             &merkle_root,
             &1000,
             &1,
+            &0i128,
             &None,
             &Some(expiry),
         );
