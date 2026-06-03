@@ -47,15 +47,15 @@ mod attestation_import {
     use soroban_sdk::{Address, BytesN, Env, String};
 
     pub struct AttestationContractClient {
-        env: Env,
-        pub address: Address,
+        _env: Env,
+        pub _address: Address,
     }
 
     impl AttestationContractClient {
         pub fn new(env: &Env, address: &Address) -> Self {
             Self {
-                env: env.clone(),
-                address: address.clone(),
+                _env: env.clone(),
+                _address: address.clone(),
             }
         }
 
@@ -69,12 +69,12 @@ mod attestation_import {
             business: &Address,
             period: &String,
         ) -> Option<(BytesN<32>, u64, u32, i128)> {
-            let revenue_opt: Option<i128> = self.env.storage().temporary().get(&(
+            let revenue_opt: Option<i128> = self._env.storage().temporary().get(&(
                 soroban_sdk::symbol_short!("rev"),
                 business.clone(),
                 period.clone(),
             ));
-            revenue_opt.map(|revenue| (BytesN::from_array(&self.env, &[0u8; 32]), 1000, 1, revenue))
+            revenue_opt.map(|revenue| (BytesN::from_array(&self._env, &[0u8; 32]), 1000, 1, revenue))
         }
 
         pub fn get_revocation_info(
@@ -83,7 +83,7 @@ mod attestation_import {
             period: &String,
         ) -> Option<(Address, u64, String)> {
             let revoked: bool = self
-                .env
+                ._env
                 .storage()
                 .temporary()
                 .get(&(
@@ -96,7 +96,7 @@ mod attestation_import {
                 Some((
                     business.clone(),
                     0u64,
-                    String::from_str(&self.env, "revoked"),
+                    String::from_str(&self._env, "revoked"),
                 ))
             } else {
                 None
@@ -214,7 +214,8 @@ pub struct RedemptionRecord {
 ///
 /// # Panics
 /// Panics with a descriptive message on any malformed input.
-pub fn parse_period(env: &Env, period: String) -> u64 {
+#[allow(clippy::needless_range_loop)]
+pub fn parse_period(_env: &Env, period: String) -> u64 {
     assert!(period.len() == 7, "invalid period length");
     let mut bytes = [0u8; 7];
     period.copy_into_slice(&mut bytes);
@@ -236,6 +237,7 @@ pub fn parse_period(env: &Env, period: String) -> u64 {
 }
 
 /// Helper to determine if a year is a leap year.
+#[allow(clippy::manual_is_multiple_of)]
 fn is_leap_year(year: u64) -> bool {
     (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }
@@ -259,6 +261,7 @@ fn days_in_month(year: u64, month: u64) -> u64 {
 /// Returns the unix timestamp (seconds) for the start of the month following `period`.
 ///
 /// Example: "2024-05" -> Start of 2024-06-01 00:00:00.
+#[allow(clippy::needless_range_loop)]
 pub fn get_period_end_timestamp(period: String) -> u64 {
     assert!(period.len() == 7, "invalid period length");
     let mut bytes = [0u8; 7];
