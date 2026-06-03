@@ -10,7 +10,7 @@ use soroban_sdk::{testutils::Address as _, Address, Env, String, Symbol, Vec};
 fn create_test_env() -> (Env, Address, BusinessConfigContractClient<'static>) {
     let env = Env::default();
     let admin = Address::generate(&env);
-    let contract_id = env.register_contract(None, BusinessConfigContract);
+    let contract_id = env.register(BusinessConfigContract, ());
     let client = BusinessConfigContractClient::new(&env, &contract_id);
     (env, admin, client)
 }

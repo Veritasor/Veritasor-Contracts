@@ -290,7 +290,7 @@ fn invariant_attestation_submit_blocked_when_paused() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, admin) = setup_attestation(&env);
-    client.pause(&admin);
+    client.pause(&admin, &0u64);
     let business = Address::generate(&env);
     let root = soroban_sdk::BytesN::from_array(&env, &[5u8; 32]);
     assert!(catch(std::panic::AssertUnwindSafe(|| {
@@ -313,8 +313,8 @@ fn invariant_attestation_submit_restored_after_unpause() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, admin) = setup_attestation(&env);
-    client.pause(&admin);
-    client.unpause(&admin);
+    client.pause(&admin, &0u64);
+    client.unpause(&admin, &1u64);
     let business = Address::generate(&env);
     let root = soroban_sdk::BytesN::from_array(&env, &[6u8; 32]);
     // Must not panic after unpause.
