@@ -367,7 +367,7 @@ impl AggregatedAttestationsContract {
             .get(&roots_key)
             .unwrap_or(Vec::new(&env));
 
-        if roots_vec.len() > 0 {
+        if !roots_vec.is_empty() {
             let mut max_version = 0;
             let mut last_record_opt: Option<AggregatedRootRecord> = None;
 

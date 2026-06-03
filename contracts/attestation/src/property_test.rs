@@ -438,7 +438,7 @@ const REVOKE_ROOTS: &[[u8; 32]] = &[
 fn prop_revocation_permanence() {
     for (idx, &sub_bytes) in REVOKE_ROOTS.iter().enumerate() {
         let (env, client) = setup();
-        let admin = client.get_admin();
+        let _admin = client.get_admin();
         let business = Address::generate(&env);
         let period = String::from_str(&env, "2026-01");
         let submitted_root = BytesN::from_array(&env, &sub_bytes);
@@ -557,7 +557,7 @@ const MIGRATION_VALID_PAIRS: &[(u32, u32)] = &[
 fn prop_migration_succeeds_for_increasing_version() {
     for &(old_ver, new_ver) in MIGRATION_VALID_PAIRS {
         let (env, client) = setup();
-        let admin = client.get_admin();
+        let _admin = client.get_admin();
         let business = Address::generate(&env);
         let period = String::from_str(&env, "2026-01");
         let old_root = BytesN::from_array(&env, &[1u8; 32]);
@@ -840,7 +840,7 @@ fn prop_business_isolation() {
     assert!(!client.verify_attestation(&biz_b, &period, &root_a));
 
     // Revoke biz_a only.
-    let admin = client.get_admin();
+    let _admin = client.get_admin();
     let reason = String::from_str(&env, "isolation-test");
     client.revoke_attestation(&admin, &biz_a, &period, &reason, &0u64);
 
@@ -910,7 +910,7 @@ fn prop_pause_blocks_all_submissions() {
 #[test]
 fn prop_unpause_restores_submission() {
     let (env, client) = setup();
-    let admin = client.get_admin();
+    let _admin = client.get_admin();
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[1u8; 32]);

@@ -233,7 +233,7 @@ pub fn parse_period(_env: &Env, period: String) -> u64 {
         assert!(d <= 9, "invalid month digit");
         month = month * 10 + d;
     }
-    assert!(month >= 1 && month <= 12, "invalid month");
+    assert!((1..=12).contains(&month), "invalid month");
     year * 12 + month - 1
 }
 

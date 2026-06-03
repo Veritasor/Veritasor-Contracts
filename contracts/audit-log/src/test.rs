@@ -549,7 +549,7 @@ fn test_log_correlation_identifiers_unique() {
         .collect();
 
     // All sequence numbers should be unique
-    let unique: std::vec::Vec<u64> = seqs.iter().copied().collect();
+    let unique: std::vec::Vec<u64> = seqs.to_vec();
     assert_eq!(unique.len(), 5);
 
     for i in 0..unique.len() {
@@ -691,7 +691,7 @@ fn test_append_only_blocks_arbitrary_modification_disabled() {
     let record_before = client.get_entry(&seq).unwrap();
 
     // Try to modify payload via index
-    let mut actor_seqs: Vec<u64> = env
+    let _actor_seqs: Vec<u64> = env
         .storage()
         .temporary()
         .get(&DataKey::ActorIndex(actor.clone()))

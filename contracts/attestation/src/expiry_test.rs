@@ -237,7 +237,7 @@ fn cleanup_revoked_attestation_panics() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2027-Q7");
     let root = BytesN::from_array(&env, &[10u8; 32]);
-    let challenger = Address::generate(&env);
+    let _challenger = Address::generate(&env);
 
     env.ledger().set_timestamp(0);
     client.submit_attestation(
@@ -270,7 +270,7 @@ fn cleanup_with_open_dispute_panics() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2027-Q8");
     let root = BytesN::from_array(&env, &[11u8; 32]);
-    let challenger = Address::generate(&env);
+    let _challenger = Address::generate(&env);
 
     env.ledger().set_timestamp(0);
     client.submit_attestation(

@@ -240,11 +240,11 @@ pub fn reject_proposal(env: &Env, rejecter: &Address, id: u64) {
 }
 
 pub fn is_proposal_approved(env: &Env, id: u64) -> bool {
-    get_approvals(env, id).len() as u32 >= get_threshold(env)
+    get_approvals(env, id).len() >= get_threshold(env)
 }
 
 pub fn get_approval_count(env: &Env, id: u64) -> u32 {
-    get_approvals(env, id).len() as u32
+    get_approvals(env, id).len()
 }
 
 pub fn mark_executed(env: &Env, id: u64) {
@@ -297,7 +297,7 @@ pub fn remove_owner(env: &Env, owner: &Address) {
         }
     }
     assert!(
-        next.len() as u32 >= threshold,
+        next.len() >= threshold,
         "cannot remove owner: would drop below threshold"
     );
     set_owners(env, &next);

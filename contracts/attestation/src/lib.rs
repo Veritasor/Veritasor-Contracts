@@ -462,7 +462,7 @@ impl AttestationContract {
             if require_business_auth {
                 business.require_auth();
             }
-            registry::require_active_business(&env, &business);
+            registry::require_active_business(env, &business);
 
             if registry::get_status(env, &item.business) == Some(BusinessStatus::Suspended) {
                 panic!("business is suspended");
@@ -493,7 +493,7 @@ impl AttestationContract {
 
             dynamic_fees::increment_business_count(env, &item.business);
 
-            let key = DataKey::Attestation(item.business.clone(), item.period.clone());
+            let _key = DataKey::Attestation(item.business.clone(), item.period.clone());
             let data: AttestationData = (
                 item.merkle_root.clone(),
                 item.timestamp,
@@ -873,10 +873,11 @@ impl AttestationContract {
             env.storage().instance().get(&key).unwrap_or(Vec::new(&env));
 
         for range in ranges.iter() {
-            if !range.revoked {
-                if start_period <= range.end_period && end_period >= range.start_period {
-                    panic!("overlapping attestation range detected");
-                }
+            if !range.revoked
+                && start_period <= range.end_period
+                && end_period >= range.start_period
+            {
+                panic!("overlapping attestation range detected");
             }
         }
 
@@ -899,7 +900,7 @@ impl AttestationContract {
 
         // Populate reverse index: merkle_root -> range position for O(1) revocation lookup
         let index_key = MultiPeriodKey::RootIndex(business.clone(), merkle_root.clone());
-        let range_index = (ranges.len() - 1) as u32;
+        let range_index = (ranges.len() - 1);
         env.storage().instance().set(&index_key, &range_index);
 
         events::emit_multi_period_issued(&env, &business, start_period, end_period, &merkle_root);
@@ -1556,7 +1557,7 @@ impl AttestationContract {
 
     /// REQUIREMENT: Rejects empty or malformed strings to avoid permanent unvalidated storage poisoning.
     fn validate_period(period: &String) {
-        if period.len() == 0 {
+        if period.is_empty() {
             panic!("period string must not be empty");
         }
 

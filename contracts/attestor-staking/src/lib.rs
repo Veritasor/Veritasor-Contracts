@@ -208,7 +208,7 @@ impl AttestorStakingContract {
         let mut unlock_timestamp = env.ledger().timestamp().saturating_add(unbonding);
 
         // Unlock timestamp monotonicity
-        if pending_vec.len() > 0 {
+        if !pending_vec.is_empty() {
             let last_pending = pending_vec.get(pending_vec.len() - 1).unwrap();
             if unlock_timestamp < last_pending.unlock_timestamp {
                 unlock_timestamp = last_pending.unlock_timestamp;
@@ -268,7 +268,7 @@ impl AttestorStakingContract {
         stake.locked -= total_to_withdraw;
         env.storage().instance().set(&stake_key, &stake);
 
-        if remaining_vec.len() == 0 {
+        if remaining_vec.is_empty() {
             env.storage().instance().remove(&pending_key);
         } else {
             env.storage().instance().set(&pending_key, &remaining_vec);
@@ -442,7 +442,7 @@ impl AttestorStakingContract {
         let vec: Option<Vec<PendingUnstake>> = env.storage().instance().get(&pending_key);
         match vec {
             Some(v) => {
-                if v.len() > 0 {
+                if !v.is_empty() {
                     Some(v.get(0).unwrap())
                 } else {
                     None

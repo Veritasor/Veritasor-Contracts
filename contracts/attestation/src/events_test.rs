@@ -108,9 +108,9 @@ fn test_submit_attestation_emits_event() {
         &1_700_000_000u64,
         &1u32,
         &0i128,
+        &0i128,
         &None,
         &None,
-        &0u64,
     );
 
     assert!(
