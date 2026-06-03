@@ -74,7 +74,8 @@ mod attestation_import {
                 business.clone(),
                 period.clone(),
             ));
-            revenue_opt.map(|revenue| (BytesN::from_array(&self._env, &[0u8; 32]), 1000, 1, revenue))
+            revenue_opt
+                .map(|revenue| (BytesN::from_array(&self._env, &[0u8; 32]), 1000, 1, revenue))
         }
 
         pub fn get_revocation_info(
