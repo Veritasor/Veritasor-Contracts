@@ -39,7 +39,7 @@ fn submit_attestation_blocked_while_paused() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.pause(&admin);
+    client.pause(&admin, &0u64);
     client.submit_attestation(
         &business,
         &period,
@@ -59,8 +59,8 @@ fn submit_attestation_succeeds_after_unpause() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.pause(&admin);
-    client.unpause(&admin);
+    client.pause(&admin, &0u64);
+    client.unpause(&admin, &0u64);
 
     client.submit_attestation(
         &business,
@@ -86,7 +86,7 @@ fn submit_attestations_batch_blocked_while_paused() {
     let (env, client, admin) = setup();
     let business = Address::generate(&env);
 
-    client.pause(&admin);
+    client.pause(&admin, &0u64);
 
     let mut items = Vec::new(&env);
     items.push_back(batch_item(&env, &business, "2026-02", &[1u8; 32]));
@@ -99,8 +99,8 @@ fn submit_attestations_batch_succeeds_after_unpause() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
 
-    client.pause(&admin);
-    client.unpause(&admin);
+    client.pause(&admin, &0u64);
+    client.unpause(&admin, &0u64);
 
     let mut items = Vec::new(&env);
     items.push_back(batch_item(&env, &business, "2026-02", &[2u8; 32]));
@@ -114,22 +114,22 @@ fn submit_attestations_batch_succeeds_after_unpause() {
 #[should_panic(expected = "caller does not have ADMIN role")]
 fn non_admin_cannot_pause() {
     let (env, client, _) = setup();
-    client.pause(&Address::generate(&env));
+    client.pause(&Address::generate(&env), &0u64);
 }
 
 #[test]
 #[should_panic(expected = "caller does not have ADMIN role")]
 fn non_admin_cannot_unpause() {
     let (env, client, admin) = setup();
-    client.pause(&admin);
-    client.unpause(&Address::generate(&env));
+    client.pause(&admin, &0u64);
+    client.unpause(&Address::generate(&env), &0u64);
 }
 
 #[test]
 fn repeated_pause_is_idempotent() {
     let (_, client, admin) = setup();
-    client.pause(&admin);
-    client.pause(&admin);
+    client.pause(&admin, &0u64);
+    client.pause(&admin, &0u64);
 }
 
 #[test]
@@ -149,7 +149,7 @@ fn get_attestation_while_paused() {
         &None,
         &None,
     );
-    client.pause(&admin);
+    client.pause(&admin, &0u64);
 
     let (stored_root, _, stored_ver, _, _, _) = client.get_attestation(&business, &period).unwrap();
     assert_eq!(stored_root, root);

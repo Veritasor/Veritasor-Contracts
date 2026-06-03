@@ -760,7 +760,7 @@ fn test_volume_brackets_multiple_valid_discounts() {
     let discounts = vec![&t.env, 10_000u32, 10_000u32, 10_000u32];
     t.client.set_volume_brackets(&thresholds, &discounts);
 
-    let business = Address::generate(&t.env);
+    let _business = Address::generate(&t.env);
     // Should not panic and brackets should be set
     let (got_thresholds, got_discounts) = t.client.get_volume_brackets();
     assert_eq!(got_thresholds, thresholds);

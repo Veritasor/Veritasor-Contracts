@@ -83,7 +83,7 @@ impl TestEnv {
     }
 
     pub fn pause(&self, admin: Address) {
-        self.client.pause(&admin);
+        self.client.pause(&admin, &0u64);
     }
 
     pub fn get_attestation_with_status(
@@ -1686,7 +1686,7 @@ fn test_paused_revocation_does_not_corrupt_index() {
         &None,
     );
 
-    client.pause(&admin);
+    client.pause(&admin, &0u64);
 
     let seq_before = client.get_revocation_sequence();
 
