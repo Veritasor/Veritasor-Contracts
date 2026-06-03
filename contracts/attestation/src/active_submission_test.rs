@@ -238,5 +238,3 @@ fn test_submit_attestations_batch_accepts_reactivated_business() {
         .get_attestation(&business, &SorobanString::from_str(&env, "2026-02"))
         .is_some());
 }
-
-

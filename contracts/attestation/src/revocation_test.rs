@@ -21,9 +21,18 @@ impl TestEnv {
         client.initialize(&admin, &0u64);
         Self { env, client, admin }
     }
-    
-    pub fn submit_attestation(&self, business: Address, period: String, root: BytesN<32>, timestamp: u64, version: u32) {
-        self.client.submit_attestation(&business, &period, &root, &timestamp, &version, &0i128, &None, &None);
+
+    pub fn submit_attestation(
+        &self,
+        business: Address,
+        period: String,
+        root: BytesN<32>,
+        timestamp: u64,
+        version: u32,
+    ) {
+        self.client.submit_attestation(
+            &business, &period, &root, &timestamp, &version, &0i128, &None, &None,
+        );
     }
 
     pub fn revoke_attestation(
@@ -77,7 +86,11 @@ impl TestEnv {
         self.client.pause(&admin);
     }
 
-    pub fn get_attestation_with_status(&self, business: Address, period: String) -> Option<crate::AttestationWithRevocation> {
+    pub fn get_attestation_with_status(
+        &self,
+        business: Address,
+        period: String,
+    ) -> Option<crate::AttestationWithRevocation> {
         self.client.get_attestation_with_status(&business, &period)
     }
 

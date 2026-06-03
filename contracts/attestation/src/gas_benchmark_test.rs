@@ -434,7 +434,6 @@ fn bench_submit_batch_large() {
     );
 }
 
-
 // ── Fee Calculation Benchmarks ──────────────────────────────────────
 
 #[test]

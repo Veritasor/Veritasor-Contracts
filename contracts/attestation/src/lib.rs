@@ -1497,7 +1497,6 @@ impl AttestationContract {
         (results, current_cursor)
     }
 
-
     pub fn clear_anomaly_escalation(env: Env, caller: Address, business: Address) {
         access_control::require_admin(&env, &caller);
         dispute::clear_anomaly_escalation(&env, &business);
