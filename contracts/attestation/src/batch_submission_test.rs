@@ -1050,7 +1050,7 @@ fn test_batch_at_max_size_accepted() {
 
     let mut items = Vec::new(&env);
     for i in 0..MAX_BATCH_SIZE {
-        let period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
+        let _period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
         let mut root = [0u8; 32];
         root[0] = i as u8;
         items.push_back(create_batch_item(
@@ -1179,7 +1179,7 @@ fn test_batch_stress_one_over_ceiling_panics() {
     // Generate 26 items (one over MAX_BATCH_SIZE = 25)
     for i in 0..26 {
         let business = Address::generate(&env);
-        let period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
+        let _period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
         let mut root = [0u8; 32];
         root[0] = (i as u8) % 256;
         items.push_back(BatchAttestationItem {
@@ -1209,7 +1209,7 @@ fn test_batch_stress_duplicates_within_batch_panic() {
 
     // Add 25 unique items to fill batch
     for i in 0..25 {
-        let period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
+        let _period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
         let mut root = [0u8; 32];
         root[0] = i as u8;
         items.push_back(BatchAttestationItem {
@@ -1268,7 +1268,7 @@ fn test_batch_stress_boundary_24_items_succeeds() {
     let mut items = Vec::new(&env);
     for i in 0..24 {
         let business = Address::generate(&env);
-        let period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
+        let _period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
         let mut root = [0u8; 32];
         root[0] = i as u8;
         items.push_back(BatchAttestationItem {

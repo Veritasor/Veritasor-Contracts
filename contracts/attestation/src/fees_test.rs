@@ -99,7 +99,7 @@ fn balance(env: &Env, token_addr: &Address, who: &Address) -> i128 {
 
 /// Read the SAC balance of an address via the actual Stellar Asset client.
 fn sac_balance(env: &Env, token_addr: &Address, who: &Address) -> i128 {
-    StellarAssetClient::new(env, token_addr).balance(who)
+    TokenClient::new(env, token_addr).balance(who)
 }
 
 /// Read the SAC allowance for a spender from an owner.

@@ -62,7 +62,7 @@ fn base_env() -> (Env, Address, Address, Address) {
     let token_admin = Address::generate(&env);
     let token_contract = env.register_stellar_asset_contract_v2(token_admin);
     let token_addr = token_contract.address().clone();
-    (env, admin, token_addr, Address::generate(&env))
+    (env.clone(), admin, token_addr, Address::generate(&env))
 }
 
 fn setup_contract<'a>(
