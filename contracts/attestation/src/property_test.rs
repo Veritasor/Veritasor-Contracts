@@ -51,6 +51,7 @@ use proptest::prelude::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
 use soroban_sdk::{vec, Address, BytesN, Env, String};
+use std::format;
 
 // ════════════════════════════════════════════════════════════════════
 //  Shared setup helpers

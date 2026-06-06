@@ -1,7 +1,9 @@
+use std::format;
+
 use crate::{AttestationContract, AttestationContractClient};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
-    Address, BytesN, Env, String,
+    testutils::{Address as _, Events, Ledger},
+    Address, BytesN, Env, String, Symbol, TryIntoVal,
 };
 
 fn setup() -> (Env, AttestationContractClient<'static>, Address) {
@@ -286,4 +288,85 @@ fn extend_expiry_with_large_timestamp() {
 
     let (_, _, _, _, _, new_expiry) = client.get_attestation(&business, &period).unwrap();
     assert_eq!(new_expiry, Some(large_expiry));
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Property-Based Tests for Expiry Extension Monotonicity
+// ════════════════════════════════════════════════════════════════════
+
+use crate::events::AttestationExpiryExtendedEvent;
+use proptest::prelude::*;
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(100))]
+
+    /// Property: Monotonicity enforcement for single extension
+    /// Asserts that non-monotonic extensions panic (<= current_expiry or <= timestamp)
+    /// Asserts that valid extensions update storage correctly and emit the exact event payload.
+    /// Explicitly covers equal values and u64::MAX through property generation.
+    #[test]
+    fn prop_extend_expiry_boundaries(
+        timestamp in 0..=u64::MAX,
+        old_expiry in 0..=u64::MAX,
+        new_expiry in 0..=u64::MAX,
+    ) {
+        let env = Env::default();
+        let client = AttestationContractClient::new(&env, &env.register(crate::AttestationContract, ()));
+        client.initialize(&Address::generate(&env), &0u64);
+
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "prop-period");
+        let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
+
+        env.ledger().set_timestamp(0);
+
+        // Mock the caller auth
+        env.mock_all_auths();
+
+        // Inject attestation directly into storage to bypass submission validations
+        env.as_contract(&client.address, || {
+            let key = crate::dynamic_fees::DataKey::Attestation(business.clone(), period.clone());
+            let data: crate::AttestationData = (
+                merkle_root.clone(),
+                timestamp,
+                1u32,
+                0i128,
+                None,
+                Some(old_expiry),
+            );
+            env.storage().instance().set(&key, &data);
+        });
+
+        // Try extending the expiry
+        let result = client.try_extend_expiry(&business, &period, &new_expiry);
+
+        if new_expiry <= old_expiry || new_expiry <= timestamp {
+            // Non-monotonic cases must panic
+            prop_assert!(result.is_err(), "Expected panic for non-monotonic extension: timestamp={}, old_expiry={}, new_expiry={}", timestamp, old_expiry, new_expiry);
+        } else {
+            // Valid monotonic cases must succeed
+            prop_assert!(result.is_ok(), "Expected success for valid extension: timestamp={}, old_expiry={}, new_expiry={}", timestamp, old_expiry, new_expiry);
+
+            // Assert correct storage update
+            let (_, _, _, _, _, stored_expiry) = client.get_attestation(&business, &period).unwrap();
+            prop_assert_eq!(stored_expiry, Some(new_expiry), "Storage did not reflect new_expiry");
+
+            // Assert event emission
+            let events = env.events().all();
+            let mut event_found = false;
+            for event in events.iter() {
+                let topic0 = event.1.get(0).unwrap();
+                let topic_sym: Symbol = topic0.clone().try_into_val(&env).unwrap();
+                if topic_sym == crate::events::TOPIC_ATTESTATION_EXPIRY_EXTENDED {
+                    let payload: AttestationExpiryExtendedEvent = event.2.clone().try_into_val(&env).unwrap();
+                    if payload.business == business && payload.period == period {
+                        prop_assert_eq!(payload.old_expiry, Some(old_expiry));
+                        prop_assert_eq!(payload.new_expiry, new_expiry);
+                        event_found = true;
+                    }
+                }
+            }
+            prop_assert!(event_found, "AttestationExpiryExtendedEvent not emitted");
+        }
+    }
 }

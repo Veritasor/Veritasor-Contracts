@@ -1,10 +1,5 @@
-use crate::{
-    AttestationContract, AttestationContractClient, INSTANCE_TTL_BUMP, INSTANCE_TTL_THRESHOLD,
-};
-use soroban_sdk::{
-    testutils::{Address as _, Ledger},
-    Address, BytesN, Env, String, Vec,
-};
+use crate::{AttestationContract, AttestationContractClient};
+use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String, Vec};
 
 fn setup() -> (Env, AttestationContractClient<'static>, Address) {
     let env = Env::default();
@@ -77,7 +72,7 @@ fn test_repeated_submissions_keep_ttl_fresh() {
     let merkle_root = BytesN::from_array(&_env, &[1u8; 32]);
 
     for i in 0..5 {
-        let period = String::from_str(&_env, &format!("2026-Q{}", i + 1));
+        let period = String::from_str(&_env, &std::format!("2026-Q{}", i + 1));
         client.submit_attestation(
             &business,
             &period,

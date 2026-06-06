@@ -6,6 +6,8 @@
 
 #![cfg(test)]
 
+use std::format;
+
 use super::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
@@ -700,9 +702,7 @@ fn test_atomicity_failure_at_first_item_rejects_all() {
         1,
     ));
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.submit_attestations_batch(&items);
-    }));
+    let result = client.try_submit_attestations_batch(&items);
 
     assert!(result.is_err(), "batch must panic on first-item conflict");
     assert!(client
@@ -757,9 +757,7 @@ fn test_atomicity_failure_at_last_item_rejects_all() {
         1,
     ));
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.submit_attestations_batch(&items);
-    }));
+    let result = client.try_submit_attestations_batch(&items);
 
     assert!(result.is_err(), "batch must panic on last-item conflict");
     assert!(client
@@ -814,9 +812,7 @@ fn test_atomicity_failure_at_middle_item_rejects_all() {
         1,
     ));
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.submit_attestations_batch(&items);
-    }));
+    let result = client.try_submit_attestations_batch(&items);
 
     assert!(result.is_err(), "batch must panic on middle-item conflict");
     assert!(client
@@ -866,9 +862,7 @@ fn test_atomicity_business_count_unchanged_on_failure() {
         1,
     ));
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.submit_attestations_batch(&items);
-    }));
+    let result = client.try_submit_attestations_batch(&items);
 
     assert!(result.is_err());
     assert_eq!(client.get_business_count(&business), 3);
@@ -906,9 +900,7 @@ fn test_atomicity_in_batch_self_duplicate_rejects_all() {
         1,
     ));
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.submit_attestations_batch(&items);
-    }));
+    let result = client.try_submit_attestations_batch(&items);
 
     assert!(result.is_err(), "self-duplicate must reject batch");
     assert!(client
@@ -964,9 +956,7 @@ fn test_atomicity_cross_business_failure_rejects_all() {
         1,
     ));
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.submit_attestations_batch(&items);
-    }));
+    let result = client.try_submit_attestations_batch(&items);
 
     assert!(result.is_err(), "cross-business duplicate must reject all");
     assert!(client
@@ -1005,9 +995,7 @@ fn test_atomicity_clean_batch_succeeds_after_failed_batch() {
         1_700_000_001,
         1,
     ));
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.submit_attestations_batch(&bad_items);
-    }));
+    let _ = client.try_submit_attestations_batch(&bad_items);
 
     // Good batch after failure
     let mut good_items = Vec::new(&env);
@@ -1050,7 +1038,6 @@ fn test_batch_at_max_size_accepted() {
 
     let mut items = Vec::new(&env);
     for i in 0..MAX_BATCH_SIZE {
-        let period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
         let mut root = [0u8; 32];
         root[0] = i as u8;
         items.push_back(create_batch_item(
@@ -1140,7 +1127,7 @@ fn test_batch_stress_max_size_all_items_created() {
     let (env, client) = setup();
 
     let mut items = Vec::new(&env);
-    let businesses: Vec<Address> = (0..5).map(|_| Address::generate(&env)).collect::<Vec<_>>();
+    let businesses: std::vec::Vec<Address> = (0..5).map(|_| Address::generate(&env)).collect();
 
     for b_idx in 0..5 {
         for p_idx in 0..5 {
@@ -1181,7 +1168,7 @@ fn test_batch_stress_one_over_ceiling_panics() {
         let business = Address::generate(&env);
         let period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
         let mut root = [0u8; 32];
-        root[0] = (i as u8) % 256;
+        root[0] = i as u8;
         items.push_back(BatchAttestationItem {
             business,
             period,

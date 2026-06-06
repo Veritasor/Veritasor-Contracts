@@ -9,6 +9,7 @@ use crate::access_control::ROLE_ADMIN;
 use crate::multisig::ProposalAction;
 use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{Address, Env, Vec};
+use veritasor_common::key_rotation::RotationConfig;
 
 // ════════════════════════════════════════════════════════════════════
 //  Helpers
@@ -26,8 +27,13 @@ fn setup() -> (Env, AttestationContractClient<'static>, Address) {
 
 fn setup_with_short_rotation_config() -> (Env, AttestationContractClient<'static>, Address) {
     let (env, client, admin) = setup();
-    // Set short timelock for testing: 10 ledgers timelock, 20 window, 5 cooldown
-    client.configure_key_rotation(&10u32, &20u32, &5u32, &10u32);
+    // Set short timelock for testing: 10 ledgers timelock, 20 window, 5 cooldown, 10 grace
+    client.configure_key_rotation(&RotationConfig {
+        timelock_ledgers: 10,
+        confirmation_window_ledgers: 20,
+        cooldown_ledgers: 5,
+        grace_period_ledgers: 10,
+    });
     (env, client, admin)
 }
 
@@ -38,7 +44,12 @@ fn setup_with_multisig() -> (
     Vec<Address>,
 ) {
     let (env, client, admin) = setup();
-    client.configure_key_rotation(&10u32, &20u32, &5u32, &10u32);
+    client.configure_key_rotation(&RotationConfig {
+        timelock_ledgers: 10,
+        confirmation_window_ledgers: 20,
+        cooldown_ledgers: 5,
+        grace_period_ledgers: 10,
+    });
 
     let owner2 = Address::generate(&env);
     let owner3 = Address::generate(&env);
@@ -58,7 +69,12 @@ fn setup_with_multisig() -> (
 #[test]
 fn test_configure_key_rotation() {
     let (_env, client, _admin) = setup();
-    client.configure_key_rotation(&100u32, &200u32, &50u32, &100u32);
+    client.configure_key_rotation(&RotationConfig {
+        timelock_ledgers: 100,
+        confirmation_window_ledgers: 200,
+        cooldown_ledgers: 50,
+        grace_period_ledgers: 100,
+    });
 
     let config = client.get_key_rotation_config();
     assert_eq!(config.timelock_ledgers, 100);

@@ -600,7 +600,7 @@ fn test_owner_cannot_approve_twice() {
 }
 
 #[test]
-fn test_non_owner_cannot_approve() {
+fn test_non_owner_cannot_approve_duplicate() {
     let env = Env::default();
 
     let owner = Address::generate(&env);

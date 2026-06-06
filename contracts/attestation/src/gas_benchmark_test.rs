@@ -300,7 +300,7 @@ fn bench_migrate_attestation() {
     );
 
     let before = BudgetSnapshot::capture(&env);
-    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32, &0u64);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
     let after = BudgetSnapshot::capture(&env);
 
     let cost = before.delta(&after);
@@ -839,7 +839,7 @@ fn regression_migrate_attestation_threshold() {
     );
 
     let before = BudgetSnapshot::capture(&env);
-    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32, &0u64);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
     let after = BudgetSnapshot::capture(&env);
 
     let cost = before.delta(&after);
@@ -1183,7 +1183,7 @@ fn migration_does_not_accumulate() {
     // Multiple migrations
     for version in 2..=5 {
         let new_root = BytesN::from_array(&env, &[version as u8; 32]);
-        client.migrate_attestation(&admin, &business, &period, &new_root, &version, &0u64);
+        client.migrate_attestation(&admin, &business, &period, &new_root, &version);
     }
 
     // Should still have only one attestation stored
@@ -1227,7 +1227,7 @@ fn revocation_linear_storage() {
         client.revoke_attestation(
             &admin,
             &business,
-            period,
+            &period,
             &String::from_str(&env, "test"),
             &1u64,
         );

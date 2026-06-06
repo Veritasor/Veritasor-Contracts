@@ -1,7 +1,7 @@
 use crate::{AttestationContract, AttestationContractClient};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
-    Address, BytesN, Env, String,
+    testutils::{Address as _, Events, Ledger},
+    Address, BytesN, Env, String, TryFromVal,
 };
 
 fn setup() -> (Env, AttestationContractClient<'static>, Address) {
@@ -21,7 +21,16 @@ fn submit_without_expiry_succeeds() {
     let period = String::from_str(&env, "2026-Q1");
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.submit_attestation(&business, &period, &merkle_root, &1000, &1, &None, &None);
+    client.submit_attestation(
+        &business,
+        &period,
+        &merkle_root,
+        &1000,
+        &1,
+        &0i128,
+        &None,
+        &None,
+    );
 
     let result = client.get_attestation(&business, &period);
     assert!(result.is_some());
@@ -46,6 +55,7 @@ fn submit_with_future_expiry_succeeds() {
         &root,
         &1_050u64,
         &1u32,
+        &0i128,
         &None,
         &Some(2_000u64),
     );
@@ -62,7 +72,16 @@ fn submit_with_past_expiry_panics() {
     let period = String::from_str(&env, "2026-Q1");
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.submit_attestation(&business, &period, &merkle_root, &1000, &1, &None, &None);
+    client.submit_attestation(
+        &business,
+        &period,
+        &merkle_root,
+        &1000,
+        &1,
+        &0i128,
+        &None,
+        &None,
+    );
 
     env.ledger().set_timestamp(2_000);
     client.submit_attestation(
@@ -71,6 +90,7 @@ fn submit_with_past_expiry_panics() {
         &merkle_root,
         &1_500u64,
         &1u32,
+        &0i128,
         &None,
         &Some(1_900u64),
     );
@@ -91,6 +111,7 @@ fn submit_with_expiry_equal_to_ledger_time_panics() {
         &root,
         &1_800u64,
         &1u32,
+        &0i128,
         &None,
         &Some(2_000u64),
     );
@@ -111,6 +132,7 @@ fn submit_with_expiry_before_attestation_timestamp_panics() {
         &root,
         &2_000u64,
         &1u32,
+        &0i128,
         &None,
         &Some(1_500u64),
     );
@@ -130,6 +152,7 @@ fn is_expired_boundary_behavior_is_enforced() {
         &root,
         &1_050u64,
         &1u32,
+        &0i128,
         &None,
         &Some(1_500u64),
     );
@@ -155,6 +178,7 @@ fn verify_attestation_fails_after_expiry() {
         &root,
         &550u64,
         &1u32,
+        &0i128,
         &None,
         &Some(1_000u64),
     );
@@ -180,6 +204,7 @@ fn expired_attestation_remains_queryable() {
         &root,
         &11u64,
         &1u32,
+        &0i128,
         &None,
         &Some(20u64),
     );
@@ -204,6 +229,7 @@ fn cleanup_expired_attestation_removes_data_and_emits_event() {
         &root,
         &10u64,
         &1u32,
+        &0i128,
         &None,
         &Some(20u64),
     );
@@ -237,10 +263,19 @@ fn cleanup_revoked_attestation_panics() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2027-Q7");
     let root = BytesN::from_array(&env, &[10u8; 32]);
-    let challenger = Address::generate(&env);
+    let _challenger = Address::generate(&env);
 
     env.ledger().set_timestamp(0);
-    client.submit_attestation(&business, &period, &root, &1u64, &1u32, &None, &Some(10u64));
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1u64,
+        &1u32,
+        &0i128,
+        &None,
+        &Some(10u64),
+    );
     env.ledger().set_timestamp(20);
     client.revoke_attestation(
         &admin,
@@ -264,7 +299,16 @@ fn cleanup_with_open_dispute_panics() {
     let challenger = Address::generate(&env);
 
     env.ledger().set_timestamp(0);
-    client.submit_attestation(&business, &period, &root, &1u64, &1u32, &None, &Some(10u64));
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1u64,
+        &1u32,
+        &0i128,
+        &None,
+        &Some(10u64),
+    );
     env.ledger().set_timestamp(20);
     client.open_dispute(
         &challenger,
@@ -305,6 +349,7 @@ fn test_expiry_near_max_u64() {
         &merkle_root,
         &1000,
         &1,
+        &0i128,
         &None,
         &Some(near_max_expiry),
     );
@@ -337,6 +382,7 @@ fn test_expiry_at_u64_max() {
         &merkle_root,
         &1000,
         &1,
+        &0i128,
         &None,
         &Some(max_expiry),
     );
@@ -367,6 +413,7 @@ fn test_expiry_at_u64_max_with_max_ledger_time() {
         &merkle_root,
         &u64::MAX,
         &1,
+        &0i128,
         &None,
         &Some(max_expiry),
     );
@@ -398,6 +445,7 @@ fn test_expiry_at_zero() {
         &merkle_root,
         &0,
         &1,
+        &0i128,
         &None,
         &Some(zero_expiry),
     );
@@ -425,6 +473,7 @@ fn test_expiry_just_after_zero() {
         &merkle_root,
         &0,
         &1,
+        &0i128,
         &None,
         &Some(small_expiry),
     );
@@ -457,6 +506,7 @@ fn test_expiry_one_second_before() {
         &merkle_root,
         &500,
         &1,
+        &0i128,
         &None,
         &Some(expiry_ts),
     );
@@ -484,6 +534,7 @@ fn test_expiry_one_second_after() {
         &merkle_root,
         &500,
         &1,
+        &0i128,
         &None,
         &Some(expiry_ts),
     );
@@ -514,6 +565,7 @@ fn test_expiry_large_mid_range_timestamp() {
         &merkle_root,
         &large_timestamp,
         &1,
+        &0i128,
         &None,
         &Some(expiry),
     );
@@ -544,6 +596,7 @@ fn test_verify_with_large_expiry() {
         &merkle_root,
         &1000,
         &1,
+        &0i128,
         &None,
         &Some(large_expiry),
     );
@@ -568,6 +621,7 @@ fn test_get_attestation_preserves_large_expiry() {
         &merkle_root,
         &1000,
         &1,
+        &0i128,
         &None,
         &Some(large_expiry),
     );
@@ -606,6 +660,7 @@ fn test_multiple_attestations_varying_large_expiries() {
             &merkle_root,
             &1000,
             &1,
+            &0i128,
             &None,
             &Some(expiry),
         );
@@ -634,6 +689,7 @@ fn test_expired_attestation_queryable_with_large_timestamp() {
         &merkle_root,
         &0,
         &1,
+        &0i128,
         &None,
         &Some(expiry_ts),
     );
@@ -671,6 +727,7 @@ fn test_expiry_equal_to_timestamp() {
         &merkle_root,
         &timestamp,
         &1,
+        &0i128,
         &None,
         &Some(expiry),
     );
@@ -692,6 +749,7 @@ fn test_now_equal_to_expiry_is_expired() {
         &merkle_root,
         &1500,
         &1,
+        &0i128,
         &None,
         &Some(expiry),
     );
@@ -716,6 +774,7 @@ fn test_now_equal_to_expiry_minus_one_not_expired() {
         &merkle_root,
         &1500,
         &1,
+        &0i128,
         &None,
         &Some(expiry),
     );
@@ -740,6 +799,7 @@ fn test_expiry_equal_to_now_plus_one_not_expired() {
         &merkle_root,
         &999,
         &1,
+        &0i128,
         &None,
         &Some(expiry),
     );
@@ -755,7 +815,16 @@ fn test_none_expiry_never_expires() {
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
 
     env.ledger().set_timestamp(1000);
-    client.submit_attestation(&business, &period, &merkle_root, &1000, &1, &None, &None);
+    client.submit_attestation(
+        &business,
+        &period,
+        &merkle_root,
+        &1000,
+        &1,
+        &0i128,
+        &None,
+        &None,
+    );
 
     // Advance time very far into the future
     env.ledger().set_timestamp(u64::MAX);
@@ -782,6 +851,7 @@ fn test_expiry_near_boundary() {
         &merkle_root,
         &(u64::MAX - 100),
         &1,
+        &0i128,
         &None,
         &Some(expiry_ts),
     );
@@ -830,6 +900,7 @@ fn test_expiry_comparison_semantics_at_boundary() {
             &merkle_root,
             &1000,
             &1,
+            &0i128,
             &None,
             &Some(expiry),
         );
@@ -862,6 +933,7 @@ fn test_past_expiry_immediately_expired() {
         &merkle_root,
         &1000,
         &1,
+        &0i128,
         &None,
         &Some(past_expiry),
     );

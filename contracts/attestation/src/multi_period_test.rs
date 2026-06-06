@@ -34,6 +34,12 @@ fn period_to_root(period: u32) -> [u8; 32] {
     root
 }
 
+/// Read the stored multi-period ranges for `business` directly from storage.
+fn get_ranges(env: &Env, business: &Address) -> Vec<AttestationRange> {
+    let key = MultiPeriodKey::Ranges(business.clone());
+    env.storage().instance().get(&key).unwrap_or(Vec::new(env))
+}
+
 // ════════════════════════════════════════════════════════════════════
 //  Issue #367: Merkle Root Index Tests
 // ════════════════════════════════════════════════════════════════════
@@ -45,11 +51,11 @@ fn test_index_populates_on_submit() {
     let root = BytesN::from_array(&env, &period_to_root(202401));
 
     client.submit_multi_period_attestation(
-        &business, 202401, 202412, &root, 1000u64, 1u32, &None, &None,
+        &business, &202401, &202412, &root, &1000u64, &1u32, &None, &None,
     );
 
     // Verify the range was stored
-    let stored = client.get_multi_period_ranges(&business);
+    let stored = get_ranges(&env, &business);
     assert_eq!(stored.len(), 1);
     assert_eq!(stored.get(0).unwrap().merkle_root, root);
 }
@@ -62,14 +68,14 @@ fn test_revocation_via_index_success() {
 
     // Submit a range
     client.submit_multi_period_attestation(
-        &business, 202401, 202412, &root, 1000u64, 1u32, &None, &None,
+        &business, &202401, &202412, &root, &1000u64, &1u32, &None, &None,
     );
 
     // Revoke via index
     client.revoke_multi_period_attestation(&business, &root);
 
     // Verify revoked flag set
-    let stored = client.get_multi_period_ranges(&business);
+    let stored = get_ranges(&env, &business);
     assert_eq!(stored.len(), 1);
     assert!(stored.get(0).unwrap().revoked);
 }
@@ -95,19 +101,19 @@ fn test_multiple_ranges_independent_index() {
 
     // Submit three non-overlapping ranges
     client.submit_multi_period_attestation(
-        &business, 202401, 202412, &root1, 1000u64, 1u32, &None, &None,
+        &business, &202401, &202412, &root1, &1000u64, &1u32, &None, &None,
     );
     client.submit_multi_period_attestation(
-        &business, 202413, 202424, &root2, 2000u64, 1u32, &None, &None,
+        &business, &202413, &202424, &root2, &2000u64, &1u32, &None, &None,
     );
     client.submit_multi_period_attestation(
-        &business, 202425, 202436, &root3, 3000u64, 1u32, &None, &None,
+        &business, &202425, &202436, &root3, &3000u64, &1u32, &None, &None,
     );
 
     // Revoke the middle one via index
     client.revoke_multi_period_attestation(&business, &root2);
 
-    let stored = client.get_multi_period_ranges(&business);
+    let stored = get_ranges(&env, &business);
     assert_eq!(stored.len(), 3);
     assert!(!stored.get(0).unwrap().revoked); // First not revoked
     assert!(stored.get(1).unwrap().revoked); // Middle revoked
@@ -122,16 +128,16 @@ fn test_revocation_last_range_via_index() {
     let root2 = BytesN::from_array(&env, &period_to_root(202413));
 
     client.submit_multi_period_attestation(
-        &business, 202401, 202412, &root1, 1000u64, 1u32, &None, &None,
+        &business, &202401, &202412, &root1, &1000u64, &1u32, &None, &None,
     );
     client.submit_multi_period_attestation(
-        &business, 202413, 202424, &root2, 2000u64, 1u32, &None, &None,
+        &business, &202413, &202424, &root2, &2000u64, &1u32, &None, &None,
     );
 
     // Revoke the last (most recent) range
     client.revoke_multi_period_attestation(&business, &root2);
 
-    let stored = client.get_multi_period_ranges(&business);
+    let stored = get_ranges(&env, &business);
     assert!(stored.get(1).unwrap().revoked);
 }
 
@@ -147,13 +153,13 @@ fn test_overlap_adjacent_ranges_fail() {
     let root2 = BytesN::from_array(&env, &period_to_root(202402));
 
     client.submit_multi_period_attestation(
-        &business, 202401, 202412, &root1, 1000u64, 1u32, &None, &None,
+        &business, &202401, &202412, &root1, &1000u64, &1u32, &None, &None,
     );
 
     // Adjacent range: end+1 == start, should fail
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.submit_multi_period_attestation(
-            &business, 202412, 202424, &root2, 2000u64, 1u32, &None, &None,
+            &business, &202412, &202424, &root2, &2000u64, &1u32, &None, &None,
         );
     }));
     assert!(result.is_err());
@@ -167,13 +173,13 @@ fn test_overlap_identical_ranges_fail() {
     let root2 = BytesN::from_array(&env, &period_to_root(202402));
 
     client.submit_multi_period_attestation(
-        &business, 202401, 202412, &root1, 1000u64, 1u32, &None, &None,
+        &business, &202401, &202412, &root1, &1000u64, &1u32, &None, &None,
     );
 
     // Identical range, should fail
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.submit_multi_period_attestation(
-            &business, 202401, 202412, &root2, 2000u64, 1u32, &None, &None,
+            &business, &202401, &202412, &root2, &2000u64, &1u32, &None, &None,
         );
     }));
     assert!(result.is_err());
@@ -187,13 +193,13 @@ fn test_overlap_fully_contained_fail() {
     let root2 = BytesN::from_array(&env, &period_to_root(202402));
 
     client.submit_multi_period_attestation(
-        &business, 202401, 202412, &root1, 1000u64, 1u32, &None, &None,
+        &business, &202401, &202412, &root1, &1000u64, &1u32, &None, &None,
     );
 
     // Smaller range fully contained within first, should fail
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.submit_multi_period_attestation(
-            &business, 202404, 202408, &root2, 2000u64, 1u32, &None, &None,
+            &business, &202404, &202408, &root2, &2000u64, &1u32, &None, &None,
         );
     }));
     assert!(result.is_err());
@@ -207,13 +213,13 @@ fn test_overlap_partial_left_fail() {
     let root2 = BytesN::from_array(&env, &period_to_root(202402));
 
     client.submit_multi_period_attestation(
-        &business, 202405, 202412, &root1, 1000u64, 1u32, &None, &None,
+        &business, &202405, &202412, &root1, &1000u64, &1u32, &None, &None,
     );
 
     // Partial overlap on left, should fail
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.submit_multi_period_attestation(
-            &business, 202401, 202408, &root2, 2000u64, 1u32, &None, &None,
+            &business, &202401, &202408, &root2, &2000u64, &1u32, &None, &None,
         );
     }));
     assert!(result.is_err());
@@ -227,13 +233,13 @@ fn test_overlap_partial_right_fail() {
     let root2 = BytesN::from_array(&env, &period_to_root(202402));
 
     client.submit_multi_period_attestation(
-        &business, 202401, 202408, &root1, 1000u64, 1u32, &None, &None,
+        &business, &202401, &202408, &root1, &1000u64, &1u32, &None, &None,
     );
 
     // Partial overlap on right, should fail
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.submit_multi_period_attestation(
-            &business, 202405, 202412, &root2, 2000u64, 1u32, &None, &None,
+            &business, &202405, &202412, &root2, &2000u64, &1u32, &None, &None,
         );
     }));
     assert!(result.is_err());
@@ -247,15 +253,15 @@ fn test_no_overlap_before_range_succeeds() {
     let root2 = BytesN::from_array(&env, &period_to_root(202402));
 
     client.submit_multi_period_attestation(
-        &business, 202405, 202412, &root1, 1000u64, 1u32, &None, &None,
+        &business, &202405, &202412, &root1, &1000u64, &1u32, &None, &None,
     );
 
     // No overlap: end_period < start_period of existing, should succeed
     client.submit_multi_period_attestation(
-        &business, 202401, 202404, &root2, 2000u64, 1u32, &None, &None,
+        &business, &202401, &202404, &root2, &2000u64, &1u32, &None, &None,
     );
 
-    let stored = client.get_multi_period_ranges(&business);
+    let stored = get_ranges(&env, &business);
     assert_eq!(stored.len(), 2);
 }
 
@@ -267,15 +273,15 @@ fn test_no_overlap_after_range_succeeds() {
     let root2 = BytesN::from_array(&env, &period_to_root(202402));
 
     client.submit_multi_period_attestation(
-        &business, 202401, 202404, &root1, 1000u64, 1u32, &None, &None,
+        &business, &202401, &202404, &root1, &1000u64, &1u32, &None, &None,
     );
 
     // No overlap: start_period > end_period of existing, should succeed
     client.submit_multi_period_attestation(
-        &business, 202405, 202412, &root2, 2000u64, 1u32, &None, &None,
+        &business, &202405, &202412, &root2, &2000u64, &1u32, &None, &None,
     );
 
-    let stored = client.get_multi_period_ranges(&business);
+    let stored = get_ranges(&env, &business);
     assert_eq!(stored.len(), 2);
 }
 
@@ -287,7 +293,7 @@ fn test_overlap_with_revoked_range_succeeds() {
     let root2 = BytesN::from_array(&env, &period_to_root(202402));
 
     client.submit_multi_period_attestation(
-        &business, 202401, 202412, &root1, 1000u64, 1u32, &None, &None,
+        &business, &202401, &202412, &root1, &1000u64, &1u32, &None, &None,
     );
 
     // Revoke the first range
@@ -295,10 +301,10 @@ fn test_overlap_with_revoked_range_succeeds() {
 
     // Now submit an overlapping range (with revoked), should succeed
     client.submit_multi_period_attestation(
-        &business, 202401, 202412, &root2, 2000u64, 1u32, &None, &None,
+        &business, &202401, &202412, &root2, &2000u64, &1u32, &None, &None,
     );
 
-    let stored = client.get_multi_period_ranges(&business);
+    let stored = get_ranges(&env, &business);
     assert_eq!(stored.len(), 2);
     assert!(stored.get(0).unwrap().revoked);
     assert!(!stored.get(1).unwrap().revoked);
@@ -314,18 +320,18 @@ fn test_multiple_overlaps_across_ranges() {
 
     // Submit first range: 202401-202406
     client.submit_multi_period_attestation(
-        &business, 202401, 202406, &root1, 1000u64, 1u32, &None, &None,
+        &business, &202401, &202406, &root1, &1000u64, &1u32, &None, &None,
     );
 
     // Submit second non-overlapping: 202407-202412
     client.submit_multi_period_attestation(
-        &business, 202407, 202412, &root2, 2000u64, 1u32, &None, &None,
+        &business, &202407, &202412, &root2, &2000u64, &1u32, &None, &None,
     );
 
     // Try third overlapping with first (202403-202410), should fail
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.submit_multi_period_attestation(
-            &business, 202403, 202410, &root3, 3000u64, 1u32, &None, &None,
+            &business, &202403, &202410, &root3, &3000u64, &1u32, &None, &None,
         );
     }));
     assert!(result.is_err());
@@ -340,13 +346,13 @@ fn test_start_period_equals_end_period_predicate() {
 
     // Single-period range
     client.submit_multi_period_attestation(
-        &business, 202405, 202405, &root1, 1000u64, 1u32, &None, &None,
+        &business, &202405, &202405, &root1, &1000u64, &1u32, &None, &None,
     );
 
     // Try to submit exact same period, should fail
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.submit_multi_period_attestation(
-            &business, 202405, 202405, &root2, 2000u64, 1u32, &None, &None,
+            &business, &202405, &202405, &root2, &2000u64, &1u32, &None, &None,
         );
     }));
     assert!(result.is_err());
@@ -361,13 +367,13 @@ fn test_wide_range_overlaps() {
 
     // Wide range covering many periods
     client.submit_multi_period_attestation(
-        &business, 202301, 202412, &root1, 1000u64, 1u32, &None, &None,
+        &business, &202301, &202412, &root1, &1000u64, &1u32, &None, &None,
     );
 
     // Any range within the wide range should fail
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.submit_multi_period_attestation(
-            &business, 202306, 202310, &root2, 2000u64, 1u32, &None, &None,
+            &business, &202306, &202310, &root2, &2000u64, &1u32, &None, &None,
         );
     }));
     assert!(result.is_err());
