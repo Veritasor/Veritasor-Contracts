@@ -7,6 +7,8 @@
 
 extern crate std;
 
+use std::format;
+
 use super::*;
 use crate::dynamic_fees::compute_fee;
 use proptest::prelude::*;

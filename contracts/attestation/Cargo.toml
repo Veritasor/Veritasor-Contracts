@@ -3,7 +3,7 @@ name = "veritasor-attestation"
 version = "0.1.0"
 edition = "2021"
 publish = false
-rust-version = "1.75.0"
+rust-version = "1.81.0"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -11,7 +11,6 @@ doctest = false
 
 [features]
 default = []
-full-tests = []
 
 [dependencies]
 soroban-sdk = "22.0"
@@ -19,7 +18,7 @@ veritasor-common = { path = "../common" }
 
 [dev-dependencies]
 soroban-sdk = { version = "22.0", features = ["testutils"] }
-proptest    = { version = "=1.8.0", default-features = false, features = ["std"] }
+proptest    = { version = "=1.5.0", default-features = false, features = ["std"] }
 veritasor-common = { path = "../common" }
 veritasor-attestor-staking = { path = "../attestor-staking" }
 

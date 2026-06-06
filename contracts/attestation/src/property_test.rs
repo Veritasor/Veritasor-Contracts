@@ -51,6 +51,7 @@ use proptest::prelude::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
 use soroban_sdk::{vec, Address, BytesN, Env, String};
+use std::format;
 
 // ════════════════════════════════════════════════════════════════════
 //  Shared setup helpers
@@ -566,7 +567,7 @@ fn prop_migration_succeeds_for_increasing_version() {
         client.submit_attestation(
             &business, &period, &old_root, &1_000_000, &old_ver, &0i128, &None, &None,
         );
-        client.migrate_attestation(&admin, &business, &period, &new_root, &new_ver);
+        client.migrate_attestation(&admin, &business, &period, &new_root, &new_ver, &0u64);
 
         let (got_root, _, got_ver, _, _, _) = client.get_attestation(&business, &period).unwrap();
         assert_eq!(
@@ -607,7 +608,14 @@ fn prop_migration_panics_for_non_increasing_version() {
             client.submit_attestation(
                 &business, &period, &old_root, &1_000_000, &old_ver, &0i128, &None, &None,
             );
-            client.migrate_attestation(&admin_addr, &business, &period, &new_root, &bad_new_ver);
+            client.migrate_attestation(
+                &admin_addr,
+                &business,
+                &period,
+                &new_root,
+                &bad_new_ver,
+                &0u64,
+            );
         }));
 
         let err = result.expect_err(&std::format!(

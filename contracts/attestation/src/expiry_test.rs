@@ -1,7 +1,7 @@
 use crate::{AttestationContract, AttestationContractClient};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
-    Address, BytesN, Env, String,
+    testutils::{Address as _, Events, Ledger},
+    Address, BytesN, Env, String, TryFromVal,
 };
 
 fn setup() -> (Env, AttestationContractClient<'static>, Address) {

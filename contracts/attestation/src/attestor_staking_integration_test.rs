@@ -209,6 +209,7 @@ fn attestor_batch_submit_succeeds_when_eligible() {
         merkle_root: BytesN::from_array(&env, &[1u8; 32]),
         timestamp: 1_700_000_000u64,
         version: 1u32,
+        proof_hash: None,
         expiry_timestamp: None,
     });
     items.push_back(BatchAttestationItem {
@@ -217,6 +218,7 @@ fn attestor_batch_submit_succeeds_when_eligible() {
         merkle_root: BytesN::from_array(&env, &[2u8; 32]),
         timestamp: 1_700_000_000u64,
         version: 2u32,
+        proof_hash: None,
         expiry_timestamp: None,
     });
 
@@ -712,6 +714,7 @@ fn batch_submit_fails_when_ineligible() {
         merkle_root: BytesN::from_array(&env, &[1u8; 32]),
         timestamp: 1_700_000_000u64,
         version: 1u32,
+        proof_hash: None,
         expiry_timestamp: None,
     });
 
@@ -1046,6 +1049,7 @@ fn batch_with_duplicate_fails_entirely() {
         merkle_root: BytesN::from_array(&env, &[2u8; 32]),
         timestamp: 1_700_000_000u64,
         version: 1u32,
+        proof_hash: None,
         expiry_timestamp: None,
     });
     items.push_back(BatchAttestationItem {
@@ -1054,6 +1058,7 @@ fn batch_with_duplicate_fails_entirely() {
         merkle_root: BytesN::from_array(&env, &[3u8; 32]),
         timestamp: 1_700_000_000u64,
         version: 1u32,
+        proof_hash: None,
         expiry_timestamp: None,
     });
 
@@ -1347,6 +1352,7 @@ fn batch_submission_fails_when_paused() {
         merkle_root: BytesN::from_array(&env, &[1u8; 32]),
         timestamp: 1_700_000_000u64,
         version: 1u32,
+        proof_hash: None,
         expiry_timestamp: None,
     });
 
@@ -1580,7 +1586,8 @@ fn attestor_pays_fees_on_submission() {
     token_client.mint(&attestor, &5_000i128);
     staking.stake(&attestor, &1_000i128);
 
-    let attestor_balance_before = token_client.balance(&attestor);
+    let balance_client = token::Client::new(&env, &token);
+    let attestor_balance_before = balance_client.balance(&attestor);
 
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
@@ -1596,7 +1603,7 @@ fn attestor_pays_fees_on_submission() {
         &None,
     );
 
-    let attestor_balance_after = token_client.balance(&attestor);
+    let attestor_balance_after = balance_client.balance(&attestor);
     assert_eq!(attestor_balance_before - attestor_balance_after, 1_000i128);
 }
 
@@ -1639,7 +1646,8 @@ fn batch_submission_collects_fees_per_item() {
     token_client.mint(&attestor, &10_000i128);
     staking.stake(&attestor, &1_000i128);
 
-    let attestor_balance_before = token_client.balance(&attestor);
+    let balance_client = token::Client::new(&env, &token);
+    let attestor_balance_before = balance_client.balance(&attestor);
 
     let business = Address::generate(&env);
     let mut items = Vec::new(&env);
@@ -1649,6 +1657,7 @@ fn batch_submission_collects_fees_per_item() {
         merkle_root: BytesN::from_array(&env, &[1u8; 32]),
         timestamp: 1_700_000_000u64,
         version: 1u32,
+        proof_hash: None,
         expiry_timestamp: None,
     });
     items.push_back(BatchAttestationItem {
@@ -1657,6 +1666,7 @@ fn batch_submission_collects_fees_per_item() {
         merkle_root: BytesN::from_array(&env, &[2u8; 32]),
         timestamp: 1_700_000_000u64,
         version: 1u32,
+        proof_hash: None,
         expiry_timestamp: None,
     });
     items.push_back(BatchAttestationItem {
@@ -1665,12 +1675,13 @@ fn batch_submission_collects_fees_per_item() {
         merkle_root: BytesN::from_array(&env, &[3u8; 32]),
         timestamp: 1_700_000_000u64,
         version: 1u32,
+        proof_hash: None,
         expiry_timestamp: None,
     });
 
     att_client.submit_batch_as_attestor(&attestor, &items);
 
-    let attestor_balance_after = token_client.balance(&attestor);
+    let attestor_balance_after = balance_client.balance(&attestor);
     // 3 items * 1000 fee each = 3000 total
     assert_eq!(attestor_balance_before - attestor_balance_after, 3_000i128);
 }

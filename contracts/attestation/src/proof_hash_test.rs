@@ -171,7 +171,7 @@ fn proof_hash_preserved_after_migration() {
     );
 
     // Migrate to new version — proof hash must be preserved.
-    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32, &0u64);
 
     let (stored_root, _, stored_ver, _, stored_proof, _) =
         client.get_attestation(&business, &period).unwrap();
@@ -203,7 +203,7 @@ fn none_proof_hash_preserved_after_migration() {
         &None,
     );
 
-    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32, &0u64);
 
     let (_, _, _, _, stored_proof, _) = client.get_attestation(&business, &period).unwrap();
     assert_eq!(stored_proof, None);

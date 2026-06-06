@@ -34,6 +34,12 @@ fn period_to_root(period: u32) -> [u8; 32] {
     root
 }
 
+/// Read the stored multi-period ranges for `business` directly from storage.
+fn get_ranges(env: &Env, business: &Address) -> Vec<AttestationRange> {
+    let key = MultiPeriodKey::Ranges(business.clone());
+    env.storage().instance().get(&key).unwrap_or(Vec::new(env))
+}
+
 // ════════════════════════════════════════════════════════════════════
 //  Issue #367: Merkle Root Index Tests
 // ════════════════════════════════════════════════════════════════════

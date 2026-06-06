@@ -400,7 +400,7 @@ fn test_revocation_when_paused() {
         1,
     );
 
-    test.pause(test.admin.clone());
+    test.pause(test.admin.clone(), 0u64);
 
     test.revoke_attestation(
         test.admin.clone(),
@@ -1294,7 +1294,7 @@ fn test_revocation_sequence_increments_per_revocation() {
     assert_eq!(seq0, 0u64);
 
     for i in 0u8..3 {
-        let period = String::from_str(&env, &soroban_sdk::format!("2026-{:02}", i + 1));
+        let period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
         client.submit_attestation(
             &business,
             &period,

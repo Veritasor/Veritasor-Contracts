@@ -804,7 +804,7 @@ fn test_migrate_attestation_emits_event() {
     submit_default(&client, &env, &business, &period);
     let new_root = BytesN::from_array(&env, &[2u8; 32]);
 
-    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32, &0u64);
 
     assert!(!env.events().all().is_empty());
 }
@@ -891,7 +891,7 @@ fn test_migrate_same_version_panics_no_event() {
     let events_before_migration = env.events().all().len();
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.migrate_attestation(&admin, &business, &period, &new_root, &1u32);
+        client.migrate_attestation(&admin, &business, &period, &new_root, &1u32, &0u64);
     }));
 
     assert!(result.is_err(), "expected same-version migration to panic");
@@ -921,7 +921,7 @@ fn test_migrate_lower_version_panics() {
     );
     let new_root = BytesN::from_array(&env, &[2u8; 32]);
     // Version 3 < 5 — must panic
-    client.migrate_attestation(&admin, &business, &period, &new_root, &3u32);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &3u32, &0u64);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -1131,14 +1131,14 @@ fn test_multiple_migrations_emit_incremental_events() {
     );
     let count_after_submit = env.events().all().len();
 
-    client.migrate_attestation(&admin, &business, &period, &root_v2, &2u32);
+    client.migrate_attestation(&admin, &business, &period, &root_v2, &2u32, &0u64);
     let count_after_v2 = env.events().all().len();
     assert!(
         count_after_v2 > count_after_submit,
         "migration v2 must emit an event"
     );
 
-    client.migrate_attestation(&admin, &business, &period, &root_v3, &3u32);
+    client.migrate_attestation(&admin, &business, &period, &root_v3, &3u32, &0u64);
     let count_after_v3 = env.events().all().len();
     assert!(
         count_after_v3 > count_after_v2,

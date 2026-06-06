@@ -52,7 +52,7 @@ fn test_grant_multiple_roles() {
     assert!(client.has_role(&user, &ROLE_ATTESTOR));
     assert!(client.has_role(&user, &ROLE_BUSINESS));
 
-    let roles = client.get_roles(&user);
+    let roles = access_control::get_roles(&env, &user);
     assert_eq!(roles, ROLE_ATTESTOR | ROLE_BUSINESS);
 }
 
@@ -91,7 +91,7 @@ fn test_get_role_holders() {
     client.grant_role(&admin, &user1, &ROLE_ATTESTOR);
     client.grant_role(&admin, &user2, &ROLE_BUSINESS);
 
-    let holders = client.get_role_holders();
+    let holders = access_control::get_role_holders(&env);
     // Admin + 2 users
     assert_eq!(holders.len(), 3);
 }
@@ -165,7 +165,7 @@ fn test_operator_cannot_unpause() {
     client.pause(&admin, &1u64);
 
     // Operator can pause but cannot unpause
-    client.unpause(&operator);
+    client.unpause(&operator, &0u64);
 }
 
 #[test]
@@ -260,7 +260,7 @@ fn test_roles_are_zero_by_default() {
     let (env, client, _admin) = setup();
     let user = Address::generate(&env);
 
-    assert_eq!(client.get_roles(&user), 0);
+    assert_eq!(access_control::get_roles(&env, &user), 0);
     assert!(!client.has_role(&user, &ROLE_ADMIN));
     assert!(!client.has_role(&user, &ROLE_ATTESTOR));
     assert!(!client.has_role(&user, &ROLE_BUSINESS));
@@ -278,7 +278,7 @@ fn test_all_role_combinations() {
     client.grant_role(&admin, &user, &ROLE_BUSINESS);
     client.grant_role(&admin, &user, &ROLE_OPERATOR);
 
-    let roles = client.get_roles(&user);
+    let roles = access_control::get_roles(&env, &user);
     assert_eq!(
         roles,
         ROLE_ADMIN | ROLE_ATTESTOR | ROLE_BUSINESS | ROLE_OPERATOR
@@ -286,7 +286,7 @@ fn test_all_role_combinations() {
 
     // Revoke one
     client.revoke_role(&admin, &user, &ROLE_BUSINESS);
-    let roles = client.get_roles(&user);
+    let roles = access_control::get_roles(&env, &user);
     assert_eq!(roles, ROLE_ADMIN | ROLE_ATTESTOR | ROLE_OPERATOR);
 }
 
@@ -353,7 +353,7 @@ fn test_revoked_operator_cannot_pause() {
     client.revoke_role(&admin, &operator, &ROLE_OPERATOR);
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.unpause(&operator);
+        client.unpause(&operator, &0u64);
     }));
     assert!(result.is_err(), "revoked operator cannot unpause");
 }
@@ -394,7 +394,10 @@ fn test_admin_role_not_grantable_to_zero_address() {
     let admin = Address::generate(&env);
     client.initialize(&admin, &0u64);
 
-    let zero_address = Address::from_raw([0u8; 32]);
+    let zero_address = Address::from_str(
+        &env,
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    );
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.grant_role(&admin, &zero_address, &ROLE_ADMIN);

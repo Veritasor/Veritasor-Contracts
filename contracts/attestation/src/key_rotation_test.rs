@@ -192,10 +192,10 @@ fn test_emergency_rotation_via_multisig() {
     );
 
     // Second owner approves (threshold = 2)
-    client.approve_proposal(&owner2, &proposal_id, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
 
     // Execute
-    client.execute_proposal(&admin, &proposal_id, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &0u64, &0u64);
 
     // Verify admin transferred
     assert_eq!(client.get_admin(), new_admin);
@@ -214,8 +214,8 @@ fn test_emergency_rotation_records_history() {
         &ProposalAction::EmergencyRotateAdmin(new_admin.clone()),
         &0u64,
     );
-    client.approve_proposal(&owner2, &proposal_id, &0u64);
-    client.execute_proposal(&admin, &proposal_id, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &0u64, &0u64);
 
     assert_eq!(client.get_key_rotation_count(), 1);
     let history = client.get_key_rotation_history();
@@ -240,8 +240,8 @@ fn test_emergency_rotation_clears_pending_planned() {
         &ProposalAction::EmergencyRotateAdmin(emergency_new.clone()),
         &0u64,
     );
-    client.approve_proposal(&owner2, &proposal_id, &0u64);
-    client.execute_proposal(&admin, &proposal_id, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &0u64, &0u64);
 
     assert!(!client.has_pending_key_rotation());
     assert_eq!(client.get_admin(), emergency_new);

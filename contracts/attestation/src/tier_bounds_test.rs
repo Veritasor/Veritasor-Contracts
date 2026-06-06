@@ -41,6 +41,13 @@ fn test_set_business_tier_zero_accepted() {
 }
 
 #[test]
+fn test_set_business_tier_one_accepted() {
+    let t = setup();
+    let biz = Address::generate(&t.env);
+    t.client.set_business_tier(&biz, &1);
+}
+
+#[test]
 fn test_set_business_tier_at_max_accepted() {
     let t = setup();
     let biz = Address::generate(&t.env);
@@ -65,6 +72,18 @@ fn test_set_business_tier_u32_max_panics() {
 }
 
 // ── set_tier_discount bounds ────────────────────────────────────────
+
+#[test]
+fn test_set_tier_discount_zero_accepted() {
+    let t = setup();
+    t.client.set_tier_discount(&0, &5_000);
+}
+
+#[test]
+fn test_set_tier_discount_one_accepted() {
+    let t = setup();
+    t.client.set_tier_discount(&1, &5_000);
+}
 
 #[test]
 fn test_set_tier_discount_at_max_tier_accepted() {
@@ -102,4 +121,46 @@ fn test_tier_checked_before_discount_bps() {
 fn test_discount_over_100_pct_rejected_for_valid_tier() {
     let t = setup();
     t.client.set_tier_discount(&0, &10_001);
+}
+
+// ── Edge cases ──────────────────────────────────────────────────────
+
+#[test]
+fn test_unconfigured_tier_discount_returns_zero() {
+    let t = setup();
+    // Valid tier but not configured returns 0
+    assert_eq!(dynamic_fees::get_tier_discount(&t.env, 3), 0);
+    // Out of bounds tier lookup also returns 0 without panicking
+    assert_eq!(
+        dynamic_fees::get_tier_discount(&t.env, dynamic_fees::MAX_TIER + 1),
+        0
+    );
+}
+
+#[test]
+fn test_set_business_tier_overwritten() {
+    let t = setup();
+    let biz = Address::generate(&t.env);
+
+    t.client.set_business_tier(&biz, &1);
+    assert_eq!(dynamic_fees::get_business_tier(&t.env, &biz), 1);
+
+    // Overwriting the tier works and no explicit removal is needed
+    t.client.set_business_tier(&biz, &dynamic_fees::MAX_TIER);
+    assert_eq!(
+        dynamic_fees::get_business_tier(&t.env, &biz),
+        dynamic_fees::MAX_TIER
+    );
+}
+
+#[test]
+fn test_set_tier_discount_overwritten() {
+    let t = setup();
+
+    t.client.set_tier_discount(&1, &2_000);
+    assert_eq!(dynamic_fees::get_tier_discount(&t.env, 1), 2_000);
+
+    // Overwriting the discount works
+    t.client.set_tier_discount(&1, &5_000);
+    assert_eq!(dynamic_fees::get_tier_discount(&t.env, 1), 5_000);
 }
