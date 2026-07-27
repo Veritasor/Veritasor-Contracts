@@ -27,6 +27,7 @@
 use crate::access_control;
 use crate::dynamic_fees::{self, DataKey};
 use crate::ROLE_ADMIN;
+use crate::events;
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 /// Status of a dispute
@@ -150,6 +151,12 @@ enum DisputeKey {
     /// Incremented atomically with every successful revocation.
     /// Never decremented or reused.
     RevocationSequence,
+    /// Tracks which attestor submitted an attestation for a business-period pair.
+    /// Used to lock attestors when disputes are opened against their attestations.
+    AttestorByAttestation(Address, String),
+    /// Tracks the number of active disputes locking an attestor.
+    /// When count reaches 0, the attestor is fully unlocked.
+    AttestorLockCount(Address),
 }
 
 /// Generate next unique dispute ID
@@ -547,5 +554,98 @@ pub fn update_anomaly_escalation(env: &Env, business: &Address, score: u32) {
     let current: u32 = env.storage().instance().get(&key).unwrap_or(0);
     if level > current {
         env.storage().instance().set(&key, &level);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Attestor Lock / Rotation for Dispute-in-Progress
+// ════════════════════════════════════════════════════════════════════
+
+/// Record which attestor submitted an attestation for a business-period pair.
+///
+/// Called after a successful attestation submission by an attestor so that
+/// the attestor can be locked when a dispute is opened against that attestation.
+pub fn store_attestor_for_attestation(
+    env: &Env,
+    business: &Address,
+    period: &String,
+    attestor: &Address,
+) {
+    let key = DisputeKey::AttestorByAttestation(business.clone(), period.clone());
+    env.storage().instance().set(&key, attestor);
+}
+
+/// Retrieve the attestor address that submitted an attestation for a given
+/// business-period pair. Returns `None` if the attestation was submitted by
+/// the business itself or the mapping does not exist.
+pub fn get_attestor_for_attestation(
+    env: &Env,
+    business: &Address,
+    period: &String,
+) -> Option<Address> {
+    let key = DisputeKey::AttestorByAttestation(business.clone(), period.clone());
+    env.storage().instance().get(&key)
+}
+
+/// Check whether an attestor is currently locked due to an active dispute.
+///
+/// An attestor is locked when their `AttestorLockCount` is greater than zero.
+/// This properly handles the edge case where multiple disputes for attestations
+/// submitted by the same attestor are opened concurrently — the lock is only
+/// released once the last active dispute is resolved.
+pub fn is_attestor_locked(env: &Env, attestor: &Address) -> bool {
+    env.storage()
+        .instance()
+        .get(&DisputeKey::AttestorLockCount(attestor.clone()))
+        .unwrap_or(0u64)
+        > 0
+}
+
+/// Lock an attestor for dispute-in-progress.
+///
+/// Increments the attestor's lock count and emits an `AttestorLockedForDispute`
+/// event if the attestor was not already locked (count transitions from 0 to 1).
+/// If the attestor is already locked (count ≥ 1), the count is still incremented
+/// to correctly handle the edge case of a second dispute opening while a first
+/// dispute is still active for attestations submitted by the same attestor.
+///
+/// # Events
+///
+/// Publishes an `AttestorLockedForDispute` event when the attestor transitions
+/// from unlocked to locked.
+pub fn lock_attestor(env: &Env, attestor: &Address, business: &Address, period: &String, dispute_id: u64) {
+    let key = DisputeKey::AttestorLockCount(attestor.clone());
+    let current: u64 = env.storage().instance().get(&key).unwrap_or(0);
+    let new_count = current + 1;
+    env.storage().instance().set(&key, &new_count);
+
+    // Emit event only on the first lock (transition from 0 → 1)
+    if current == 0 {
+        events::emit_attestor_locked_for_dispute(env, attestor, business, period, dispute_id);
+    }
+}
+
+/// Unlock an attestor after a dispute is resolved.
+///
+/// Decrements the attestor's lock count and removes the lock entry entirely
+/// when the count reaches zero. This ensures that if multiple active disputes
+/// reference attestations submitted by the same attestor, the attestor remains
+/// locked until the last such dispute is resolved.
+///
+/// Returns `true` if the attestor is now fully unlocked (count reached zero),
+/// `false` if they remain locked (count is still > 0).
+pub fn unlock_attestor(env: &Env, attestor: &Address) -> bool {
+    let key = DisputeKey::AttestorLockCount(attestor.clone());
+    let current: u64 = env.storage().instance().get(&key).unwrap_or(0);
+    if current == 0 {
+        return true;
+    }
+    let new_count = current - 1;
+    if new_count == 0 {
+        env.storage().instance().remove(&key);
+        true
+    } else {
+        env.storage().instance().set(&key, &new_count);
+        false
     }
 }
