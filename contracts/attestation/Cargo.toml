@@ -11,6 +11,8 @@ doctest = false
 
 [features]
 default = []
+# Enable the full legacy test suite (requires all feature modules to compile cleanly).
+full-tests = []
 
 [dependencies]
 soroban-sdk = "22.0"
