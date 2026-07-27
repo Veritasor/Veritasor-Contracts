@@ -38,6 +38,7 @@ use crate::events::{
     TOPIC_PAUSED, TOPIC_PROOF_HASH_UPDATED, TOPIC_RATE_LIMIT, TOPIC_ROLE_GRANTED,
     TOPIC_ROLE_REVOKED, TOPIC_UNPAUSED,
 };
+use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
 use soroban_sdk::testutils::{Address as _, Events as _};
 use soroban_sdk::{symbol_short, Address, BytesN, Env, String, Symbol, TryFromVal};
 
@@ -1150,6 +1151,215 @@ fn test_multiple_migrations_emit_incremental_events() {
         client.get_attestation(&business, &period).unwrap();
     assert_eq!(stored_root, root_v3);
     assert_eq!(version, 3);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  17. Indexer Event Ordering — Monotonic Timestamps Per Topic
+// ════════════════════════════════════════════════════════════════════
+
+/// Advance the ledger's timestamp and return it, so a test can record
+/// exactly what timestamp an indexer would observe for the event(s)
+/// emitted by the contract call that follows.
+fn advance_ledger_to(env: &Env, ts: u64) -> u64 {
+    env.ledger().with_mut(|li| li.timestamp = ts);
+    ts
+}
+
+#[test]
+fn test_attestation_submitted_timestamps_are_monotonic_per_topic() {
+    // High-volume topic #1: att_sub. Each AttestationSubmittedEvent carries
+    // its own caller-supplied `timestamp` field, so we read the payload's
+    // timestamp back in emission order and assert it never decreases. This
+    // directly catches a refactor that accidentally reorders which
+    // submission's event gets emitted first (e.g. a batch loop processed
+    // out of order).
+    let (env, client, _admin) = setup();
+
+    let businesses: std::vec::Vec<Address> = (0..5).map(|_| Address::generate(&env)).collect();
+    let root = BytesN::from_array(&env, &[7u8; 32]);
+    let period = String::from_str(&env, "2026-01");
+
+    // Includes one repeated value to cover "multiple events in the same
+    // ledger" — ties must be allowed (non-decreasing), not necessarily
+    // strictly increasing.
+    let ledger_timestamps: [u64; 5] = [100, 100, 250, 400, 400];
+
+    let start = env.events().all().len();
+    for (i, business) in businesses.iter().enumerate() {
+        advance_ledger_to(&env, ledger_timestamps[i]);
+        client.submit_attestation(
+            business,
+            &period,
+            &root,
+            &ledger_timestamps[i],
+            &1u32,
+            &0i128,
+            &None,
+            &None,
+        );
+    }
+    let end = env.events().all().len();
+
+    assert_eq!(
+        end - start,
+        businesses.len(),
+        "expected exactly one att_sub event per submission — a mismatch \
+         here means events were dropped, duplicated, or miscounted"
+    );
+
+    let all_events = env.events().all();
+    let mut payload_timestamps: std::vec::Vec<u64> = std::vec::Vec::new();
+    for i in start..end {
+        let (_cid, _topics, data) = all_events.get(i as u32).unwrap();
+        let ev = AttestationSubmittedEvent::try_from_val(&env, &data).unwrap();
+        payload_timestamps.push(ev.timestamp);
+    }
+
+    for pair in payload_timestamps.windows(2) {
+        assert!(
+            pair[1] >= pair[0],
+            "att_sub timestamps observed out of order: {} came after {}",
+            pair[1],
+            pair[0]
+        );
+    }
+    assert_eq!(
+        payload_timestamps,
+        ledger_timestamps.to_vec(),
+        "att_sub event order must exactly match submission call order"
+    );
+}
+
+#[test]
+fn test_attestation_migrated_versions_are_monotonic_per_business_period() {
+    // High-volume topic #2: att_mig. The contract enforces
+    // `new_version > old_ver` per (business, period); this test asserts
+    // that guarantee is visible in emission order even when different
+    // businesses' migrations interleave under shared ledger timestamps.
+    let (env, client, admin) = setup();
+    let business_a = Address::generate(&env);
+    let business_b = Address::generate(&env);
+    let period = String::from_str(&env, "2026-01");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+
+    advance_ledger_to(&env, 100);
+    client.submit_attestation(&business_a, &period, &root, &100u64, &1u32, &0i128, &None, &None);
+    advance_ledger_to(&env, 100); // same ledger as business_a's submission
+    client.submit_attestation(&business_b, &period, &root, &100u64, &1u32, &0i128, &None, &None);
+
+    let root2 = BytesN::from_array(&env, &[2u8; 32]);
+    let root3 = BytesN::from_array(&env, &[3u8; 32]);
+
+    let start = env.events().all().len();
+    advance_ledger_to(&env, 200);
+    client.migrate_attestation(&admin, &business_a, &period, &root2, &2u32);
+    advance_ledger_to(&env, 300);
+    client.migrate_attestation(&admin, &business_b, &period, &root2, &2u32);
+    advance_ledger_to(&env, 300); // multiple events in the same ledger
+    client.migrate_attestation(&admin, &business_a, &period, &root3, &3u32);
+    let end = env.events().all().len();
+
+    assert_eq!(end - start, 3, "expected exactly 3 att_mig events");
+
+    let all_events = env.events().all();
+    let mut new_versions: std::vec::Vec<u32> = std::vec::Vec::new();
+    for i in start..end {
+        let (_cid, _topics, data) = all_events.get(i as u32).unwrap();
+        let ev = AttestationMigratedEvent::try_from_val(&env, &data).unwrap();
+        new_versions.push(ev.new_version);
+    }
+
+    // Emission order must exactly match call order: business_a's v2, then
+    // business_b's v2 (same version number, different business — a global
+    // "version always increases" check would wrongly reject this valid
+    // interleaving), then business_a's v3.
+    assert_eq!(new_versions, std::vec![2u32, 2u32, 3u32]);
+}
+
+#[test]
+fn test_attestation_revoked_and_proof_hash_updated_preserve_call_order() {
+    // High-volume topics #3 and #4: att_rev and ph_upd. Neither payload
+    // carries its own timestamp, so the ordering signal is the ledger
+    // timestamp active when each call was made. We advance the ledger
+    // explicitly per call (with one repeated value, covering same-ledger
+    // multi-event) and assert emitted event order exactly tracks call
+    // order.
+    let (env, client, admin) = setup();
+    let business = Address::generate(&env);
+    let root = BytesN::from_array(&env, &[9u8; 32]);
+    let reason = String::from_str(&env, "monotonic order test");
+
+    let periods: [String; 4] = [
+        String::from_str(&env, "2026-01"),
+        String::from_str(&env, "2026-02"),
+        String::from_str(&env, "2026-03"),
+        String::from_str(&env, "2026-04"),
+    ];
+
+    for (i, period) in periods.iter().enumerate() {
+        advance_ledger_to(&env, 100 + (i as u64) * 50);
+        client.submit_attestation(&business, period, &root, &(100 + (i as u64) * 50), &1u32, &0i128, &None, &None);
+    }
+
+    let rev_ledger_timestamps: [u64; 4] = [500, 500, 650, 800];
+    let start = env.events().all().len();
+    for (i, period) in periods.iter().enumerate() {
+        advance_ledger_to(&env, rev_ledger_timestamps[i]);
+        client.revoke_attestation(&admin, &business, period, &reason, &(i as u64));
+    }
+    let end = env.events().all().len();
+
+    assert_eq!(end - start, periods.len(), "expected exactly one att_rev event per revocation");
+
+    let all_events = env.events().all();
+    let mut revoked_periods: std::vec::Vec<String> = std::vec::Vec::new();
+    for i in start..end {
+        let (_cid, _topics, data) = all_events.get(i as u32).unwrap();
+        let ev = AttestationRevokedEvent::try_from_val(&env, &data).unwrap();
+        revoked_periods.push(ev.period);
+    }
+    assert_eq!(
+        revoked_periods,
+        periods.to_vec(),
+        "att_rev events must be emitted in the exact order revocations were \
+         called, even though two share the same ledger timestamp"
+    );
+
+    // ph_upd on a fresh, non-revoked attestation.
+    let business2 = Address::generate(&env);
+    let ph_periods: [String; 3] = [
+        String::from_str(&env, "2027-01"),
+        String::from_str(&env, "2027-02"),
+        String::from_str(&env, "2027-03"),
+    ];
+    for (i, period) in ph_periods.iter().enumerate() {
+        advance_ledger_to(&env, 1000 + (i as u64) * 10);
+        client.submit_attestation(&business2, period, &root, &(1000 + (i as u64) * 10), &1u32, &0i128, &None, &None);
+    }
+    let new_hash = BytesN::from_array(&env, &[5u8; 32]);
+    let ph_ledger_timestamps: [u64; 3] = [1100, 1100, 1200];
+
+    let ph_start = env.events().all().len();
+    for (i, period) in ph_periods.iter().enumerate() {
+        advance_ledger_to(&env, ph_ledger_timestamps[i]);
+        client.update_proof_hash(&admin, &business2, period, &Some(new_hash.clone()));
+    }
+    let ph_end = env.events().all().len();
+
+    assert_eq!(ph_end - ph_start, ph_periods.len());
+    let all_events2 = env.events().all();
+    let mut updated_periods: std::vec::Vec<String> = std::vec::Vec::new();
+    for i in ph_start..ph_end {
+        let (_cid, _topics, data) = all_events2.get(i as u32).unwrap();
+        let ev = ProofHashUpdatedEvent::try_from_val(&env, &data).unwrap();
+        updated_periods.push(ev.period);
+    }
+    assert_eq!(
+        updated_periods,
+        ph_periods.to_vec(),
+        "ph_upd events must be emitted in call order, including under a \
+         same-ledger multi-event burst"
+    );
 }
 
 #[test]
