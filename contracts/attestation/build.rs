@@ -1,8 +1,8 @@
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use syn::{Expr, ExprMacro, File, Item, ItemConst, ItemFn, ItemStruct, Type};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -95,7 +95,11 @@ fn map_rust_type_to_schema(ty: &Type, doc: &str) -> (FieldSchema, bool) {
                 "Address" => (
                     FieldSchema {
                         type_name: serde_json::Value::String("string".to_string()),
-                        description: if doc.is_empty() { None } else { Some(doc.to_string()) },
+                        description: if doc.is_empty() {
+                            None
+                        } else {
+                            Some(doc.to_string())
+                        },
                         pattern: Some("^(G[A-Z0-9]{55}|C[A-Z0-9]{55})$".to_string()),
                         minimum: None,
                     },
@@ -104,7 +108,11 @@ fn map_rust_type_to_schema(ty: &Type, doc: &str) -> (FieldSchema, bool) {
                 "String" | "Symbol" => (
                     FieldSchema {
                         type_name: serde_json::Value::String("string".to_string()),
-                        description: if doc.is_empty() { None } else { Some(doc.to_string()) },
+                        description: if doc.is_empty() {
+                            None
+                        } else {
+                            Some(doc.to_string())
+                        },
                         pattern: None,
                         minimum: None,
                     },
@@ -113,7 +121,11 @@ fn map_rust_type_to_schema(ty: &Type, doc: &str) -> (FieldSchema, bool) {
                 "BytesN" => (
                     FieldSchema {
                         type_name: serde_json::Value::String("string".to_string()),
-                        description: if doc.is_empty() { None } else { Some(doc.to_string()) },
+                        description: if doc.is_empty() {
+                            None
+                        } else {
+                            Some(doc.to_string())
+                        },
                         pattern: Some("^[0-9a-fA-F]{64}$".to_string()),
                         minimum: None,
                     },
@@ -122,7 +134,11 @@ fn map_rust_type_to_schema(ty: &Type, doc: &str) -> (FieldSchema, bool) {
                 "u32" | "u64" => (
                     FieldSchema {
                         type_name: serde_json::Value::String("integer".to_string()),
-                        description: if doc.is_empty() { None } else { Some(doc.to_string()) },
+                        description: if doc.is_empty() {
+                            None
+                        } else {
+                            Some(doc.to_string())
+                        },
                         pattern: None,
                         minimum: Some(0),
                     },
@@ -131,7 +147,11 @@ fn map_rust_type_to_schema(ty: &Type, doc: &str) -> (FieldSchema, bool) {
                 "i128" => (
                     FieldSchema {
                         type_name: serde_json::Value::String("string".to_string()),
-                        description: if doc.is_empty() { None } else { Some(doc.to_string()) },
+                        description: if doc.is_empty() {
+                            None
+                        } else {
+                            Some(doc.to_string())
+                        },
                         pattern: Some("^-?[0-9]+$".to_string()),
                         minimum: None,
                     },
@@ -140,7 +160,11 @@ fn map_rust_type_to_schema(ty: &Type, doc: &str) -> (FieldSchema, bool) {
                 "bool" => (
                     FieldSchema {
                         type_name: serde_json::Value::String("boolean".to_string()),
-                        description: if doc.is_empty() { None } else { Some(doc.to_string()) },
+                        description: if doc.is_empty() {
+                            None
+                        } else {
+                            Some(doc.to_string())
+                        },
                         pattern: None,
                         minimum: None,
                     },
@@ -149,7 +173,11 @@ fn map_rust_type_to_schema(ty: &Type, doc: &str) -> (FieldSchema, bool) {
                 _ => (
                     FieldSchema {
                         type_name: serde_json::Value::String("string".to_string()),
-                        description: if doc.is_empty() { None } else { Some(doc.to_string()) },
+                        description: if doc.is_empty() {
+                            None
+                        } else {
+                            Some(doc.to_string())
+                        },
                         pattern: None,
                         minimum: None,
                     },
@@ -160,7 +188,11 @@ fn map_rust_type_to_schema(ty: &Type, doc: &str) -> (FieldSchema, bool) {
         _ => (
             FieldSchema {
                 type_name: serde_json::Value::String("string".to_string()),
-                description: if doc.is_empty() { None } else { Some(doc.to_string()) },
+                description: if doc.is_empty() {
+                    None
+                } else {
+                    Some(doc.to_string())
+                },
                 pattern: None,
                 minimum: None,
             },
@@ -190,7 +222,11 @@ fn main() {
             Item::Const(ItemConst { ident, expr, .. }) => {
                 let name = ident.to_string();
                 if name == "EVENT_SCHEMA_VERSION" {
-                    if let Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(val), .. }) = &**expr {
+                    if let Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Int(val),
+                        ..
+                    }) = &**expr
+                    {
                         if let Ok(v) = val.base10_parse::<u32>() {
                             schema_version = v;
                         }
@@ -316,8 +352,9 @@ fn main() {
             let filename = format!("{}.json", topic_symbol);
             for dir in &output_dirs {
                 let file_path = dir.join(&filename);
-                fs::write(&file_path, &json_str)
-                    .unwrap_or_else(|e| panic!("Failed to write schema {}: {}", file_path.display(), e));
+                fs::write(&file_path, &json_str).unwrap_or_else(|e| {
+                    panic!("Failed to write schema {}: {}", file_path.display(), e)
+                });
             }
 
             catalog_topics.insert(
@@ -339,12 +376,17 @@ fn main() {
         aggregate_sha256,
     };
 
-    let index_json = serde_json::to_string_pretty(&catalog)
-        .expect("Failed to serialize schema index catalog");
+    let index_json =
+        serde_json::to_string_pretty(&catalog).expect("Failed to serialize schema index catalog");
 
     for dir in &output_dirs {
         let index_path = dir.join("index.json");
-        fs::write(&index_path, &index_json)
-            .unwrap_or_else(|e| panic!("Failed to write index catalog {}: {}", index_path.display(), e));
+        fs::write(&index_path, &index_json).unwrap_or_else(|e| {
+            panic!(
+                "Failed to write index catalog {}: {}",
+                index_path.display(),
+                e
+            )
+        });
     }
 }

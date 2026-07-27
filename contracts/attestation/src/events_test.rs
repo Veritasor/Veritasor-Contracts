@@ -1337,4 +1337,3 @@ fn test_edge_case_new_event_topic_coverage() {
         );
     }
 }
-

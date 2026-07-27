@@ -1669,8 +1669,6 @@ mod dispute_test;
 mod dynamic_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod events_test;
-#[cfg(test)]
-mod schema_export_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod expiry_test;
 #[cfg(all(test, feature = "full-tests"))]
@@ -1709,6 +1707,8 @@ mod rate_limit_test;
 mod registry_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod revocation_test;
+#[cfg(test)]
+mod schema_export_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod test;
 #[cfg(all(test, feature = "full-tests"))]
