@@ -1669,6 +1669,8 @@ mod dispute_test;
 mod dynamic_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod events_test;
+#[cfg(test)]
+mod schema_export_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod expiry_test;
 #[cfg(all(test, feature = "full-tests"))]

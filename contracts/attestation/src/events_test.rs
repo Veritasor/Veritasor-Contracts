@@ -108,7 +108,6 @@ fn test_submit_attestation_emits_event() {
         &1_700_000_000u64,
         &1u32,
         &0i128,
-        &0i128,
         &None,
         &None,
     );
@@ -804,7 +803,7 @@ fn test_migrate_attestation_emits_event() {
     submit_default(&client, &env, &business, &period);
     let new_root = BytesN::from_array(&env, &[2u8; 32]);
 
-    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32, &0u64);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
 
     assert!(!env.events().all().is_empty());
 }
@@ -891,7 +890,7 @@ fn test_migrate_same_version_panics_no_event() {
     let events_before_migration = env.events().all().len();
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.migrate_attestation(&admin, &business, &period, &new_root, &1u32, &0u64);
+        client.migrate_attestation(&admin, &business, &period, &new_root, &1u32);
     }));
 
     assert!(result.is_err(), "expected same-version migration to panic");
@@ -921,7 +920,7 @@ fn test_migrate_lower_version_panics() {
     );
     let new_root = BytesN::from_array(&env, &[2u8; 32]);
     // Version 3 < 5 — must panic
-    client.migrate_attestation(&admin, &business, &period, &new_root, &3u32, &0u64);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &3u32);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -1131,14 +1130,14 @@ fn test_multiple_migrations_emit_incremental_events() {
     );
     let count_after_submit = env.events().all().len();
 
-    client.migrate_attestation(&admin, &business, &period, &root_v2, &2u32, &0u64);
+    client.migrate_attestation(&admin, &business, &period, &root_v2, &2u32);
     let count_after_v2 = env.events().all().len();
     assert!(
         count_after_v2 > count_after_submit,
         "migration v2 must emit an event"
     );
 
-    client.migrate_attestation(&admin, &business, &period, &root_v3, &3u32, &0u64);
+    client.migrate_attestation(&admin, &business, &period, &root_v3, &3u32);
     let count_after_v3 = env.events().all().len();
     assert!(
         count_after_v3 > count_after_v2,
@@ -1187,6 +1186,7 @@ fn test_all_topic_symbols_are_distinct() {
         TOPIC_ATTESTATION_SUBMITTED,
         TOPIC_ATTESTATION_REVOKED,
         TOPIC_ATTESTATION_MIGRATED,
+        crate::events::TOPIC_ATTESTATION_CLEANED_UP,
         TOPIC_ROLE_GRANTED,
         TOPIC_ROLE_REVOKED,
         TOPIC_PAUSED,
@@ -1203,6 +1203,8 @@ fn test_all_topic_symbols_are_distinct() {
         TOPIC_BIZ_SUSPENDED,
         TOPIC_BIZ_REACTIVATE,
         TOPIC_PROOF_HASH_UPDATED,
+        crate::events::TOPIC_ATTESTATION_EXPIRY_EXTENDED,
+        crate::events::TOPIC_MULTI_PERIOD_ISSUED,
     ];
 
     for i in 0..topics.len() {
@@ -1216,6 +1218,123 @@ fn test_all_topic_symbols_are_distinct() {
     }
 
     // Explicitly verify count to catch any future additions.
-    assert_eq!(topics.len(), 19, "expected 19 distinct topic symbols");
+    assert_eq!(topics.len(), 22, "expected 22 distinct topic symbols");
     let _ = env; // env required for Address::generate in other tests
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  18. Event JSON Schema Build Export & Integrity Tests
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_event_json_schemas_emitted_on_build() {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let schemas_dir = manifest_dir.join("../../target/event_schemas");
+    let index_file = schemas_dir.join("index.json");
+
+    assert!(
+        index_file.exists(),
+        "expected target/event_schemas/index.json to exist after build; path: {:?}",
+        index_file
+    );
+
+    let index_content = fs::read_to_string(&index_file).expect("readable index.json");
+    let catalog: serde_json::Value =
+        serde_json::from_str(&index_content).expect("valid index.json");
+
+    assert_eq!(catalog["schema_version"], EVENT_SCHEMA_VERSION);
+    assert_eq!(catalog["events_count"], 22);
+    assert!(catalog["aggregate_sha256"].is_string());
+}
+
+#[test]
+fn test_event_json_schema_format_and_properties() {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let schemas_dir = manifest_dir.join("../../target/event_schemas");
+    let att_sub_file = schemas_dir.join("att_sub.json");
+
+    let content = fs::read_to_string(&att_sub_file).expect("readable att_sub.json");
+    let schema: serde_json::Value =
+        serde_json::from_str(&content).expect("valid JSON schema for att_sub");
+
+    assert_eq!(schema["$schema"], "http://json-schema.org/draft-07/schema#");
+    assert_eq!(schema["title"], "AttestationSubmittedEvent");
+    assert_eq!(schema["topic"], "att_sub");
+    assert_eq!(schema["schema_version"], EVENT_SCHEMA_VERSION);
+    assert_eq!(schema["type"], "object");
+
+    let props = &schema["properties"];
+    assert!(props["business"]["type"].is_string());
+    assert!(props["period"]["type"].is_string());
+    assert!(props["merkle_root"]["type"].is_string());
+    assert_eq!(props["timestamp"]["type"], "integer");
+    assert_eq!(props["version"]["type"], "integer");
+
+    let req = schema["required"].as_array().unwrap();
+    assert!(req.contains(&serde_json::Value::String("business".into())));
+    assert!(req.contains(&serde_json::Value::String("period".into())));
+    assert!(req.contains(&serde_json::Value::String("merkle_root".into())));
+}
+
+#[test]
+fn test_schema_hash_catalog_integrity() {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let schemas_dir = manifest_dir.join("../../target/event_schemas");
+    let index_file = schemas_dir.join("index.json");
+
+    let index_content = fs::read_to_string(&index_file).expect("readable index.json");
+    let catalog: serde_json::Value = serde_json::from_str(&index_content).expect("json parse");
+
+    let topics_map = catalog["topics"].as_object().unwrap();
+    assert_eq!(topics_map.len(), 22);
+
+    for (topic_symbol, summary) in topics_map {
+        let topic_file = schemas_dir.join(alloc::format!("{}.json", topic_symbol));
+        assert!(
+            topic_file.exists(),
+            "schema file missing for topic: {}",
+            topic_symbol
+        );
+        let sha256_str = summary["sha256"].as_str().unwrap();
+        assert_eq!(sha256_str.len(), 64, "sha256 hash must be 64 hex chars");
+    }
+}
+
+#[test]
+fn test_edge_case_new_event_topic_coverage() {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let schemas_dir = manifest_dir.join("../../target/event_schemas");
+    let index_file = schemas_dir.join("index.json");
+
+    let index_content = fs::read_to_string(&index_file).expect("readable index.json");
+    let catalog: serde_json::Value = serde_json::from_str(&index_content).expect("json parse");
+
+    let topics_map = catalog["topics"].as_object().unwrap();
+
+    let required_topics = [
+        "att_sub", "att_rev", "att_mig", "att_cl", "role_gr", "role_rv", "paused", "unpaus",
+        "fee_cfg", "ff_cfg", "rate_lm", "kr_prop", "kr_conf", "kr_canc", "kr_emer", "biz_reg",
+        "biz_apr", "biz_sus", "biz_rea", "ph_upd", "att_exp", "mul_iss",
+    ];
+
+    for expected in &required_topics {
+        assert!(
+            topics_map.contains_key(*expected),
+            "emitted index.json catalog must contain topic '{}'",
+            expected
+        );
+    }
+}
+
