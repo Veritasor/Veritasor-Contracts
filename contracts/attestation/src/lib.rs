@@ -120,6 +120,7 @@ pub const MAX_BATCH_SIZE_VERIFY: u32 = 30;
 #[soroban_sdk::contractclient(name = "AttestorStakingClient")]
 pub trait AttestorStakingContractTrait {
     fn is_eligible(env: Env, attestor: Address) -> bool;
+    fn slash(env: Env, attestor: Address, amount: i128, dispute_id: u64);
 }
 
 #[contract]
@@ -294,6 +295,7 @@ impl AttestationContract {
         Self::execute_submission(
             &env,
             &business,
+            None,
             &business,
             &period,
             &merkle_root,
@@ -327,6 +329,7 @@ impl AttestationContract {
         Self::execute_submission(
             &env,
             &attestor,
+            Some(&attestor),
             &business,
             &period,
             &merkle_root,
@@ -382,6 +385,7 @@ impl AttestationContract {
     fn execute_submission(
         env: &Env,
         payer: &Address,
+        attestor: Option<&Address>,
         business: &Address,
         period: &String,
         merkle_root: &BytesN<32>,
@@ -407,6 +411,12 @@ impl AttestationContract {
         }
         Self::validate_expiry(env, timestamp, expiry_timestamp);
         Self::validate_proof_hash(proof_hash);
+
+        // Store attestor if present
+        if let Some(attestor) = attestor {
+            let attestor_key = DataKey::Attestor(business.clone(), period.clone());
+            env.storage().instance().set(&attestor_key, attestor);
+        }
 
         let dynamic_fee = dynamic_fees::collect_fee_from(env, payer, business);
         let flat_fee = fees::collect_flat_fee(env, payer);
@@ -498,7 +508,12 @@ impl AttestationContract {
 
             dynamic_fees::increment_business_count(env, &item.business);
 
-            let _key = DataKey::Attestation(item.business.clone(), item.period.clone());
+            // Store attestor if payer is an attestor
+            if let Some(p) = payer {
+                let attestor_key = DataKey::Attestor(item.business.clone(), item.period.clone());
+                env.storage().instance().set(&attestor_key, p);
+            }
+
             let data: AttestationData = (
                 item.merkle_root.clone(),
                 item.timestamp,
@@ -1322,11 +1337,16 @@ impl AttestationContract {
         challenger.require_auth();
         dispute::validate_dispute_eligibility(&env, &challenger, &business, &period)
             .expect("not eligible");
+        
+        let attestor_key = DataKey::Attestor(business.clone(), period.clone());
+        let attestor: Address = env.storage().instance().get(&attestor_key).unwrap_or(business.clone());
+
         let id = dispute::generate_dispute_id(&env);
         let d = Dispute {
             id,
             challenger,
             business: business.clone(),
+            attestor,
             period: period.clone(),
             status: DisputeStatus::Open,
             dispute_type,
@@ -1360,6 +1380,13 @@ impl AttestationContract {
             d.status = DisputeStatus::Resolved;
             d.resolution = OptionalResolution::Some(resolution);
             dispute::store_dispute(&env, &d);
+
+            if outcome == DisputeOutcome::Upheld {
+                let staking_addr = Self::get_attestor_staking_contract(env.clone())
+                    .expect("staking contract not configured");
+                let staking_client = AttestorStakingClient::new(&env, &staking_addr);
+                staking_client.slash(&d.attestor, &1000i128, &dispute_id);
+            }
         }
     }
 

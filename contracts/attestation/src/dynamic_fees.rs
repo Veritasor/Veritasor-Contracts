@@ -78,6 +78,8 @@ pub enum DataKey {
     // ── Attestation data ────────────────────────────────────────
     /// Attestation record keyed by (business, period).
     Attestation(Address, soroban_sdk::String),
+    /// Attestor address keyed by (business, period).
+    Attestor(Address, soroban_sdk::String),
     /// Revocation status keyed by (business, period).
     Revoked(Address, soroban_sdk::String),
     /// Extended metadata (currency, net/gross) keyed by (business, period).
