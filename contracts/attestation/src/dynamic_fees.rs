@@ -152,6 +152,9 @@ pub enum DataKey {
     EpochFees(soroban_sdk::String),
     /// Global running submission count for backfill checkpointing.
     BackfillSubmissionCount,
+    /// Highest ledger timestamp observed for a successful rate-limited
+    /// submission, keyed per business. Appended for storage compatibility.
+    RateLimitHighWaterTimestamp(Address),
 }
 
 // ════════════════════════════════════════════════════════════════════
