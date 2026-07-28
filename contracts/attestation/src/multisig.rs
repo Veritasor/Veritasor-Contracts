@@ -579,3 +579,19 @@ pub fn cleanup_expired_proposals(env: &Env, limit: u32) -> u32 {
     }
     cleaned
 }
+
+pub fn revoke_approval(env: &Env, approver: &Address, id: u64) {
+    approver.require_auth();
+    let proposal = get_proposal(env, id).expect("proposal not found");
+    if is_proposal_expired(env, id) { panic!("proposal has expired"); }
+    assert!(proposal.status == ProposalStatus::Pending, "cannot revoke approval: proposal already executed or rejected");
+    let mut approvals = get_approvals(env, id);
+    let pos = approvals.iter().position(|a| a == approver);
+    if let Some(idx) = pos {
+        let last = approvals.len() - 1;
+        if idx != last { let last_addr = approvals.get(last).unwrap(); approvals.set(idx, last_addr); }
+        approvals.pop_back();
+        env.storage().instance().set(&MultisigKey::Approvals(id), &approvals);
+        events::emit_approval_revoked(env, id, approver);
+    }
+}

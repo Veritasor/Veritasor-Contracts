@@ -1653,3 +1653,12 @@ pub fn emit_revocation_committed(
     env.events()
         .publish((TOPIC_REVOCATION_COMMITTED, business.clone()), event);
 }
+
+pub fn emit_approval_revoked(env: &Env, proposal_id: u64, approver: &Address) {
+    let mut topics = Vec::new(env);
+    topics.push_back(Symbol::new(env, "approval_revoked").to_val());
+    topics.push_back(proposal_id.into_val(env));
+    let mut data = Vec::new(env);
+    data.push_back(approver.to_val());
+    env.events().publish(topics, data);
+}
