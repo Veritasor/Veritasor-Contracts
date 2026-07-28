@@ -35,7 +35,7 @@ fn setup_with_multisig() -> (
     owners.push_back(owner3.clone());
 
     // Initialize multisig with threshold of 2 (admin nonce 1)
-    client.initialize_multisig(&owners, &2u32, &1u64, &0u64);
+    client.initialize_multisig(&owners, &2u32, &1u64);
 
     (env, client, admin, owners)
 }
@@ -71,7 +71,7 @@ fn test_non_owner_is_not_multisig_owner() {
 fn test_create_proposal() {
     let (_env, client, admin, _owners) = setup_with_multisig();
 
-    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
 
     let proposal = client.get_proposal(&proposal_id).unwrap();
     assert_eq!(proposal.status, ProposalStatus::Pending);
@@ -82,7 +82,7 @@ fn test_create_proposal() {
 fn test_proposal_auto_approved_by_proposer() {
     let (_env, client, admin, _owners) = setup_with_multisig();
 
-    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
 
     // Proposer's approval counts automatically
     assert_eq!(client.get_approval_count(&proposal_id), 1);
@@ -94,7 +94,7 @@ fn test_non_owner_cannot_create_proposal() {
     let (env, client, _admin, _owners) = setup_with_multisig();
     let non_owner = Address::generate(&env);
 
-    client.create_proposal(&non_owner, &ProposalAction::Pause, &0u64, &0u64);
+    client.create_proposal(&non_owner, &ProposalAction::Pause, &0u64);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -106,10 +106,10 @@ fn test_approve_proposal() {
     let (_env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
 
-    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
 
     // Second owner approves
-    client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
 
     assert_eq!(client.get_approval_count(&proposal_id), 2);
     assert!(client.is_proposal_approved(&proposal_id));
@@ -120,10 +120,10 @@ fn test_approve_proposal() {
 fn test_cannot_approve_twice() {
     let (_env, client, admin, _owners) = setup_with_multisig();
 
-    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
 
     // Try to approve again (proposer already approved)
-    client.approve_proposal(&admin, &proposal_id, &1u64, &0u64);
+    client.approve_proposal(&admin, &proposal_id, &1u64);
 }
 
 #[test]
@@ -132,9 +132,9 @@ fn test_non_owner_cannot_approve() {
     let (env, client, admin, _owners) = setup_with_multisig();
     let non_owner = Address::generate(&env);
 
-    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
 
-    client.approve_proposal(&non_owner, &proposal_id, &0u64, &0u64);
+    client.approve_proposal(&non_owner, &proposal_id, &0u64);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -145,9 +145,9 @@ fn test_non_owner_cannot_approve() {
 fn test_proposer_can_reject() {
     let (_env, client, admin, _owners) = setup_with_multisig();
 
-    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
 
-    client.reject_proposal(&admin, &proposal_id, &1u64, &0u64);
+    client.reject_proposal(&admin, &proposal_id, &1u64);
 
     let proposal = client.get_proposal(&proposal_id).unwrap();
     assert_eq!(proposal.status, ProposalStatus::Rejected);
@@ -158,10 +158,10 @@ fn test_owner_can_reject() {
     let (_env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
 
-    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
 
     // Another owner can also reject
-    client.reject_proposal(&owner2, &proposal_id, &0u64, &0u64);
+    client.reject_proposal(&owner2, &proposal_id, &0u64);
 
     let proposal = client.get_proposal(&proposal_id).unwrap();
     assert_eq!(proposal.status, ProposalStatus::Rejected);
@@ -176,12 +176,12 @@ fn test_execute_pause_proposal() {
     let (_env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
 
-    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
-    client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
 
     assert!(!client.is_paused());
 
-    client.execute_proposal(&admin, &proposal_id, &1u64, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &1u64);
 
     assert!(client.is_paused());
 
@@ -199,9 +199,9 @@ fn test_execute_unpause_proposal() {
     assert!(client.is_paused());
 
     // Create unpause proposal (admin multisig nonce 0)
-    let proposal_id = client.create_proposal(&admin, &ProposalAction::Unpause, &0u64, &0u64);
-    client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
-    client.execute_proposal(&admin, &proposal_id, &1u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Unpause, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &1u64);
 
     assert!(!client.is_paused());
 }
@@ -217,8 +217,8 @@ fn test_execute_grant_role_proposal() {
         &ProposalAction::GrantRole(target.clone(), ROLE_ADMIN),
         &0u64,
     );
-    client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
-    client.execute_proposal(&admin, &proposal_id, &1u64, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &1u64);
 
     assert!(client.has_role(&target, &ROLE_ADMIN));
 }
@@ -231,14 +231,13 @@ fn test_execute_change_threshold_proposal() {
     assert_eq!(client.get_multisig_threshold(), 2);
 
     // Threshold is 2, so we need 2 approvals
-    let proposal_id =
-        client.create_proposal(&admin, &ProposalAction::ChangeThreshold(1), &0u64, &0u64);
-    client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::ChangeThreshold(1), &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
 
     // Verify approved
     assert!(client.is_proposal_approved(&proposal_id));
 
-    client.execute_proposal(&admin, &proposal_id, &1u64, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &1u64);
 
     assert_eq!(client.get_multisig_threshold(), 1);
 }
@@ -249,17 +248,31 @@ fn test_execute_add_owner_proposal() {
     let owner2 = owners.get(1).unwrap();
     let new_owner = Address::generate(&env);
 
-    let proposal_id = client.create_proposal(
-        &admin,
-        &ProposalAction::AddOwner(new_owner.clone()),
-        &0u64,
-        &0u64,
-    );
-    client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
-    client.execute_proposal(&admin, &proposal_id, &1u64, &0u64);
+    let proposal_id =
+        client.create_proposal(&admin, &ProposalAction::AddOwner(new_owner.clone()), &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &1u64);
 
     assert!(client.is_multisig_owner(&new_owner));
     assert_eq!(client.get_multisig_owners().len(), 4);
+
+    // Verify auth was requested from new_owner (acknowledging recovery-phrase custody)
+    let auths = env.auths();
+    assert!(auths.iter().any(|a| a.0 == new_owner));
+
+    // Verify OwnerRecoveryPhraseAcknowledged event was emitted
+    let events = env.events().all();
+    let (_cid, topics, data) = events.last().unwrap();
+    assert_eq!(
+        topics.get(0).unwrap(),
+        soroban_sdk::IntoVal::into_val(&crate::events::TOPIC_OWNER_RECOVERY_PHRASE_ACKNOWLEDGED, &env)
+    );
+    assert_eq!(
+        topics.get(1).unwrap(),
+        soroban_sdk::IntoVal::into_val(&new_owner, &env)
+    );
+    let event_data: crate::events::OwnerRecoveryPhraseAcknowledgedEvent = soroban_sdk::FromVal::from_val(&env, &data);
+    assert_eq!(event_data.new_owner, new_owner);
 }
 
 #[test]
@@ -268,14 +281,10 @@ fn test_execute_remove_owner_proposal() {
     let owner2 = owners.get(1).unwrap();
     let owner3 = owners.get(2).unwrap();
 
-    let proposal_id = client.create_proposal(
-        &admin,
-        &ProposalAction::RemoveOwner(owner3.clone()),
-        &0u64,
-        &0u64,
-    );
-    client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
-    client.execute_proposal(&admin, &proposal_id, &1u64, &0u64);
+    let proposal_id =
+        client.create_proposal(&admin, &ProposalAction::RemoveOwner(owner3.clone()), &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &1u64);
 
     assert!(!client.is_multisig_owner(&owner3));
     assert_eq!(client.get_multisig_owners().len(), 2);
@@ -286,10 +295,10 @@ fn test_execute_remove_owner_proposal() {
 fn test_cannot_execute_without_threshold() {
     let (_env, client, admin, _owners) = setup_with_multisig();
 
-    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
 
     // Only 1 approval, need 2
-    client.execute_proposal(&admin, &proposal_id, &1u64, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &1u64);
 }
 
 #[test]
@@ -299,10 +308,10 @@ fn test_non_owner_cannot_execute() {
     let owner2 = owners.get(1).unwrap();
     let non_owner = Address::generate(&env);
 
-    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
-    client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
 
-    client.execute_proposal(&non_owner, &proposal_id, &0u64, &0u64);
+    client.execute_proposal(&non_owner, &proposal_id, &0u64);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -319,18 +328,18 @@ fn test_proposal_execution_ordering() {
     let owner2 = owners.get(1).unwrap();
 
     // Create multiple proposals
-    let id1 = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
-    let id2 = client.create_proposal(&admin, &ProposalAction::Unpause, &1u64, &0u64); // Logic: unpause while not paused is no-op but valid for test
+    let id1 = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
+    let id2 = client.create_proposal(&admin, &ProposalAction::Unpause, &1u64); // Logic: unpause while not paused is no-op but valid for test
 
     // Approve both
-    client.approve_proposal(&owner2, &id1, &0u64, &0u64);
-    client.approve_proposal(&owner2, &id2, &0u64, &0u64);
+    client.approve_proposal(&owner2, &id1, &0u64);
+    client.approve_proposal(&owner2, &id2, &0u64);
 
     // Execute in reverse order of creation
-    client.execute_proposal(&admin, &id2, &2u64, &0u64);
+    client.execute_proposal(&admin, &id2, &2u64);
     assert!(!client.is_paused()); // Unpause executed
 
-    client.execute_proposal(&admin, &id1, &3u64, &0u64);
+    client.execute_proposal(&admin, &id1, &3u64);
     assert!(client.is_paused()); // Pause executed
 }
 
@@ -339,7 +348,7 @@ fn test_proposal_expiration() {
     let (env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
 
-    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
 
     // Advance ledger sequence beyond expiry
     let current_seq = env.ledger().sequence();
@@ -347,7 +356,7 @@ fn test_proposal_expiration() {
         .set_sequence_number(current_seq + DEFAULT_PROPOSAL_EXPIRY + 1);
 
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
+        client.approve_proposal(&owner2, &proposal_id, &0u64);
     }));
 
     let proposal = client.get_proposal(&proposal_id).unwrap();
@@ -360,13 +369,13 @@ fn test_approve_expired_proposal_panics() {
     let (env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
 
-    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
 
     let current_seq = env.ledger().sequence();
     env.ledger()
         .set_sequence_number(current_seq + DEFAULT_PROPOSAL_EXPIRY + 1);
 
-    client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
 }
 
 #[test]
@@ -374,7 +383,7 @@ fn test_expired_proposal_status_update() {
     let (env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
 
-    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
 
     let current_seq = env.ledger().sequence();
     env.ledger()
@@ -382,7 +391,7 @@ fn test_expired_proposal_status_update() {
 
     // We catch the panic to check the status
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
+        client.approve_proposal(&owner2, &proposal_id, &0u64);
     }));
 
     let proposal = client.get_proposal(&proposal_id).unwrap();
@@ -395,17 +404,17 @@ fn test_execute_expired_proposal_panics() {
     let (env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
 
-    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
 
     // Approve BEFORE expiration
-    client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
 
     // Advance ledger sequence beyond expiry
     let current_seq = env.ledger().sequence();
     env.ledger()
         .set_sequence_number(current_seq + DEFAULT_PROPOSAL_EXPIRY + 1);
 
-    client.execute_proposal(&admin, &proposal_id, &1u64, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &1u64);
 }
 
 #[test]
@@ -414,12 +423,12 @@ fn test_cannot_reexecute_proposal() {
     let (_env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
 
-    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
-    client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
-    client.execute_proposal(&admin, &proposal_id, &1u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &1u64);
 
     // Attempt to execute again
-    client.execute_proposal(&admin, &proposal_id, &2u64, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &2u64);
 }
 
 #[test]
@@ -440,14 +449,14 @@ fn test_concurrent_proposals_different_actions() {
         &1u64,
     );
 
-    client.approve_proposal(&owner2, &id1, &0u64, &0u64);
-    client.approve_proposal(&owner2, &id2, &0u64, &0u64);
+    client.approve_proposal(&owner2, &id1, &0u64);
+    client.approve_proposal(&owner2, &id2, &0u64);
 
-    client.execute_proposal(&admin, &id2, &2u64, &0u64);
+    client.execute_proposal(&admin, &id2, &2u64);
     assert!(client.has_role(&target2, &ROLE_OPERATOR));
     assert!(!client.has_role(&target1, &ROLE_ATTESTOR));
 
-    client.execute_proposal(&admin, &id1, &3u64, &0u64);
+    client.execute_proposal(&admin, &id1, &3u64);
     assert!(client.has_role(&target1, &ROLE_ATTESTOR));
 }
 
@@ -459,9 +468,9 @@ fn test_concurrent_proposals_different_actions() {
 fn test_proposal_ids_increment() {
     let (_env, client, admin, _owners) = setup_with_multisig();
 
-    let id1 = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
-    let id2 = client.create_proposal(&admin, &ProposalAction::Unpause, &1u64, &0u64);
-    let id3 = client.create_proposal(&admin, &ProposalAction::Pause, &2u64, &0u64);
+    let id1 = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
+    let id2 = client.create_proposal(&admin, &ProposalAction::Unpause, &1u64);
+    let id3 = client.create_proposal(&admin, &ProposalAction::Pause, &2u64);
 
     assert_eq!(id1, 0);
     assert_eq!(id2, 1);
@@ -473,12 +482,12 @@ fn test_multiple_proposals_independent() {
     let (_env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
 
-    let pause_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
-    let unpause_id = client.create_proposal(&admin, &ProposalAction::Unpause, &1u64, &0u64);
+    let pause_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
+    let unpause_id = client.create_proposal(&admin, &ProposalAction::Unpause, &1u64);
 
     // Approve and execute only pause
-    client.approve_proposal(&owner2, &pause_id, &0u64, &0u64);
-    client.execute_proposal(&admin, &pause_id, &2u64, &0u64);
+    client.approve_proposal(&owner2, &pause_id, &0u64);
+    client.execute_proposal(&admin, &pause_id, &2u64);
 
     // Unpause proposal still pending
     let unpause = client.get_proposal(&unpause_id).unwrap();
@@ -491,10 +500,10 @@ fn test_cannot_approve_rejected_proposal() {
     let (_env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
 
-    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
-    client.reject_proposal(&admin, &proposal_id, &1u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
+    client.reject_proposal(&admin, &proposal_id, &1u64);
 
-    client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
 }
 
 #[test]
@@ -503,11 +512,11 @@ fn test_cannot_execute_rejected_proposal() {
     let (_env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
 
-    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
-    client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
-    client.reject_proposal(&admin, &proposal_id, &1u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
+    client.reject_proposal(&admin, &proposal_id, &1u64);
 
-    client.execute_proposal(&admin, &proposal_id, &2u64, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &2u64);
 }
 
 #[test]
@@ -524,14 +533,14 @@ fn test_threshold_of_one() {
     owners.push_back(admin.clone());
 
     // Single owner with threshold of 1 (admin nonce 1)
-    client.initialize_multisig(&owners, &1u32, &1u64, &0u64);
+    client.initialize_multisig(&owners, &1u32, &1u64);
 
-    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
 
     // Should be immediately approved (proposer auto-approves)
     assert!(client.is_proposal_approved(&proposal_id));
 
-    client.execute_proposal(&admin, &proposal_id, &1u64, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &1u64);
     assert!(client.is_paused());
 }
 
@@ -541,11 +550,11 @@ fn test_full_threshold_approval() {
     let owner2 = owners.get(1).unwrap();
     let owner3 = owners.get(2).unwrap();
 
-    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
 
     // All owners approve
-    client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
-    client.approve_proposal(&owner3, &proposal_id, &0u64, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
+    client.approve_proposal(&owner3, &proposal_id, &0u64);
 
     assert_eq!(client.get_approval_count(&proposal_id), 3);
     assert!(client.is_proposal_approved(&proposal_id));
@@ -558,11 +567,11 @@ fn test_threshold_rotation() {
 
     // 1. Propose threshold change to 3
     let action = ProposalAction::ChangeThreshold(3);
-    let proposal_id = client.create_proposal(&admin, &action, &0u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &action, &0u64);
 
     // 2. Approve and Execute
-    client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
-    client.execute_proposal(&admin, &proposal_id, &1u64, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &1u64);
 
     // 3. Verify
     assert_eq!(client.get_multisig_threshold(), 3);
@@ -615,11 +624,11 @@ fn test_threshold_rotation_invalid_exceeds_owners() {
 
     // Propose threshold of 4 (we only have 3 owners)
     let action = ProposalAction::ChangeThreshold(4);
-    let proposal_id = client.create_proposal(&admin, &action, &0u64, &0u64);
+    let proposal_id = client.create_proposal(&admin, &action, &0u64);
 
     let owner2 = owners.get(1).unwrap();
-    client.approve_proposal(&owner2, &proposal_id, &0u64, &0u64);
-    client.execute_proposal(&admin, &proposal_id, &1u64, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &1u64);
 }
 
 #[test]

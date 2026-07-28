@@ -75,8 +75,31 @@ Based on Soroban's resource limits and operation complexity:
 | `migrate_attestation` | < 400,000 | < 10,000 | Update existing entry |
 | `get_attestation` | < 100,000 | < 3,000 | Simple read |
 | `get_fee_quote` | < 150,000 | < 5,000 | Fee calculation |
-| `grant_role` | < 250,000 | < 7,000 | Access control update |
+| `grant_role` (new role) | < 250,000 | < 7,000 | Access control update, adds to holders |
+| `grant_role` (existing role) | < 100,000 | < 3,000 | Access control update, already in holders |
+| `revoke_role` (keep in holders) | < 150,000 | < 4,000 | Role revoked, address retains other roles |
+| `revoke_role` (remove from holders) | < 250,000 | < 7,000 | Role revoked, address removed from holders |
 | `has_role` | < 80,000 | < 2,000 | Access control check |
+
+### Cold vs Warm Storage: verify_attestation
+
+Soroban's ledger maintains an entry cache that makes subsequent reads of the
+same entry cheaper than the first read in a given ledger:
+
+| Scenario | CPU Instructions | Memory Bytes | Notes |
+|----------|-----------------|--------------|-------|
+| `verify_attestation` (cold) | < 250,000 | < 8,000 | First read — entry not in cache |
+| `verify_attestation` (warm) | < 150,000 | < 5,000 | Subsequent read — entry cached |
+| `verify_attestation` (non-existent) | < 150,000 | < 5,000 | Failed lookup — no revocation check |
+
+**Key insight**: Warm reads benefit from Soroban's ledger entry cache,
+reducing I/O cost. Downstream indexers and lenders **should budget for cold
+reads as the worst-case scenario** when planning gas at scale.
+
+The cold/warm delta is most visible in ledger read bytes and read entry
+counts, which drop to near-zero on warm reads. The comparison report
+(`bench_verify_attestation_cold_warm_comparison`) emits JSON-formatted
+metrics suitable for automated gas planning pipelines.
 
 ### Regression Threshold
 
@@ -432,7 +455,239 @@ cargo test regression -- --nocapture
 - Fee collection path with token mint and transfer overhead
 - Role grant requiring admin bootstrap via initialize
 
+## Batch Cleanup Benchmarks (`cleanup_expired_attestation`)
+
+### Motivation
+
+`cleanup_expired_attestation` is a storage-freeing operation that callers may
+invoke many times in sequence — one call per expired attestation — to reclaim
+on-chain storage.  Without a benchmark it is easy to introduce superlinear
+overhead (e.g., iterating over existing data on each removal) that would go
+undetected until production.
+
+### Methodology
+
+Three batch sizes are profiled: **N = 1**, **N = 10**, and **N = 100**.
+
+For each size the test:
+
+1. Submits N expired attestations (unique `(business, period)` pairs, all
+   with `expiry_timestamp = 100`).
+2. Advances the ledger clock to `timestamp = 100` so every attestation is
+   expired.
+3. Captures a `BudgetSnapshot` before the cleanup loop.
+4. Calls `cleanup_expired_attestation` once per pair.
+5. Captures a `BudgetSnapshot` after the loop.
+6. Divides aggregate cost by N to derive **per-item cost**.
+7. Emits a CSV row and asserts the per-item cost is below the regression
+   ceiling.
+
+### Per-Item Cost Targets
+
+| Batch size (N) | Per-item CPU ceiling | Per-item Memory ceiling |
+|---------------|----------------------|------------------------|
+| 1             | ≤ 600,000 instructions | ≤ 20,000 bytes       |
+| 10            | ≤ 600,000 instructions | ≤ 20,000 bytes       |
+| 100           | ≤ 600,000 instructions | ≤ 20,000 bytes       |
+
+The **same ceiling applies at every batch size**. Any superlinear scaling will
+push the N = 100 per-item cost above the ceiling and fail the test.
+
+### CSV Output Format
+
+```
+operation,batch_size,total_cpu,total_mem,per_item_cpu,per_item_mem
+cleanup_expired_attestation,1,...,...,...,...
+cleanup_expired_attestation,10,...,...,...,...
+cleanup_expired_attestation,100,...,...,...,...
+```
+
+Run the sweep test to produce this report:
+
+```bash
+cd contracts/attestation
+cargo test bench_cleanup_expired_attestation_sweep -- --nocapture
+```
+
+Or run all three size-specific tests plus the regression guard:
+
+```bash
+cargo test bench_cleanup_expired_attestation -- --nocapture
+cargo test regression_cleanup_expired_attestation -- --nocapture
+```
+
+### Test Coverage
+
+| Test | Description |
+|------|-------------|
+| `bench_cleanup_expired_attestation_n1` | Single cleanup, warm storage baseline |
+| `bench_cleanup_expired_attestation_n10` | 10 cleanups in sequence |
+| `bench_cleanup_expired_attestation_n100` | 100 cleanups – stress / linearity check |
+| `bench_cleanup_expired_attestation_sweep` | All three sizes, CSV report |
+| `regression_cleanup_expired_attestation_per_item_budget` | Hard per-item gate for N=1,10,100 |
+| `bench_cleanup_double_cleanup_panics` | Second cleanup panics "attestation not found" |
+| `bench_cleanup_business_self_cleanup` | Business (not admin) may clean own attestation |
+
+### Security Notes
+
+- `cleanup_expired_attestation` requires `caller == admin || caller == business`.
+  The `bench_cleanup_business_self_cleanup` test exercises the `caller == business`
+  path to confirm the permission check works correctly.
+- The `bench_cleanup_double_cleanup_panics` test confirms genuine storage removal:
+  a second call panics with `"attestation not found"`, proving no silent no-op.
+- Revoked or disputed attestations are **not** cleanable; those paths are covered
+  in `expiry_test.rs` and are not duplicated here.
+
+### Regression Threshold
+
+The per-item ceiling of 600 000 CPU instructions / 20 000 memory bytes is
+approximately **2× the expected single-call cost** observed in the Soroban test
+environment.  This gives headroom for legitimate refactors while catching any
+O(N) → O(N²) regressions across the three batch sizes.
+
+---
+
+## `get_multi_period_ranges` Sweep Benchmarks
+
+### Motivation
+
+`get_multi_period_ranges` is a read-only view function that returns all
+`AttestationRange` entries stored for a given business address.  Because
+the implementation reads a single `Vec<AttestationRange>` from instance
+storage in one call, the cost scales with the serialised byte length of
+that vector.  Lenders and indexers that call this function should understand
+the worst-case cost at the maximum expected vector length.
+
+This sweep confirms that:
+
+1. Cost grows **linearly** (not quadratically) with range count.
+2. The operation stays within budget at the practical upper bound of **500
+   ranges per business**.
+3. Zero-range reads (no entry in storage) return an empty `Vec` and do not
+   panic or charge unexpectedly.
+
+### Implementation
+
+```rust
+pub fn get_multi_period_ranges(env: Env, business: Address) -> Vec<AttestationRange> {
+    let key = MultiPeriodKey::Ranges(business);
+    env.storage().instance().get(&key).unwrap_or(Vec::new(&env))
+}
+```
+
+The function performs a single instance-storage read keyed by `business`.
+No loops or cross-address lookups occur.
+
+### Methodology
+
+For each N in `{1, 10, 100, 500}`:
+
+1. Create a fresh `Env` and call `setup_basic()` (fees disabled).
+2. Submit N non-overlapping `AttestationRange` entries for a single business
+   address via `submit_multi_period_attestation`.  Range `i` occupies
+   `[i×1000+1, i×1000+999]` to avoid the contract's overlap guard.
+3. Capture a `BudgetSnapshot` before the call.
+4. Call `get_multi_period_ranges`.
+5. Capture a `BudgetSnapshot` after the call.
+6. Assert the returned `Vec` has exactly N entries.
+7. Emit a CSV row and assert total cost is within the per-size ceiling.
+
+The zero-range case runs on a fresh address that has never submitted any
+ranges, verifying that a missing storage key returns `[]` gracefully.
+
+### CSV Output Format
+
+```
+operation,range_count,total_cpu,total_mem,per_range_cpu,per_range_mem
+get_multi_period_ranges,1,...,...,...,...
+get_multi_period_ranges,10,...,...,...,...
+get_multi_period_ranges,100,...,...,...,...
+get_multi_period_ranges,500,...,...,...,...
+```
+
+Run the sweep test to produce this report:
+
+```bash
+cd contracts/attestation
+cargo test bench_get_multi_period_ranges_sweep -- --nocapture 2>&1 \
+    | grep -E '^(operation|get_multi)' > multi_period_gas.csv
+```
+
+### Per-Size Cost Ceilings
+
+The ceiling formula is:
+
+```
+total_cpu_ceiling = OVERHEAD_FLOOR + N × PER_RANGE_CPU_CEILING
+                  = 500 000 + N × 150 000
+```
+
+| N ranges | Total CPU ceiling (instructions) | Total Mem ceiling (bytes) |
+|----------|----------------------------------|--------------------------|
+| 0        | N/A (correctness only)           | N/A                      |
+| 1        | 650 000                          | 14 000                   |
+| 10       | 2 000 000                        | 50 000                   |
+| 100      | 15 500 000                       | 410 000                  |
+| 500      | 75 500 000                       | 2 010 000                |
+
+Ceilings are set at approximately **3× the empirically observed cost** so
+that legitimate refactors do not cause spurious failures, while O(N²) or
+worse regressions are caught reliably.
+
+### Linear-Growth Assertion
+
+The sweep test additionally computes the **per-range CPU cost** at N=1 and
+N=500.  If the N=500 per-range cost exceeds 10× the N=1 per-range cost, a
+warning is printed to the test output:
+
+```
+WARNING: per-range CPU at N=500 (…) is >10× that at N=1 (…); possible super-linear scaling – investigate
+```
+
+This is a warning rather than a hard failure because the Soroban mock
+environment's cost model may not be perfectly linear at very small N values.
+The individual size tests catch hard regressions via the ceiling.
+
+### Test Coverage
+
+| Test | Description |
+|------|-------------|
+| `bench_get_multi_period_ranges_n1` | Single range, baseline cost |
+| `bench_get_multi_period_ranges_n10` | 10 ranges, early scaling check |
+| `bench_get_multi_period_ranges_n100` | 100 ranges, large-batch scenario |
+| `bench_get_multi_period_ranges_n500` | 500 ranges, upper-bound stress test |
+| `bench_get_multi_period_ranges_sweep` | All four sizes, CSV report + linear-growth assertion |
+| `bench_get_multi_period_ranges_zero_returns_empty` | No storage entry → empty Vec, no panic |
+| `regression_get_multi_period_ranges_budget` | Hard gate for all sizes + zero case |
+
+### Security Notes
+
+- `get_multi_period_ranges` is **read-only** and requires **no authentication**.
+  A caller cannot trigger storage modification or access another business's data.
+- Each business's ranges are stored under `MultiPeriodKey::Ranges(business)`.
+  There is no cross-business data mixing in the returned `Vec`.
+- The only denial-of-service vector is a business accumulating an
+  unbounded number of ranges, which inflates the deserialization cost for
+  any caller reading that address.  Operators should apply an application-level
+  limit on the number of multi-period ranges per business; the 500-range upper
+  bound used in these benchmarks is the recommended maximum.
+- Callers reading **untrusted** business addresses should budget using the
+  N=500 row (worst case).
+
+---
+
 ## Changelog
+
+### 2026-07-28
+
+- Added `get_multi_period_ranges` sweep benchmarks (N=1, 10, 100, 500)
+- New tests: sweep with CSV output, linear-growth assertion, zero-range edge case, regression gate
+- Per-size ceilings: `500 000 + N × 150 000` CPU instructions / `10 000 + N × 4 000` bytes
+- Added `get_multi_period_ranges` section to this document
+
+- Added batch cleanup benchmark section for `cleanup_expired_attestation` (#482)
+- New tests: sweep (N=1, 10, 100), per-item regression gate, edge-case guards
+- Per-item ceiling: 600 000 CPU instructions / 20 000 memory bytes
 
 ### 2026-02-22
 

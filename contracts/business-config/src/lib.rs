@@ -1,4 +1,5 @@
 #![no_std]
+#![allow(clippy::too_many_arguments)]
 
 //! # Per-Business Configuration Contract
 //!
@@ -615,17 +616,15 @@ impl BusinessConfigContract {
         env.storage()
             .instance()
             .get::<ConfigKey, BusinessConfig>(&ConfigKey::BusinessConfig(business.clone()))
-            .map(|config| {
-                Self::validate_schema_version(&config);
-                config
+            .inspect(|config| {
+                Self::validate_schema_version(config);
             })
             .unwrap_or_else(|| {
                 env.storage()
                     .instance()
                     .get::<ConfigKey, BusinessConfig>(&ConfigKey::GlobalDefaults)
-                    .map(|config| {
-                        Self::validate_schema_version(&config);
-                        config
+                    .inspect(|config| {
+                        Self::validate_schema_version(config);
                     })
                     .unwrap_or_else(|| Self::create_default_config(env))
             })
