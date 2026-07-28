@@ -65,6 +65,10 @@ pub const MAX_TIER: u32 = 9;
 /// When the ledger timestamp crosses a multiple of this window, the epoch advances.
 pub const FEE_BUCKET_WINDOW_SECONDS: u64 = 86400; // 24 * 60 * 60
 
+/// Minimum delay in seconds between proposing and committing a fee configuration change.
+/// Users must have at least this window to observe and react to pending fee changes.
+pub const FEE_TIMELOCK_SECONDS: u64 = 86400; // 24 hours
+
 
 // ════════════════════════════════════════════════════════════════════
 //  Storage types
@@ -92,6 +96,8 @@ pub enum DataKey {
     Admin,
     /// Core fee configuration (`FeeConfig`).
     FeeConfig,
+    /// Pending fee configuration with activation timestamp (`PendingFeeConfig`).
+    PendingFeeConfig,
     /// Discount in basis points for tier `u32`.
     TierDiscount(u32),
     /// Business-specific tier assignment.
@@ -162,6 +168,20 @@ pub struct FeeConfig {
     pub enabled: bool,
 }
 
+/// A pending fee configuration waiting for the timelock to expire.
+///
+/// Stored under [`DataKey::PendingFeeConfig`].
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PendingFeeConfig {
+    /// The fee configuration to apply.
+    pub config: FeeConfig,
+    /// Ledger timestamp after which the configuration may be committed.
+    pub effective_at: u64,
+    /// Address that proposed this configuration change.
+    pub proposed_by: Address,
+}
+
 // ════════════════════════════════════════════════════════════════════
 //  Admin helpers
 // ════════════════════════════════════════════════════════════════════
@@ -206,6 +226,44 @@ pub fn set_fee_enabled(env: &Env, enabled: bool) {
         config.enabled = enabled;
         set_fee_config(env, &config);
     }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Pending Fee Config (time-locked) helpers
+// ════════════════════════════════════════════════════════════════════
+
+/// Read the pending fee configuration, if any.
+pub fn get_pending_fee_config(env: &Env) -> Option<PendingFeeConfig> {
+    env.storage().instance().get(&DataKey::PendingFeeConfig)
+}
+
+/// Store a pending fee configuration.
+pub fn set_pending_fee_config(env: &Env, pending: &PendingFeeConfig) {
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingFeeConfig, pending);
+}
+
+/// Remove any pending fee configuration.
+pub fn clear_pending_fee_config(env: &Env) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::PendingFeeConfig);
+}
+
+/// If a pending fee config's timelock has expired, apply it to the live config
+/// and clear the pending state.
+///
+/// Returns `true` if a pending config was applied, `false` otherwise.
+pub fn check_and_apply_pending_fee_config(env: &Env) -> bool {
+    if let Some(pending) = get_pending_fee_config(env) {
+        if env.ledger().timestamp() >= pending.effective_at {
+            set_fee_config(env, &pending.config);
+            clear_pending_fee_config(env);
+            return true;
+        }
+    }
+    false
 }
 
 pub fn set_paused(env: &Env, paused: bool) {

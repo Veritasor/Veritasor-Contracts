@@ -59,7 +59,10 @@ pub use access_control::{ROLE_ADMIN, ROLE_ATTESTOR, ROLE_BUSINESS, ROLE_OPERATOR
 pub use dispute::{
     Dispute, DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType, OptionalResolution,
 };
-pub use dynamic_fees::{compute_fee, ArchivePointerRecord, DataKey, FeeConfig};
+pub use dynamic_fees::{
+    compute_fee, ArchivePointerRecord, DataKey, FeeConfig, PendingFeeConfig,
+    FEE_TIMELOCK_SECONDS,
+};
 pub use events::{
     AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
     AttestationSubmittedEvent, PauseScheduledEvent, PauseScheduledCancelledEvent,
@@ -166,6 +169,106 @@ impl AttestationContract {
             config.enabled,
             &admin,
         );
+    }
+
+    /// Propose a fee configuration change that enters a time-locked pending state.
+    ///
+    /// The configuration will not take effect until `FEE_TIMELOCK_SECONDS` have
+    /// elapsed and `commit_fee_config` is called. Only one pending proposal may
+    /// exist at a time.
+    ///
+    /// # Panics
+    /// - Caller does not have ADMIN role
+    /// - `base_fee` is negative
+    /// - A pending fee config is already scheduled (cancel it first)
+    pub fn propose_fee_config(
+        env: Env,
+        caller: Address,
+        token: Address,
+        collector: Address,
+        base_fee: i128,
+        enabled: bool,
+        nonce: u64,
+    ) {
+        let admin = dynamic_fees::require_admin(&env);
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
+        assert!(base_fee >= 0, "base_fee must be non-negative");
+        assert!(
+            dynamic_fees::get_pending_fee_config(&env).is_none(),
+            "pending fee config already scheduled"
+        );
+        let effective_at = env.ledger().timestamp() + FEE_TIMELOCK_SECONDS;
+        let config = FeeConfig {
+            token,
+            collector,
+            base_fee,
+            enabled,
+        };
+        let pending = dynamic_fees::PendingFeeConfig {
+            config,
+            effective_at,
+            proposed_by: admin,
+        };
+        dynamic_fees::set_pending_fee_config(&env, &pending);
+        events::emit_fee_config_proposed(
+            &env,
+            &pending.config.token,
+            &pending.config.collector,
+            pending.config.base_fee,
+            pending.config.enabled,
+            &pending.proposed_by,
+            effective_at,
+        );
+    }
+
+    /// Commit a previously proposed fee configuration after its timelock has expired.
+    ///
+    /// Applies the pending configuration to the live fee config and clears the pending state.
+    ///
+    /// # Panics
+    /// - Caller does not have ADMIN role
+    /// - No pending fee config exists
+    /// - Timelock has not yet expired
+    pub fn commit_fee_config(env: Env, caller: Address, nonce: u64) {
+        let admin = dynamic_fees::require_admin(&env);
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
+        let pending = dynamic_fees::get_pending_fee_config(&env)
+            .expect("no pending fee config to commit");
+        assert!(
+            env.ledger().timestamp() >= pending.effective_at,
+            "timelock not yet expired"
+        );
+        dynamic_fees::set_fee_config(&env, &pending.config);
+        dynamic_fees::clear_pending_fee_config(&env);
+        events::emit_fee_config_committed(
+            &env,
+            &pending.config.token,
+            &pending.config.collector,
+            pending.config.base_fee,
+            pending.config.enabled,
+            &admin,
+        );
+    }
+
+    /// Cancel a previously proposed fee configuration change.
+    ///
+    /// # Panics
+    /// - Caller does not have ADMIN role
+    /// - No pending fee config exists
+    pub fn cancel_pending_fee_config(env: Env, caller: Address, nonce: u64) {
+        let admin = dynamic_fees::require_admin(&env);
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
+        assert!(
+            dynamic_fees::get_pending_fee_config(&env).is_some(),
+            "no pending fee config to cancel"
+        );
+        dynamic_fees::clear_pending_fee_config(&env);
+        events::emit_fee_config_cancelled(&env, &admin);
+    }
+
+    /// Returns the pending fee configuration, if any.
+    pub fn get_pending_fee_config(env: Env) -> Option<PendingFeeConfig> {
+        dynamic_fees::get_pending_fee_config(&env)
     }
 
     pub fn set_tier_discount(env: Env, tier: u32, discount_bps: u32) {
@@ -1994,6 +2097,8 @@ mod multisig_e2e_test;
 mod multisig_test;
 #[cfg(test)]
 mod pause_test;
+#[cfg(test)]
+mod timelock_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod proof_hash_test;
 #[cfg(all(test, feature = "full-tests"))]

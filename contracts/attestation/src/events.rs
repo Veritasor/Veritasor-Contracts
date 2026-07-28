@@ -30,6 +30,8 @@
 //! | `ContractPaused`            | `paused`       | *(none)*          |
 //! | `ContractUnpaused`          | `unpaus`       | *(none)*          |
 //! | `FeeConfigChanged`          | `fee_cfg`      | *(none)*          |
+//! | `FeeConfigProposed`         | `fee_prop`     | *(none)*          |
+//! | `FeeConfigCommitted`        | `fee_com`      | *(none)*          |
 //! | `RateLimitConfigChanged`    | `rate_lm`      | *(none)*          |
 //! | `KeyRotationProposed`       | `kr_prop`      | *(none)*          |
 //! | `KeyRotationConfirmed`      | `kr_conf`      | *(none)*          |
@@ -108,6 +110,10 @@ pub const TOPIC_PAUSED: Symbol = symbol_short!("paused");
 pub const TOPIC_UNPAUSED: Symbol = symbol_short!("unpaus");
 /// Topic: fee configuration updated
 pub const TOPIC_FEE_CONFIG: Symbol = symbol_short!("fee_cfg");
+/// Topic: fee configuration proposed (time-locked)
+pub const TOPIC_FEE_CONFIG_PROPOSED: Symbol = symbol_short!("fee_prop");
+/// Topic: fee configuration committed after timelock
+pub const TOPIC_FEE_CONFIG_COMMITTED: Symbol = symbol_short!("fee_com");
 /// Topic: flat fee configuration updated
 pub const TOPIC_FLAT_FEE_CONFIG: Symbol = symbol_short!("ff_cfg");
 /// Topic: rate-limit configuration updated
@@ -312,6 +318,56 @@ pub struct FlatFeeConfigChangedEvent {
     pub enabled: bool,
     /// Address that made the configuration change.
     pub changed_by: Address,
+}
+
+/// Normalized payload for `FeeConfigProposed` events.
+///
+/// Emitted when a fee configuration change is proposed and enters the
+/// time-locked pending state.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeConfigProposedEvent {
+    /// Proposed token contract for fee collection.
+    pub token: Address,
+    /// Proposed destination address for fee collection.
+    pub collector: Address,
+    /// Proposed base fee amount.
+    pub base_fee: i128,
+    /// Proposed enabled state.
+    pub enabled: bool,
+    /// Address that proposed the change.
+    pub proposed_by: Address,
+    /// Ledger timestamp after which the change may be committed.
+    pub effective_at: u64,
+}
+
+/// Normalized payload for `FeeConfigCommitted` events.
+///
+/// Emitted when a previously proposed fee configuration is applied
+/// after the timelock has expired.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeConfigCommittedEvent {
+    /// Token contract now used for fee collection.
+    pub token: Address,
+    /// Destination address now receiving fees.
+    pub collector: Address,
+    /// Base fee amount now in effect.
+    pub base_fee: i128,
+    /// Whether fee collection is now enabled.
+    pub enabled: bool,
+    /// Address that committed the change.
+    pub committed_by: Address,
+}
+
+/// Normalized payload for `FeeConfigCancelled` events.
+///
+/// Emitted when a pending fee configuration proposal is cancelled.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeConfigCancelledEvent {
+    /// Address that cancelled the proposal.
+    pub cancelled_by: Address,
 }
 
 // ── Rate limiting ─────────────────────────────────────────────────
@@ -862,6 +918,100 @@ pub fn emit_flat_fee_config_changed(
         changed_by: changed_by.clone(),
     };
     env.events().publish((TOPIC_FLAT_FEE_CONFIG,), event);
+}
+
+/// Emit a `FeeConfigProposed` event.
+///
+/// Call this after a fee configuration change has been stored in the
+/// pending state with its timelock timestamp.
+///
+/// # Arguments
+///
+/// * `env`         – Soroban execution environment.
+/// * `token`       – Proposed token contract.
+/// * `collector`   – Proposed destination address.
+/// * `base_fee`    – Proposed base fee amount.
+/// * `enabled`     – Proposed enabled state.
+/// * `proposed_by` – Address that proposed the change.
+/// * `effective_at` – Timestamp after which the change may be committed.
+///
+/// # Events
+///
+/// Publishes `(fee_prop,)` → `FeeConfigProposedEvent`.
+pub fn emit_fee_config_proposed(
+    env: &Env,
+    token: &Address,
+    collector: &Address,
+    base_fee: i128,
+    enabled: bool,
+    proposed_by: &Address,
+    effective_at: u64,
+) {
+    let event = FeeConfigProposedEvent {
+        token: token.clone(),
+        collector: collector.clone(),
+        base_fee,
+        enabled,
+        proposed_by: proposed_by.clone(),
+        effective_at,
+    };
+    env.events().publish((TOPIC_FEE_CONFIG_PROPOSED,), event);
+}
+
+/// Emit a `FeeConfigCommitted` event.
+///
+/// Call this after a previously proposed fee configuration has been
+/// applied following timelock expiry.
+///
+/// # Arguments
+///
+/// * `env`          – Soroban execution environment.
+/// * `token`        – Token contract now in effect.
+/// * `collector`    – Destination address now in effect.
+/// * `base_fee`     – Base fee now in effect.
+/// * `enabled`      – Enabled state now in effect.
+/// * `committed_by` – Address that committed the change.
+///
+/// # Events
+///
+/// Publishes `(fee_com,)` → `FeeConfigCommittedEvent`.
+pub fn emit_fee_config_committed(
+    env: &Env,
+    token: &Address,
+    collector: &Address,
+    base_fee: i128,
+    enabled: bool,
+    committed_by: &Address,
+) {
+    let event = FeeConfigCommittedEvent {
+        token: token.clone(),
+        collector: collector.clone(),
+        base_fee,
+        enabled,
+        committed_by: committed_by.clone(),
+    };
+    env.events().publish((TOPIC_FEE_CONFIG_COMMITTED,), event);
+}
+
+/// Emit a `FeeConfigCancelled` event.
+///
+/// Call this after a pending fee configuration proposal has been cancelled.
+///
+/// # Arguments
+///
+/// * `env`          – Soroban execution environment.
+/// * `cancelled_by` – Address that cancelled the proposal.
+///
+/// # Events
+///
+/// Publishes `(fee_cfg, )` → `FeeConfigCancelledEvent` is not used;
+/// instead this emits on the same `TOPIC_FEE_CONFIG` for consistency.
+pub fn emit_fee_config_cancelled(env: &Env, cancelled_by: &Address) {
+    let event = FeeConfigCancelledEvent {
+        cancelled_by: cancelled_by.clone(),
+    };
+    env.events()
+        .publish((TOPIC_FEE_CONFIG_PROPOSED, cancelled_by.clone()), event);
 }
 
 // ── Rate limiting ─────────────────────────────────────────────────
