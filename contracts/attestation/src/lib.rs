@@ -58,10 +58,11 @@ pub use access_control::{ROLE_ADMIN, ROLE_ATTESTOR, ROLE_BUSINESS, ROLE_OPERATOR
 pub use dispute::{
     Dispute, DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType, OptionalResolution,
 };
-pub use dynamic_fees::{compute_fee, DataKey, FeeConfig};
+pub use dynamic_fees::{compute_fee, ArchivePointerRecord, DataKey, FeeConfig};
 pub use events::{
     AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
-    AttestationSubmittedEvent, ProofHashUpdatedEvent,
+    AttestationSubmittedEvent, PauseScheduledCancelledEvent, PauseScheduledEvent,
+    ProofHashUpdatedEvent, RevocationReason,
 };
 pub use fees::{collect_flat_fee, FlatFeeConfig};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
@@ -1402,7 +1403,8 @@ impl AttestationContract {
         dispute::require_revocation_authorized(&env, &caller, &business, &period);
         let revocation: RevocationData = (caller.clone(), env.ledger().timestamp(), reason.clone());
         dispute::record_revocation(&env, &business, &period, &revocation);
-        events::emit_attestation_revoked(&env, &business, &period, &caller, &reason);
+        let reason_code = events::RevocationReason::from_reason_str(&reason);
+        events::emit_attestation_revoked(&env, &business, &period, &caller, &reason, reason_code);
     }
 
     /// Return `true` when the attestation has been revoked.
@@ -1717,3 +1719,5 @@ mod ttl_test;
 mod verify_attestation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod verify_attestations_batch_test;
+#[cfg(all(test, feature = "full-tests"))]
+mod revoke_reason_test;
