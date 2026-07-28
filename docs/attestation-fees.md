@@ -19,6 +19,12 @@ The flat fee is configured by the contract administrator using the `configure_fl
 - **Amount**: The flat amount to be collected (in the smallest unit of the token).
 - **Enabled**: A master switch to enable or disable the flat fee collection.
 
+## Collector Rotation
+
+The contract supports explicit collector rotation through an escrow flow. The current collector may propose a new collector address using `propose_collector_rotation`. Any accumulated flat-fee balance held by the current collector is moved into escrow and remains locked until the proposed new collector accepts the rotation.
+
+When the proposed collector calls `accept_collector_rotation`, the pending proposal is cleared, the contract's flat fee collector address is updated, and escrowed tokens are released to the new collector.
+
 ## Submission Flow
 
 When a business submits an attestation via `submit_attestation`:

@@ -25,6 +25,25 @@
 //! | BUSINESS   | Can submit own attestations, view own data            |
 //! | OPERATOR   | Can perform routine operations (pause, unpause)       |
 //!
+//! ## Weighted Admin Quorum
+//!
+//! Each admin member carries a `u32` voting weight stored in the `AdminWeight`
+//! map.  Quorum evaluation uses the **sum of weights** rather than a raw member
+//! count, enabling role asymmetry (e.g. a Founder key with weight 3 vs. an Ops
+//! key with weight 1).
+//!
+//! | Constant              | Value | Purpose                                  |
+//! |-----------------------|-------|------------------------------------------|
+//! | `MAX_ADMIN_WEIGHT`    | 1 000 | Per-member cap; prevents u64 overflow    |
+//! | `DEFAULT_ADMIN_WEIGHT`| 1     | Implicit weight for un-configured admins |
+//!
+//! ### Invariants
+//! - Weight 0 is rejected (`set_admin_weight` panics) — use role revocation instead.
+//! - Only addresses that currently hold `ROLE_ADMIN` contribute to `admin_quorum_weight`.
+//! - Removing the admin role from an address implicitly removes it from the quorum sum,
+//!   even if a non-zero weight entry remains in storage.
+//! - Every weight change emits an `AdminWeightChanged` event for off-chain auditing.
+//!
 //! ## Invariants
 //! - ADMIN role cannot be granted to zero address
 //! - Role bitmaps must only use defined bits (0b1111 = 0xF)
@@ -48,6 +67,19 @@ pub const ROLE_OPERATOR: u32 = 1 << 3; // 0b1000
 /// and the reference implementation in the proptests (`contracts/attestation/src/property_test.rs`).
 pub const ROLE_VALID_MASK: u32 = ROLE_ADMIN | ROLE_ATTESTOR | ROLE_BUSINESS | ROLE_OPERATOR;
 
+/// Maximum allowed weight for a single admin member.
+///
+/// Capping individual weights at 1 000 prevents u64 overflow when summing
+/// across up to u32::MAX admins (1 000 × 2^32 ≈ 4 × 10^12, safely within u64).
+/// Any `set_admin_weight` call with a value above this constant is rejected.
+pub const MAX_ADMIN_WEIGHT: u32 = 1_000;
+
+/// Default weight assigned to an admin that has never had an explicit weight set.
+///
+/// Using 1 preserves backward compatibility: all existing admins participate
+/// in quorum with equal unit weight, matching the previous count-based model.
+pub const DEFAULT_ADMIN_WEIGHT: u32 = 1;
+
 /// Storage keys for access control
 #[contracttype]
 #[derive(Clone)]
@@ -63,6 +95,11 @@ pub enum AccessControlKey {
     /// Last used nonce per account for replay prevention
     /// Key format: (account_address, nonce_channel_id)
     LastNonce((Address, u32)),
+    /// Per-admin voting weight for weighted quorum evaluation.
+    ///
+    /// Key: admin `Address` → Value: `u32` weight (1 ≤ weight ≤ MAX_ADMIN_WEIGHT).
+    /// Missing entries default to `DEFAULT_ADMIN_WEIGHT` (= 1).
+    AdminWeight(Address),
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -188,6 +225,82 @@ pub fn get_role_holders(env: &Env) -> Vec<Address> {
         .instance()
         .get(&AccessControlKey::RoleHolders)
         .unwrap_or_else(|| Vec::new(env))
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Weighted Admin Quorum
+// ════════════════════════════════════════════════════════════════════
+
+/// Get the voting weight of an admin address.
+///
+/// Returns the explicitly stored weight, or `DEFAULT_ADMIN_WEIGHT` (1) if none
+/// has been set.  Non-admin addresses are allowed to have a stored weight, but
+/// it is ignored by `admin_quorum_weight`; only addresses that currently hold
+/// `ROLE_ADMIN` contribute to the quorum sum.
+pub fn get_admin_weight(env: &Env, account: &Address) -> u32 {
+    env.storage()
+        .instance()
+        .get(&AccessControlKey::AdminWeight(account.clone()))
+        .unwrap_or(DEFAULT_ADMIN_WEIGHT)
+}
+
+/// Set the voting weight for an admin address.
+///
+/// # Security Requirements
+///
+/// - Caller must hold `ROLE_ADMIN` (enforced by the public `set_admin_weight`
+///   contract method before reaching this helper).
+/// - `weight` must be in `1 ..= MAX_ADMIN_WEIGHT`; zero is rejected to prevent
+///   an admin silently losing all quorum influence without an explicit role
+///   revocation.
+/// - Emits `AdminWeightChanged` for an auditable on-chain trail.
+///
+/// # Panics
+///
+/// - `"admin weight cannot be zero"` – caller supplied `weight == 0`.
+/// - `"admin weight exceeds MAX_ADMIN_WEIGHT"` – caller supplied a value above
+///   the cap (currently 1 000).
+/// - `"account does not hold ROLE_ADMIN"` – target address is not an admin.
+pub fn set_admin_weight(env: &Env, account: &Address, weight: u32, changed_by: &Address) {
+    if weight == 0 {
+        panic!("admin weight cannot be zero");
+    }
+    if weight > MAX_ADMIN_WEIGHT {
+        panic!("admin weight exceeds MAX_ADMIN_WEIGHT");
+    }
+    if !has_role(env, account, ROLE_ADMIN) {
+        panic!("account does not hold ROLE_ADMIN");
+    }
+
+    let old_weight = get_admin_weight(env, account);
+    env.storage()
+        .instance()
+        .set(&AccessControlKey::AdminWeight(account.clone()), &weight);
+
+    crate::events::emit_admin_weight_changed(env, account, old_weight, weight, changed_by);
+}
+
+/// Compute the total quorum weight of all current admin members.
+///
+/// Iterates the `RoleHolders` list and sums the weight of every address that
+/// currently holds `ROLE_ADMIN`.  Addresses with no explicit weight entry
+/// contribute `DEFAULT_ADMIN_WEIGHT` (= 1), preserving backward compatibility
+/// with the previous count-based model.
+///
+/// # Returns
+///
+/// `u64` — sum of weights of all active admins.  Returns `0` if no admins
+/// exist (which should be an unreachable state in a well-initialized contract).
+pub fn admin_quorum_weight(env: &Env) -> u64 {
+    let holders = get_role_holders(env);
+    let mut total: u64 = 0;
+    for i in 0..holders.len() {
+        let holder = holders.get(i).unwrap();
+        if has_role(env, &holder, ROLE_ADMIN) {
+            total += get_admin_weight(env, &holder) as u64;
+        }
+    }
+    total
 }
 
 // ════════════════════════════════════════════════════════════════════

@@ -297,10 +297,19 @@ pub fn get_revoked_periods(env: &Env, business: &Address) -> Vec<String> {
 /// This function must only be called when `Revoked(business, period)` has
 /// already been written in the same transaction.
 fn append_to_revocation_index(env: &Env, business: &Address, period: &String) {
-    let key = DisputeKey::RevokedPeriods(business.clone());
     let mut periods = get_revoked_periods(env, business);
     periods.push_back(period.clone());
-    env.storage().instance().set(&key, &periods);
+    set_revoked_periods(env, business, &periods);
+}
+
+/// Set the revoked periods array.
+pub fn set_revoked_periods(env: &Env, business: &Address, periods: &Vec<String>) {
+    let key = DisputeKey::RevokedPeriods(business.clone());
+    if periods.is_empty() {
+        env.storage().instance().remove(&key);
+    } else {
+        env.storage().instance().set(&key, periods);
+    }
 }
 
 /// Atomically record a revocation: write the revocation record, update the

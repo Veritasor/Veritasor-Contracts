@@ -62,6 +62,10 @@ impl TestEnv {
         self.client.get_revocation_info(&business, &period)
     }
 
+    pub fn cleanup_revocation_index(&self, business: Address) -> u32 {
+        self.client.cleanup_revocation_index(&business)
+    }
+
     pub fn get_attestation(
         &self,
         business: Address,
@@ -1746,4 +1750,65 @@ fn test_global_sequence_spans_multiple_businesses() {
         &0u64,
     );
     assert_eq!(client.get_revocation_sequence(), 2u64);
+}
+
+#[test]
+fn test_cleanup_revocation_index_no_orphans() {
+    let s = TestEnv::new();
+    let business = Address::generate(&s.env);
+    let period = String::from_str(&s.env, "2023-Q1");
+
+    s.submit_attestation(
+        business.clone(),
+        period.clone(),
+        BytesN::from_array(&s.env, &[1; 32]),
+        1000,
+        1,
+    );
+
+    s.revoke_attestation(
+        s.admin.clone(),
+        business.clone(),
+        period.clone(),
+        String::from_str(&s.env, "reason"),
+    );
+
+    let count = s.cleanup_revocation_index(business.clone());
+    assert_eq!(count, 0); // No orphans since the attestation still exists
+}
+
+#[test]
+fn test_cleanup_revocation_index_with_orphans() {
+    let s = TestEnv::new();
+    let business = Address::generate(&s.env);
+    let period = String::from_str(&s.env, "2023-Q1");
+
+    s.submit_attestation(
+        business.clone(),
+        period.clone(),
+        BytesN::from_array(&s.env, &[1; 32]),
+        1000,
+        1,
+    );
+
+    s.revoke_attestation(
+        s.admin.clone(),
+        business.clone(),
+        period.clone(),
+        String::from_str(&s.env, "reason"),
+    );
+
+    // Fast-forward ledger to expire the attestation so it can be cleaned up
+    s.env.ledger().set_timestamp(1000 + 365 * 24 * 3600 + 1);
+
+    // Clean up the expired attestation
+    s.client.cleanup_expired_attestation(&s.admin, &business, &period);
+
+    // Now cleanup the revocation index (which should remove the orphan)
+    let count = s.cleanup_revocation_index(business.clone());
+    assert_eq!(count, 1);
+
+    // Second cleanup should return 0
+    let count2 = s.cleanup_revocation_index(business.clone());
+    assert_eq!(count2, 0);
 }

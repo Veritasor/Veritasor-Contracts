@@ -33,6 +33,10 @@
 //! | migrate_attestation | < 400k | < 10k | < 2k |
 //! | get_attestation | < 100k | < 3k | < 500 |
 //! | get_fee_quote | < 150k | < 5k | < 800 |
+//! | pause (cold) | < 250k | < 7k | < 1k |
+//! | pause (hot) | < 220k | < 6k | < 1k |
+//! | unpause (cold) | < 250k | < 7k | < 1k |
+//! | unpause (hot) | < 220k | < 6k | < 1k |
 //!
 //! ## Regression Detection
 //!
@@ -975,6 +979,64 @@ fn bench_role_ops() {
     );
 }
 
+// ── Pause / Unpause Benchmarks ─────────────────────────────────────
+
+#[test]
+fn bench_pause_cold() {
+    let (env, client, admin) = setup_basic();
+
+    let before = BudgetSnapshot::capture(&env);
+    client.pause(&admin, &1u64);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("pause (cold – no previous pause flag in storage)");
+    cost.assert_within_target("pause (cold)", 250_000, 7_000);
+}
+
+#[test]
+fn bench_pause_hot() {
+    let (env, client, admin) = setup_basic();
+    client.pause(&admin, &1u64);
+
+    let before = BudgetSnapshot::capture(&env);
+    client.pause(&admin, &2u64);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("pause (hot – pause flag already in storage)");
+    cost.assert_within_target("pause (hot)", 220_000, 6_000);
+}
+
+#[test]
+fn bench_unpause_cold() {
+    let (env, client, admin) = setup_basic();
+    client.pause(&admin, &1u64);
+
+    let before = BudgetSnapshot::capture(&env);
+    client.unpause(&admin, &2u64);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("unpause (cold – unpausing from paused state)");
+    cost.assert_within_target("unpause (cold)", 250_000, 7_000);
+}
+
+#[test]
+fn bench_unpause_hot() {
+    let (env, client, admin) = setup_basic();
+    client.pause(&admin, &1u64);
+    client.unpause(&admin, &2u64);
+
+    let before = BudgetSnapshot::capture(&env);
+    client.unpause(&admin, &3u64);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("unpause (hot – already unpaused)");
+    cost.assert_within_target("unpause (hot)", 220_000, 6_000);
+}
+
 // ── Worst-Case Scenarios ────────────────────────────────────────────
 
 #[test]
@@ -1109,10 +1171,10 @@ fn bench_summary_report() {
     std::println!("  • migrate_attestation:           < 400k / < 10k");
     std::println!("  • get_attestation:               < 100k / < 3k");
     std::println!("  • get_admin:                     < 150k / < 5k");
-    std::println!("\n## Cold vs Warm Storage (verify_attestation)");
-    std::println!("  • verify_attestation (cold):          < 250k / < 8k");
-    std::println!("  • verify_attestation (warm):          < 150k / < 5k");
-    std::println!("  • verify_attestation (non-existent):  < 150k / < 5k");
+    std::println!("  • pause (cold):                  < 250k / < 7k");
+    std::println!("  • pause (hot):                   < 220k / < 6k");
+    std::println!("  • unpause (cold):                < 250k / < 7k");
+    std::println!("  • unpause (hot):                 < 220k / < 6k");
     std::println!("\nRegression threshold: 150% of target values");
     std::println!("\nFor detailed results, run:");
     std::println!("  cargo test --test gas_benchmark_test -- --nocapture\n");
@@ -1406,6 +1468,66 @@ fn regression_is_revoked_after_revoke_threshold() {
     let cost = before.delta(&after);
     cost.print("regression: is_revoked (after revoke)");
     cost.assert_within_target("regression_is_revoked_revoked", 250_000, 6_000);
+}
+
+/// Regression: pause (cold) must stay under threshold.
+#[test]
+fn regression_pause_cold_threshold() {
+    let (env, client, admin) = setup_basic();
+
+    let before = BudgetSnapshot::capture(&env);
+    client.pause(&admin, &1u64);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("regression: pause (cold)");
+    cost.assert_within_target("regression_pause_cold", 250_000, 7_000);
+}
+
+/// Regression: pause (hot) must stay under threshold.
+#[test]
+fn regression_pause_hot_threshold() {
+    let (env, client, admin) = setup_basic();
+    client.pause(&admin, &1u64);
+
+    let before = BudgetSnapshot::capture(&env);
+    client.pause(&admin, &2u64);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("regression: pause (hot)");
+    cost.assert_within_target("regression_pause_hot", 220_000, 6_000);
+}
+
+/// Regression: unpause (cold) must stay under threshold.
+#[test]
+fn regression_unpause_cold_threshold() {
+    let (env, client, admin) = setup_basic();
+    client.pause(&admin, &1u64);
+
+    let before = BudgetSnapshot::capture(&env);
+    client.unpause(&admin, &2u64);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("regression: unpause (cold)");
+    cost.assert_within_target("regression_unpause_cold", 250_000, 7_000);
+}
+
+/// Regression: unpause (hot) must stay under threshold.
+#[test]
+fn regression_unpause_hot_threshold() {
+    let (env, client, admin) = setup_basic();
+    client.pause(&admin, &1u64);
+    client.unpause(&admin, &2u64);
+
+    let before = BudgetSnapshot::capture(&env);
+    client.unpause(&admin, &3u64);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("regression: unpause (hot)");
+    cost.assert_within_target("regression_unpause_hot", 220_000, 6_000);
 }
 
 // ── WASM Size Budget Edge Cases ──────────────────────────────────────
