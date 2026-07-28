@@ -27,6 +27,7 @@
 //! | `AttestationMigrated`       | `att_mig`      | `business`        |
 //! | `RoleGranted`               | `role_gr`      | `account`         |
 //! | `RoleRevoked`               | `role_rv`      | `account`         |
+//! | `AdminSwapped`              | `adm_sw`       | *(none)*          |
 //! | `ContractPaused`            | `paused`       | *(none)*          |
 //! | `ContractUnpaused`          | `unpaus`       | *(none)*          |
 //! | `FeeConfigChanged`          | `fee_cfg`      | *(none)*          |
@@ -104,6 +105,8 @@ pub const TOPIC_ATTESTATION_CLEANED_UP: Symbol = symbol_short!("att_cl");
 pub const TOPIC_ROLE_GRANTED: Symbol = symbol_short!("role_gr");
 /// Topic: role revoked from an address
 pub const TOPIC_ROLE_REVOKED: Symbol = symbol_short!("role_rv");
+/// Topic: admin atomically swapped (revoke old + grant new)
+pub const TOPIC_ADMIN_SWAPPED: Symbol = symbol_short!("adm_sw");
 /// Topic: contract paused
 pub const TOPIC_PAUSED: Symbol = symbol_short!("paused");
 /// Topic: contract unpaused
@@ -116,6 +119,10 @@ pub const TOPIC_FEE_CONFIG_PROPOSED: Symbol = symbol_short!("fee_prop");
 pub const TOPIC_FEE_CONFIG_COMMITTED: Symbol = symbol_short!("fee_com");
 /// Topic: flat fee configuration updated
 pub const TOPIC_FLAT_FEE_CONFIG: Symbol = symbol_short!("ff_cfg");
+/// Topic: collector rotation proposed
+pub const TOPIC_COLLECTOR_ROTATION_PROPOSED: Symbol = symbol_short!("cr_prop");
+/// Topic: collector rotation accepted
+pub const TOPIC_COLLECTOR_ROTATION_ACCEPTED: Symbol = symbol_short!("cr_acc");
 /// Topic: rate-limit configuration updated
 pub const TOPIC_RATE_LIMIT: Symbol = symbol_short!("rate_lm");
 /// Topic: key rotation proposed (time-locked)
@@ -138,6 +145,8 @@ pub const TOPIC_BIZ_REACTIVATE: Symbol = symbol_short!("biz_rea");
 pub const TOPIC_PROOF_HASH_UPDATED: Symbol = symbol_short!("ph_upd");
 /// Topic: proposal cleaned up after expiry + grace period
 pub const TOPIC_PROPOSAL_CLEANED: Symbol = symbol_short!("prp_cl");
+/// Topic: slash triggered
+pub const TOPIC_SLASH_TRIGGERED: Symbol = symbol_short!("slsh_trg");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -181,10 +190,122 @@ pub struct AttestationSubmittedEvent {
     pub expiry_timestamp: Option<u64>,
 }
 
+// ── Revocation reason code ────────────────────────────────────────
+
+/// Machine-readable classification of why an attestation was revoked.
+///
+/// ## Mapping contract
+///
+/// The `revoke_attestation` entrypoint accepts a free-text `reason` string.
+/// The contract maps well-known lowercase reason strings to the corresponding
+/// variant at emit time:
+///
+/// | Reason string (case-insensitive prefix match) | Variant          |
+/// |----------------------------------------------|------------------|
+/// | `"dispute"`                                   | `Dispute`        |
+/// | `"fraud"`                                     | `Fraud`          |
+/// | `"attestor_slash"` / `"attestorslash"`        | `AttestorSlash`  |
+/// | `"admin"`                                     | `Admin`          |
+/// | *(anything else)*                             | `Other`          |
+///
+/// ## Security Notes
+///
+/// - The classification is performed by the contract, not the caller; callers
+///   cannot inject a fabricated variant value.
+/// - `Other` is the safe default for any unrecognised string, preventing new
+///   free-text values from causing panics or unexpected behaviour.
+/// - This enum is `#[contracttype]` and XDR-serialised; variant order is
+///   stable and part of the indexer compatibility contract.
+///
+/// ## Indexer Usage
+///
+/// Indexers should match on `reason_code` for programmatic classification and
+/// retain `reason` for the human-readable audit trail.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum RevocationReason {
+    /// Revocation triggered by a resolved or upheld dispute.
+    Dispute,
+    /// Revocation triggered by detected fraud.
+    Fraud,
+    /// Revocation triggered by an attestor slash event.
+    AttestorSlash,
+    /// Administrative revocation by a contract admin.
+    Admin,
+    /// Any reason that does not match the well-known variants above.
+    Other,
+}
+
+impl RevocationReason {
+    /// Derive a `RevocationReason` from a free-text reason string.
+    ///
+    /// Matching is case-insensitive and prefix-based so callers using
+    /// slightly different casing or suffixes still get the right variant.
+    ///
+    /// Returns `RevocationReason::Other` for any unrecognised string.
+    pub fn from_reason_str(reason: &String) -> Self {
+        // We need to compare strings in no_std Soroban environment.
+        // Use byte-level prefix matching via a helper that works with
+        // soroban_sdk::String (which is XDR bytes under the hood).
+        let len = reason.len();
+
+        // "dispute" – 7 bytes
+        if len >= 7 && Self::starts_with_ci(reason, b"dispute") {
+            return RevocationReason::Dispute;
+        }
+        // "fraud" – 5 bytes
+        if len >= 5 && Self::starts_with_ci(reason, b"fraud") {
+            return RevocationReason::Fraud;
+        }
+        // "attestor_slash" – 14 bytes  /  "attestorslash" – 13 bytes
+        if len >= 13 && Self::starts_with_ci(reason, b"attestor") {
+            return RevocationReason::AttestorSlash;
+        }
+        // "admin" – 5 bytes
+        if len >= 5 && Self::starts_with_ci(reason, b"admin") {
+            return RevocationReason::Admin;
+        }
+
+        RevocationReason::Other
+    }
+
+    /// Returns `true` if `s` starts with `prefix` in a case-insensitive manner.
+    ///
+    /// Works with Soroban's `String` by iterating over individual bytes.
+    /// Only ASCII lowercase/uppercase is handled; non-ASCII bytes are compared
+    /// literally, which is fine since all known prefixes are ASCII.
+    fn starts_with_ci(s: &String, prefix: &[u8]) -> bool {
+        let n = prefix.len() as u32;
+        if s.len() < n {
+            return false;
+        }
+        let mut buf = [0u8; 16]; // prefix is at most 16 bytes
+        s.copy_into_slice(&mut buf[..n as usize]);
+        for (i, &p) in prefix.iter().enumerate() {
+            let b = buf[i];
+            // Lowercase both bytes (ASCII only).
+            let bl = if b.is_ascii_uppercase() { b + 32 } else { b };
+            if bl != p {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 /// Normalized payload for `AttestationRevoked` events.
 ///
 /// Emitted once per successful `revoke_attestation` call.  The
 /// `reason` field is a free-form string supplied by the revoker.
+/// `reason_code` is a machine-readable enumerated classification that
+/// indexers can use to filter or aggregate revocations without parsing
+/// free-text.
+///
+/// ## Backwards Compatibility
+///
+/// `reason_code` was appended as the last field.  Per the append-only
+/// compatibility policy, this is a non-breaking change and does NOT
+/// increment `EVENT_SCHEMA_VERSION`.
 ///
 /// This struct is an indexer-facing wire contract; field order and types are
 /// part of compatibility guarantees.
@@ -199,6 +320,12 @@ pub struct AttestationRevokedEvent {
     pub revoked_by: Address,
     /// Human-readable revocation reason for audit trail.
     pub reason: String,
+    /// Machine-readable reason code for programmatic classification.
+    ///
+    /// Derived from the free-text `reason` by the contract at emit time.
+    /// Callers that pass a well-known reason string receive the corresponding
+    /// variant; any unrecognised string maps to `RevocationReason::Other`.
+    pub reason_code: RevocationReason,
 }
 
 /// Normalized payload for `AttestationMigrated` events.
@@ -256,6 +383,21 @@ pub struct RoleChangedEvent {
     pub role: u32,
     /// Address that authorized the change (must hold ADMIN role).
     pub changed_by: Address,
+}
+
+/// Normalized payload for `AdminSwapped` events.
+///
+/// Emitted when an admin is atomically replaced by another address.
+/// Ensures the admin allowlist is never left without a member.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AdminSwappedEvent {
+    /// Address whose ADMIN role was revoked.
+    pub old_admin: Address,
+    /// Address that received the ADMIN role.
+    pub new_admin: Address,
+    /// Address that authorized the swap (must hold ADMIN role).
+    pub swapped_by: Address,
 }
 
 // ── Pause / unpause ───────────────────────────────────────────────
@@ -528,6 +670,15 @@ pub struct ProposalCleanedEvent {
     pub cleaned_at: u32,
 }
 
+/// Normalized payload for `SlashTriggered` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct SlashTriggeredEvent {
+    pub attestor: Address,
+    pub amount: i128,
+    pub dispute_id: u64,
+}
+
 // ── Attestation lifecycle ─────────────────────────────────────────
 
 /// Emit an `AttestationSubmitted` event.
@@ -584,11 +735,12 @@ pub fn emit_attestation_submitted(
 ///
 /// # Arguments
 ///
-/// * `env`        – Soroban execution environment.
-/// * `business`   – Business whose attestation was revoked.
-/// * `period`     – Period identifier.
-/// * `revoked_by` – Address that performed the revocation.
-/// * `reason`     – Free-form revocation reason.
+/// * `env`         – Soroban execution environment.
+/// * `business`    – Business whose attestation was revoked.
+/// * `period`      – Period identifier.
+/// * `revoked_by`  – Address that performed the revocation.
+/// * `reason`      – Free-form revocation reason.
+/// * `reason_code` – Machine-readable classification derived by the caller.
 ///
 /// # Events
 ///
@@ -599,12 +751,14 @@ pub fn emit_attestation_revoked(
     period: &String,
     revoked_by: &Address,
     reason: &String,
+    reason_code: RevocationReason,
 ) {
     let event = AttestationRevokedEvent {
         business: business.clone(),
         period: period.clone(),
         revoked_by: revoked_by.clone(),
         reason: reason.clone(),
+        reason_code,
     };
     env.events()
         .publish((TOPIC_ATTESTATION_REVOKED, business.clone()), event);
@@ -675,6 +829,22 @@ pub fn emit_attestation_cleaned_up(env: &Env, business: &Address, period: &Strin
     };
     env.events()
         .publish((TOPIC_ATTESTATION_CLEANED_UP, business.clone()), event);
+}
+
+/// Emit a `SlashTriggered` event.
+pub fn emit_slash_triggered(
+    env: &Env,
+    attestor: &Address,
+    amount: i128,
+    dispute_id: u64,
+) {
+    let event = SlashTriggeredEvent {
+        attestor: attestor.clone(),
+        amount,
+        dispute_id,
+    };
+    env.events()
+        .publish((TOPIC_SLASH_TRIGGERED, attestor.clone()), event);
 }
 
 /// Normalized payload for `AttestationExpiryExtended` events.
@@ -806,6 +976,36 @@ pub fn emit_role_revoked(env: &Env, account: &Address, role: u32, changed_by: &A
     };
     env.events()
         .publish((TOPIC_ROLE_REVOKED, account.clone()), event);
+}
+
+/// Emit an `AdminSwapped` event.
+///
+/// Call this after an atomic admin swap has been durably stored.
+/// Combines the revoke and grant into a single event for indexer
+/// efficiency and audit clarity.
+///
+/// # Arguments
+///
+/// * `env`         – Soroban execution environment.
+/// * `old_admin`   – Address whose ADMIN role was revoked.
+/// * `new_admin`   – Address that received the ADMIN role.
+/// * `swapped_by`  – Address that authorized the swap.
+///
+/// # Events
+///
+/// Publishes `(adm_sw,)` → `AdminSwappedEvent`.
+pub fn emit_admin_swapped(
+    env: &Env,
+    old_admin: &Address,
+    new_admin: &Address,
+    swapped_by: &Address,
+) {
+    let event = AdminSwappedEvent {
+        old_admin: old_admin.clone(),
+        new_admin: new_admin.clone(),
+        swapped_by: swapped_by.clone(),
+    };
+    env.events().publish((TOPIC_ADMIN_SWAPPED,), event);
 }
 
 // ── Pause / unpause ───────────────────────────────────────────────
@@ -1301,4 +1501,44 @@ pub fn emit_proposal_cleaned(env: &Env, proposal_id: u64, action: &ProposalActio
         cleaned_at,
     };
     env.events().publish((TOPIC_PROPOSAL_CLEANED,), event);
+}
+
+/// Emit a `VoteWeightSnapshotCreated` event (issue #512).
+///
+/// Call this at proposal creation time, immediately after the snapshot has
+/// been persisted to instance storage. The event is the indexer-facing
+/// record of the snapshot and is the only way off-chain observers learn
+/// the exact owner set / threshold that govern the proposal's tally.
+///
+/// # Arguments
+///
+/// * `env`            – Soroban execution environment.
+/// * `proposal_id`    – Identifier of the proposal whose snapshot was captured.
+/// * `owners_count`   – Number of owners in the snapshot (= total weight
+///                      under the current 1-owner-1-vote semantics).
+/// * `threshold`      – Approval threshold captured at creation time.
+/// * `created_at`     – Ledger sequence when the snapshot was captured.
+/// * `action_tag`     – Stable numeric tag for the proposal's
+///                      `ProposalAction` variant.
+///
+/// # Events
+///
+/// Publishes `(vw_snap,)` → `VoteWeightSnapshotCreatedEvent`.
+pub fn emit_vote_weight_snapshot_created(
+    env: &Env,
+    proposal_id: u64,
+    owners_count: u32,
+    threshold: u32,
+    created_at: u32,
+    action_tag: u32,
+) {
+    let event = VoteWeightSnapshotCreatedEvent {
+        proposal_id,
+        owners_count,
+        threshold,
+        created_at,
+        action_tag,
+    };
+    env.events()
+        .publish((TOPIC_VOTE_WEIGHT_SNAPSHOT_CREATED,), event);
 }
