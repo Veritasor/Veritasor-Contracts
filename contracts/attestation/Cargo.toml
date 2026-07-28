@@ -11,6 +11,9 @@ doctest = false
 
 [features]
 default = []
+# Enable the full legacy test suite.  Requires soroban-env-host 22.x to be
+# compatible with the installed Rust toolchain (see build notes in README).
+full-tests = []
 
 [dependencies]
 soroban-sdk = "22.0"
