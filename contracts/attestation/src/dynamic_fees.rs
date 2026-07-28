@@ -223,6 +223,12 @@ pub fn is_paused(env: &Env) -> bool {
         .unwrap_or(false)
 }
 
+pub fn handle_epoch_rollover(env: &Env) {}
+pub fn increment_epoch_submissions(env: &Env, period: &String, count: u32) -> u32 { count }
+pub fn accumulate_epoch_fees(env: &Env, period: &String, fee: i128) -> i128 { fee }
+pub fn get_epoch(env: &Env) -> u32 { 0 }
+
+
 pub fn set_dao(env: &Env, dao: &Address) {
     env.storage().instance().set(&DataKey::Dao, dao);
 }

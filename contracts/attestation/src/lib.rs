@@ -1637,7 +1637,7 @@ impl AttestationContract {
         dispute::validate_dispute_resolution(&env, dispute_id, &resolver).expect("invalid");
         let resolution = dispute::DisputeResolution {
             resolver,
-            outcome,
+            outcome: outcome.clone(),
             timestamp: env.ledger().timestamp(),
             notes,
         };
