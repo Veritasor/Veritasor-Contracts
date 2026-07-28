@@ -1628,8 +1628,13 @@ dependencies = [
 name = "veritasor-attestation"
 version = "0.1.0"
 dependencies = [
+ "hex",
  "proptest",
+ "serde",
+ "serde_json",
+ "sha2",
  "soroban-sdk",
+ "syn 2.0.119",
  "veritasor-attestor-staking",
  "veritasor-common",
 ]
