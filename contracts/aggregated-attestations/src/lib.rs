@@ -27,6 +27,9 @@
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, String, Vec};
 
+#[cfg(test)]
+mod event_ingestion_test;
+
 use veritasor_common::replay_protection;
 
 /// Admin replay channel (shared across `initialize` and `register_portfolio`).
