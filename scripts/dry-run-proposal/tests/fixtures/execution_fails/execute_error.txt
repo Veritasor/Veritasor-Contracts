@@ -1,0 +1,2 @@
+HostError: Error(Contract, #0)
+error: proposal is not pending

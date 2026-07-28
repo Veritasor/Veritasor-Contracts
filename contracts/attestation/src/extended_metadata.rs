@@ -28,7 +28,7 @@
 //! - Metadata is removed when the corresponding attestation is revoked,
 //!   preventing dead-storage accumulation.
 
-use soroban_sdk::{contracttype, Address, Env, String};
+use soroban_sdk::{contracttype, Address, Env, String, TryFromVal, TryIntoVal};
 
 use crate::dynamic_fees::DataKey;
 
@@ -61,6 +61,41 @@ pub struct AttestationMetadata {
 
 /// Maximum allowed length for currency code.
 pub const CURRENCY_CODE_MAX_LEN: u32 = 3;
+
+/// Structured deserialization errors for malformed metadata payloads.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MetadataDeserializationError {
+    /// The payload is not valid XDR or does not decode into an attestation metadata value.
+    InvalidEncoding,
+}
+
+impl core::fmt::Display for MetadataDeserializationError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidEncoding => write!(f, "invalid metadata encoding"),
+        }
+    }
+}
+
+impl core::error::Error for MetadataDeserializationError {}
+
+/// Decode an XDR-encoded metadata payload into an AttestationMetadata.
+///
+/// This helper should be used for any metadata deserialization path that
+/// consumes untrusted bytes so malformed input returns an error rather than
+/// panicking inside the contract runtime.
+pub fn deserialize_metadata_bytes(
+    env: &Env,
+    bytes: &[u8],
+) -> Result<AttestationMetadata, MetadataDeserializationError> {
+    let sc_val = soroban_sdk::xdr::ScVal::from_xdr(bytes)
+        .map_err(|_| MetadataDeserializationError::InvalidEncoding)?;
+    let val = sc_val
+        .try_into_val(env)
+        .map_err(|_| MetadataDeserializationError::InvalidEncoding)?;
+    AttestationMetadata::try_from_val(env, &val)
+        .map_err(|_| MetadataDeserializationError::InvalidEncoding)
+}
 
 // ════════════════════════════════════════════════════════════════════
 //  Validation

@@ -5,8 +5,9 @@
 
 use super::*;
 use crate::access_control::{ROLE_ADMIN, ROLE_ATTESTOR, ROLE_BUSINESS, ROLE_OPERATOR};
-use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{Address, BytesN, Env, String};
+use crate::events::{AdminSwappedEvent, TOPIC_ADMIN_SWAPPED};
+use soroban_sdk::testutils::{Address as _, Events as _};
+use soroban_sdk::{Address, BytesN, Env, String, TryFromVal};
 
 /// Helper: register the contract and return a client.
 fn setup() -> (Env, AttestationContractClient<'static>, Address) {
@@ -194,7 +195,6 @@ fn test_submit_attestation_when_paused() {
         &root,
         &1_700_000_000u64,
         &1u32,
-        &0i128,
         &0i128,
         &None,
         &None,
@@ -463,4 +463,235 @@ fn test_business_role_limits() {
         client.grant_role(&business, &target, &ROLE_ATTESTOR);
     }));
     assert!(result.is_err(), "business cannot grant roles");
+}
+
+
+#[test]
+fn test_fuzz_grant_revoke_role_random_bitmaps() {
+    let e = soroban_sdk::Env::default();
+    let contract = AttestationContract::new(&e);
+
+    let valid_roles = [
+        0b0000,
+        0b0001,
+        0b0010,
+        0b0100,
+        0b1000,
+        0b0011,
+        0b0101,
+        0b1001,
+        0b0110,
+        0b1010,
+        0b1100,
+        0b0111,
+        0b1011,
+        0b1101,
+        0b1110,
+        0b1111,
+    ];
+    let invalid_bitmaps = [
+        0b10000u32,
+        0b100000u32,
+        0xFFFFu32,
+        0xDEADu32,
+        0xFFFFFFFFu32,
+    ];
+
+    let user1 = soroban_sdk::Address::generate(&e);
+
+    for &roles in valid_roles.iter() {
+        contract.set_roles(&user1, &0u32);
+        contract.grant_role(&user1, &roles);
+        assert_eq!(contract.get_roles(&user1), roles, "grant_role failed for bitmap {}", roles);
+    }
+
+    contract.set_roles(&user1, &0u32);
+    contract.grant_role(&user1, &0b0101u32);
+    contract.grant_role(&user1, &0b0101u32);
+    assert_eq!(contract.get_roles(&user1), 0b0101u32);
+
+    contract.set_roles(&user1, &0b1111u32);
+    contract.revoke_role(&user1, &0b0001u32);
+    assert_eq!(contract.get_roles(&user1), 0b1110u32);
+    contract.revoke_role(&user1, &0b0010u32);
+    assert_eq!(contract.get_roles(&user1), 0b1100u32);
+    contract.revoke_role(&user1, &0b0100u32);
+    assert_eq!(contract.get_roles(&user1), 0b1000u32);
+    contract.revoke_role(&user1, &0b1000u32);
+    assert_eq!(contract.get_roles(&user1), 0u32);
+
+    contract.revoke_role(&user1, &0b0010u32);
+    assert_eq!(contract.get_roles(&user1), 0u32);
+
+    for &invalid in invalid_bitmaps.iter() {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            contract.grant_role(&user1, &invalid);
+        }));
+        assert!(result.is_err(), "grant_role should panic for invalid bitmap: {}", invalid);
+    }
+
+    assert!(contract.is_valid_role_bitmap(0b0000u32));
+    assert!(contract.is_valid_role_bitmap(0b1111u32));
+    assert!(!contract.is_valid_role_bitmap(0b10000u32));
+    assert!(!contract.is_valid_role_bitmap(0xFFFFFFFFu32));
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Swap Admin Tests
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_swap_admin_basic() {
+    let (env, client, admin) = setup();
+    let new_admin = Address::generate(&env);
+
+    assert!(client.has_role(&admin, &ROLE_ADMIN));
+    assert!(!client.has_role(&new_admin, &ROLE_ADMIN));
+
+    client.swap_admin(&admin, &admin, &new_admin);
+
+    assert!(!client.has_role(&admin, &ROLE_ADMIN));
+    assert!(client.has_role(&new_admin, &ROLE_ADMIN));
+}
+
+#[test]
+fn test_swap_admin_emits_combined_event() {
+    let (env, client, admin) = setup();
+    let new_admin = Address::generate(&env);
+
+    let events_before = env.events().all().len();
+
+    client.swap_admin(&admin, &admin, &new_admin);
+
+    let all_events = env.events().all();
+    assert!(
+        all_events.len() > events_before,
+        "swap_admin must emit at least one event"
+    );
+
+    let (_cid, topics, data) = all_events.last().unwrap();
+
+    assert_eq!(topics.len(), 1);
+    assert_eq!(
+        soroban_sdk::Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+        TOPIC_ADMIN_SWAPPED
+    );
+
+    let ev = AdminSwappedEvent::try_from_val(&env, &data).unwrap();
+    assert_eq!(ev.old_admin, admin);
+    assert_eq!(ev.new_admin, new_admin);
+    assert_eq!(ev.swapped_by, admin);
+}
+
+#[test]
+fn test_swap_admin_new_already_admin() {
+    let (env, client, admin) = setup();
+    let other_admin = Address::generate(&env);
+
+    client.grant_role(&admin, &other_admin, &ROLE_ADMIN);
+
+    assert!(client.has_role(&admin, &ROLE_ADMIN));
+    assert!(client.has_role(&other_admin, &ROLE_ADMIN));
+
+    client.swap_admin(&admin, &admin, &other_admin);
+
+    assert!(!client.has_role(&admin, &ROLE_ADMIN));
+    assert!(client.has_role(&other_admin, &ROLE_ADMIN));
+}
+
+#[test]
+fn test_swap_admin_self_swap_is_idempotent() {
+    let (_env, client, admin) = setup();
+
+    assert!(client.has_role(&admin, &ROLE_ADMIN));
+
+    client.swap_admin(&admin, &admin, &admin);
+
+    assert!(client.has_role(&admin, &ROLE_ADMIN));
+}
+
+#[test]
+#[should_panic(expected = "caller does not have ADMIN role")]
+fn test_non_admin_cannot_swap() {
+    let (env, client, _admin) = setup();
+    let non_admin = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    client.swap_admin(&non_admin, &target, &target);
+}
+
+#[test]
+#[should_panic(expected = "old_admin does not have ADMIN role")]
+fn test_swap_admin_old_not_admin() {
+    let (env, client, admin) = setup();
+    let nobody = Address::generate(&env);
+
+    client.swap_admin(&admin, &nobody, &admin);
+}
+
+#[test]
+#[should_panic(expected = "swap would leave no admin remaining")]
+fn test_swap_admin_would_leave_no_admin() {
+    let (env, client, admin) = setup();
+    let target = Address::generate(&env);
+
+    // admin is the only admin; swapping to target with no other admins should fail
+    client.swap_admin(&admin, &admin, &target);
+}
+
+#[test]
+fn test_swap_admin_preserves_other_admins() {
+    let (env, client, admin) = setup();
+    let admin_b = Address::generate(&env);
+    let admin_c = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    client.grant_role(&admin, &admin_b, &ROLE_ADMIN);
+    client.grant_role(&admin, &admin_c, &ROLE_ADMIN);
+
+    // Swap admin_b out — admin and admin_c remain
+    client.swap_admin(&admin, &admin_b, &target);
+
+    assert!(client.has_role(&admin, &ROLE_ADMIN));
+    assert!(!client.has_role(&admin_b, &ROLE_ADMIN));
+    assert!(client.has_role(&admin_c, &ROLE_ADMIN));
+    assert!(client.has_role(&target, &ROLE_ADMIN));
+}
+
+#[test]
+fn test_swap_admin_new_other_roles_preserved() {
+    let (env, client, admin) = setup();
+    let target = Address::generate(&env);
+
+    client.grant_role(&admin, &target, &ROLE_ATTESTOR);
+    client.grant_role(&admin, &target, &ROLE_BUSINESS);
+
+    assert!(!client.has_role(&target, &ROLE_ADMIN));
+
+    // Add another admin so the invariant holds when we swap admin out
+    let extra_admin = Address::generate(&env);
+    client.grant_role(&admin, &extra_admin, &ROLE_ADMIN);
+
+    client.swap_admin(&admin, &admin, &target);
+
+    assert!(client.has_role(&target, &ROLE_ADMIN));
+    assert!(client.has_role(&target, &ROLE_ATTESTOR));
+    assert!(client.has_role(&target, &ROLE_BUSINESS));
+    assert!(!client.has_role(&admin, &ROLE_ADMIN));
+}
+
+#[test]
+fn test_swap_admin_old_other_roles_preserved() {
+    let (env, client, admin) = setup();
+    let new_admin = Address::generate(&env);
+
+    client.grant_role(&admin, &admin, &ROLE_ATTESTOR);
+    client.grant_role(&admin, &admin, &ROLE_OPERATOR);
+
+    client.swap_admin(&admin, &admin, &new_admin);
+
+    assert!(!client.has_role(&admin, &ROLE_ADMIN));
+    assert!(client.has_role(&admin, &ROLE_ATTESTOR));
+    assert!(client.has_role(&admin, &ROLE_OPERATOR));
+    assert!(client.has_role(&new_admin, &ROLE_ADMIN));
 }

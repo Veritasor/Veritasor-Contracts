@@ -4,15 +4,21 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 rust-version = "1.81.0"
+build = "build.rs"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 doctest = false
 
+[build-dependencies]
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+hex = "0.4"
+
 [features]
 default = []
-# Enable the full legacy test suite.  Requires soroban-env-host 22.x to be
-# compatible with the installed Rust toolchain (see build notes in README).
 full-tests = []
 
 [dependencies]
@@ -20,7 +26,9 @@ soroban-sdk = "22.0"
 veritasor-common = { path = "../common" }
 
 [dev-dependencies]
+arbitrary = { version = "1.4", features = ["derive"] }
 soroban-sdk = { version = "22.0", features = ["testutils"] }
+serde_json = "1.0"
 proptest    = { version = "=1.5.0", default-features = false, features = ["std"] }
 veritasor-common = { path = "../common" }
 veritasor-attestor-staking = { path = "../attestor-staking" }

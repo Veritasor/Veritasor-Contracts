@@ -492,3 +492,169 @@ fn test_dispute_lifecycle_complete_flow() {
     assert_eq!(challenger_disputes.len(), 1);
     assert_eq!(challenger_disputes.get(0), Some(dispute_id));
 }
+
+#[test]
+fn test_submit_dispute_witness_success() {
+    let (env, client) = setup();
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+
+    // Construct a standard sorted SHA-256 Merkle root with 2 leaves
+    let leaf0 = BytesN::from_array(&env, &[10u8; 32]);
+    let leaf1 = BytesN::from_array(&env, &[20u8; 32]);
+
+    let mut combined = soroban_sdk::Bytes::new(&env);
+    if leaf0 < leaf1 {
+        combined.append(&leaf0.clone().into());
+        combined.append(&leaf1.clone().into());
+    } else {
+        combined.append(&leaf1.clone().into());
+        combined.append(&leaf0.clone().into());
+    }
+    let root: BytesN<32> = env.crypto().sha256(&combined).into();
+
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    let challenger = Address::generate(&env);
+    let dispute_id = client.open_dispute(
+        &challenger,
+        &business,
+        &period,
+        &DisputeType::DataIntegrity,
+        &String::from_str(&env, "Evidence of bad data"),
+    );
+
+    // Witness proof for leaf0 is [leaf1]
+    let mut proof = soroban_sdk::Vec::new(&env);
+    proof.push_back(leaf1);
+
+    client.submit_dispute_witness(&dispute_id, &leaf0, &proof);
+
+    // Check that dispute state advanced automatically to Resolved with Upheld outcome
+    let dispute = client.get_dispute(&dispute_id).unwrap();
+    assert_eq!(dispute.status, DisputeStatus::Resolved);
+
+    if let OptionalResolution::Some(resolution) = dispute.resolution {
+        assert_eq!(resolution.outcome, DisputeOutcome::Upheld);
+        assert_eq!(resolution.resolver, challenger);
+        assert_eq!(
+            resolution.notes,
+            String::from_str(&env, "Witness evidence verified via Merkle proof")
+        );
+    } else {
+        panic!("expected resolution to be Some");
+    }
+
+    // Further closure is permitted
+    client.close_dispute(&dispute_id);
+    let dispute_closed = client.get_dispute(&dispute_id).unwrap();
+    assert_eq!(dispute_closed.status, DisputeStatus::Closed);
+}
+
+#[test]
+fn test_submit_dispute_witness_invalid_proof_rejected_without_state_mutation() {
+    let (env, client) = setup();
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+
+    let leaf0 = BytesN::from_array(&env, &[10u8; 32]);
+    let leaf1 = BytesN::from_array(&env, &[20u8; 32]);
+
+    let mut combined = soroban_sdk::Bytes::new(&env);
+    if leaf0 < leaf1 {
+        combined.append(&leaf0.clone().into());
+        combined.append(&leaf1.clone().into());
+    } else {
+        combined.append(&leaf1.clone().into());
+        combined.append(&leaf0.clone().into());
+    }
+    let root: BytesN<32> = env.crypto().sha256(&combined).into();
+
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    let challenger = Address::generate(&env);
+    let dispute_id = client.open_dispute(
+        &challenger,
+        &business,
+        &period,
+        &DisputeType::DataIntegrity,
+        &String::from_str(&env, "Evidence of bad data"),
+    );
+
+    // Provide invalid sibling in proof
+    let wrong_sibling = BytesN::from_array(&env, &[99u8; 32]);
+    let mut bad_proof = soroban_sdk::Vec::new(&env);
+    bad_proof.push_back(wrong_sibling);
+
+    let res = client.try_submit_dispute_witness(&dispute_id, &leaf0, &bad_proof);
+    assert!(res.is_err());
+
+    // Verify dispute state was completely unmutated and remains Open
+    let dispute = client.get_dispute(&dispute_id).unwrap();
+    assert_eq!(dispute.status, DisputeStatus::Open);
+    assert_eq!(dispute.resolution, OptionalResolution::None);
+}
+
+#[test]
+fn test_submit_dispute_witness_dispute_not_open_rejected() {
+    let (env, client) = setup();
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let leaf = BytesN::from_array(&env, &[10u8; 32]);
+    let root = leaf.clone(); // Single leaf tree
+
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    let challenger = Address::generate(&env);
+    let dispute_id = client.open_dispute(
+        &challenger,
+        &business,
+        &period,
+        &DisputeType::DataIntegrity,
+        &String::from_str(&env, "Evidence"),
+    );
+
+    // Manually resolve dispute first
+    let resolver = Address::generate(&env);
+    client.resolve_dispute(
+        &dispute_id,
+        &resolver,
+        &DisputeOutcome::Rejected,
+        &String::from_str(&env, "Resolved already"),
+    );
+
+    let proof = soroban_sdk::Vec::new(&env);
+    let res = client.try_submit_dispute_witness(&dispute_id, &leaf, &proof);
+    assert!(res.is_err());
+}
+
