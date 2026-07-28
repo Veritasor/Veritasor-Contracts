@@ -128,6 +128,8 @@ pub const TOPIC_BIZ_SUSPENDED: Symbol = symbol_short!("biz_sus");
 pub const TOPIC_BIZ_REACTIVATE: Symbol = symbol_short!("biz_rea");
 /// Topic: proof hash updated
 pub const TOPIC_PROOF_HASH_UPDATED: Symbol = symbol_short!("ph_upd");
+/// Topic: attestor locked for dispute in progress
+pub const TOPIC_ATTESTOR_LOCKED: Symbol = symbol_short!("att_lock");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -433,6 +435,25 @@ pub struct ProofHashUpdatedEvent {
     pub new_proof_hash: Option<BytesN<32>>,
     /// Address that performed the update.
     pub updated_by: Address,
+}
+
+/// Normalized payload for `AttestorLockedForDispute` events.
+///
+/// Emitted when an attestor is locked because a dispute has been opened
+/// against an attestation they submitted. The attestor is prevented from
+/// submitting new attestations until the dispute is resolved and the lock
+/// is cleared.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AttestorLockedForDisputeEvent {
+    /// Address of the attestor being locked.
+    pub attestor: Address,
+    /// Business address associated with the disputed attestation.
+    pub business: Address,
+    /// Period identifier of the disputed attestation.
+    pub period: String,
+    /// Dispute ID that triggered the lock.
+    pub dispute_id: u64,
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -1062,4 +1083,38 @@ pub fn emit_proof_hash_updated(
     };
     env.events()
         .publish((TOPIC_PROOF_HASH_UPDATED, business.clone()), event);
+}
+
+/// Emit an `AttestorLockedForDispute` event.
+///
+/// Call this when a dispute is opened against an attestation so that
+/// the attestor who submitted it is prevented from submitting new
+/// attestations while the dispute is in progress.
+///
+/// # Arguments
+///
+/// * `env`        – Soroban execution environment.
+/// * `attestor`   – Address of the attestor being locked.
+/// * `business`   – Business address associated with the disputed attestation.
+/// * `period`     – Period identifier of the disputed attestation.
+/// * `dispute_id` – Dispute ID that triggered the lock.
+///
+/// # Events
+///
+/// Publishes `(att_lock, attestor)` → `AttestorLockedForDisputeEvent`.
+pub fn emit_attestor_locked_for_dispute(
+    env: &Env,
+    attestor: &Address,
+    business: &Address,
+    period: &String,
+    dispute_id: u64,
+) {
+    let event = AttestorLockedForDisputeEvent {
+        attestor: attestor.clone(),
+        business: business.clone(),
+        period: period.clone(),
+        dispute_id,
+    };
+    env.events()
+        .publish((TOPIC_ATTESTOR_LOCKED, attestor.clone()), event);
 }
