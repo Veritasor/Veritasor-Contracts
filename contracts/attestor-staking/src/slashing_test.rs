@@ -1,5 +1,4 @@
 use super::*;
-use proptest::prelude::*;
 use soroban_sdk::{contract, contractimpl};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
@@ -755,7 +754,7 @@ fn test_treasury_crediting_exact_amounts_disabled() {
     client.stake(&attestor, &1000000);
 
     let initial_treasury = token_client.balance(&treasury);
-    let mut expected_treasury = initial_treasury;
+    let expected_treasury = initial_treasury;
 
     // Test various slash amounts for precision
     let test_amounts = [1i128, 7, 99, 1000, 12345, 999999];

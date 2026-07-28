@@ -562,9 +562,8 @@ fn fuzz_odd_branch_self_sibling_edges() {
             "last leaf should self-duplicate at the first odd-width branch for tree size {}",
             size
         );
-        assert_eq!(
-            proof.path.get(0).unwrap(),
-            false,
+        assert!(
+            !proof.path.get(0).unwrap(),
             "duplicated odd-width branch should keep the leaf on the left for tree size {}",
             size
         );
