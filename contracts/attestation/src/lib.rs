@@ -749,6 +749,34 @@ impl AttestationContract {
         events::emit_attestation_cleaned_up(&env, &business, &period);
     }
 
+    /// Cleanup orphaned revocation index entries for a business.
+    pub fn cleanup_revocation_index(env: Env, business: Address) -> Result<u32, ()> {
+        let mut periods = dispute::get_revoked_periods(&env, &business);
+        if periods.is_empty() {
+            return Ok(0);
+        }
+
+        let mut cleaned_count = 0;
+        let mut new_periods = soroban_sdk::Vec::new(&env);
+
+        for period in periods.iter() {
+            let key = DataKey::Attestation(business.clone(), period.clone());
+            // If the attestation no longer exists, the entry is an orphan
+            if !env.storage().instance().has(&key) {
+                cleaned_count += 1;
+            } else {
+                new_periods.push_back(period);
+            }
+        }
+
+        if cleaned_count > 0 {
+            dispute::set_revoked_periods(&env, &business, &new_periods);
+            events::emit_revocation_index_cleaned(&env, &business, cleaned_count);
+        }
+
+        Ok(cleaned_count)
+    }
+
     pub fn get_revocation_info(
         env: Env,
         business: Address,

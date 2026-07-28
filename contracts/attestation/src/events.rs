@@ -132,6 +132,8 @@ pub const TOPIC_BIZ_REACTIVATE: Symbol = symbol_short!("biz_rea");
 pub const TOPIC_PROOF_HASH_UPDATED: Symbol = symbol_short!("ph_upd");
 /// Topic: proposal cleaned up after expiry + grace period
 pub const TOPIC_PROPOSAL_CLEANED: Symbol = symbol_short!("prp_cl");
+/// Topic: revocation index cleaned up
+pub const TOPIC_REVOCATION_INDEX_CLEANED: Symbol = symbol_short!("rev_idx_c");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -470,6 +472,14 @@ pub struct ProposalCleanedEvent {
     pub action: ProposalAction,
     /// Ledger sequence number when the cleanup occurred
     pub cleaned_at: u32,
+}
+
+/// Normalized payload for `RevocationIndexCleaned` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RevocationIndexCleanedEvent {
+    pub business: Address,
+    pub count_removed: u32,
 }
 
 // ── Attestation lifecycle ─────────────────────────────────────────
@@ -1151,4 +1161,13 @@ pub fn emit_proposal_cleaned(env: &Env, proposal_id: u64, action: &ProposalActio
         cleaned_at,
     };
     env.events().publish((TOPIC_PROPOSAL_CLEANED,), event);
+}
+
+/// Emit a `RevocationIndexCleaned` event.
+pub fn emit_revocation_index_cleaned(env: &Env, business: &Address, count_removed: u32) {
+    let event = RevocationIndexCleanedEvent {
+        business: business.clone(),
+        count_removed,
+    };
+    env.events().publish((TOPIC_REVOCATION_INDEX_CLEANED,), event);
 }
