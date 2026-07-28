@@ -26,7 +26,7 @@ soroban-sdk = "22.0"
 veritasor-common = { path = "../common" }
 
 [dev-dependencies]
-arbitrary = { version = "1.4", features = ["derive"] }
+arbitrary = { version = "1.3", features = ["derive"] }
 soroban-sdk = { version = "22.0", features = ["testutils"] }
 serde_json = "1.0"
 proptest    = { version = "=1.5.0", default-features = false, features = ["std"] }
