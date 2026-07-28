@@ -432,7 +432,105 @@ cargo test regression -- --nocapture
 - Fee collection path with token mint and transfer overhead
 - Role grant requiring admin bootstrap via initialize
 
+## Batch Cleanup Benchmarks (`cleanup_expired_attestation`)
+
+### Motivation
+
+`cleanup_expired_attestation` is a storage-freeing operation that callers may
+invoke many times in sequence — one call per expired attestation — to reclaim
+on-chain storage.  Without a benchmark it is easy to introduce superlinear
+overhead (e.g., iterating over existing data on each removal) that would go
+undetected until production.
+
+### Methodology
+
+Three batch sizes are profiled: **N = 1**, **N = 10**, and **N = 100**.
+
+For each size the test:
+
+1. Submits N expired attestations (unique `(business, period)` pairs, all
+   with `expiry_timestamp = 100`).
+2. Advances the ledger clock to `timestamp = 100` so every attestation is
+   expired.
+3. Captures a `BudgetSnapshot` before the cleanup loop.
+4. Calls `cleanup_expired_attestation` once per pair.
+5. Captures a `BudgetSnapshot` after the loop.
+6. Divides aggregate cost by N to derive **per-item cost**.
+7. Emits a CSV row and asserts the per-item cost is below the regression
+   ceiling.
+
+### Per-Item Cost Targets
+
+| Batch size (N) | Per-item CPU ceiling | Per-item Memory ceiling |
+|---------------|----------------------|------------------------|
+| 1             | ≤ 600,000 instructions | ≤ 20,000 bytes       |
+| 10            | ≤ 600,000 instructions | ≤ 20,000 bytes       |
+| 100           | ≤ 600,000 instructions | ≤ 20,000 bytes       |
+
+The **same ceiling applies at every batch size**. Any superlinear scaling will
+push the N = 100 per-item cost above the ceiling and fail the test.
+
+### CSV Output Format
+
+```
+operation,batch_size,total_cpu,total_mem,per_item_cpu,per_item_mem
+cleanup_expired_attestation,1,...,...,...,...
+cleanup_expired_attestation,10,...,...,...,...
+cleanup_expired_attestation,100,...,...,...,...
+```
+
+Run the sweep test to produce this report:
+
+```bash
+cd contracts/attestation
+cargo test bench_cleanup_expired_attestation_sweep -- --nocapture
+```
+
+Or run all three size-specific tests plus the regression guard:
+
+```bash
+cargo test bench_cleanup_expired_attestation -- --nocapture
+cargo test regression_cleanup_expired_attestation -- --nocapture
+```
+
+### Test Coverage
+
+| Test | Description |
+|------|-------------|
+| `bench_cleanup_expired_attestation_n1` | Single cleanup, warm storage baseline |
+| `bench_cleanup_expired_attestation_n10` | 10 cleanups in sequence |
+| `bench_cleanup_expired_attestation_n100` | 100 cleanups – stress / linearity check |
+| `bench_cleanup_expired_attestation_sweep` | All three sizes, CSV report |
+| `regression_cleanup_expired_attestation_per_item_budget` | Hard per-item gate for N=1,10,100 |
+| `bench_cleanup_double_cleanup_panics` | Second cleanup panics "attestation not found" |
+| `bench_cleanup_business_self_cleanup` | Business (not admin) may clean own attestation |
+
+### Security Notes
+
+- `cleanup_expired_attestation` requires `caller == admin || caller == business`.
+  The `bench_cleanup_business_self_cleanup` test exercises the `caller == business`
+  path to confirm the permission check works correctly.
+- The `bench_cleanup_double_cleanup_panics` test confirms genuine storage removal:
+  a second call panics with `"attestation not found"`, proving no silent no-op.
+- Revoked or disputed attestations are **not** cleanable; those paths are covered
+  in `expiry_test.rs` and are not duplicated here.
+
+### Regression Threshold
+
+The per-item ceiling of 600 000 CPU instructions / 20 000 memory bytes is
+approximately **2× the expected single-call cost** observed in the Soroban test
+environment.  This gives headroom for legitimate refactors while catching any
+O(N) → O(N²) regressions across the three batch sizes.
+
+---
+
 ## Changelog
+
+### 2026-07-28
+
+- Added batch cleanup benchmark section for `cleanup_expired_attestation` (#482)
+- New tests: sweep (N=1, 10, 100), per-item regression gate, edge-case guards
+- Per-item ceiling: 600 000 CPU instructions / 20 000 memory bytes
 
 ### 2026-02-22
 
