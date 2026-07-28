@@ -61,7 +61,7 @@ pub use dispute::{
 pub use dynamic_fees::{compute_fee, DataKey, FeeConfig};
 pub use events::{
     AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
-    AttestationSubmittedEvent, ProofHashUpdatedEvent,
+    AttestationSubmittedEvent, AttestorLockedForDisputeEvent, ProofHashUpdatedEvent,
 };
 pub use fees::{collect_flat_fee, FlatFeeConfig};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
@@ -314,7 +314,7 @@ impl AttestationContract {
         version: u32,
         expiry_timestamp: Option<u64>,
     ) {
-        access_control::require_attestor(&env, &attestor);
+        access_control::require_attestor_not_locked(&env, &attestor);
 
         let staking_addr = Self::get_attestor_staking_contract(env.clone())
             .expect("staking contract not configured");
@@ -335,6 +335,8 @@ impl AttestationContract {
             &None,
             expiry_timestamp,
         );
+
+        dispute::store_attestor_for_attestation(&env, &business, &period, &attestor);
     }
 
     pub fn submit_attestations_batch(env: Env, items: Vec<BatchAttestationItem>) {
@@ -366,7 +368,7 @@ impl AttestationContract {
     }
 
     pub fn submit_batch_as_attestor(env: Env, attestor: Address, items: Vec<BatchAttestationItem>) {
-        access_control::require_attestor(&env, &attestor);
+        access_control::require_attestor_not_locked(&env, &attestor);
 
         let staking_addr = Self::get_attestor_staking_contract(env.clone())
             .expect("staking contract not configured");
@@ -377,6 +379,10 @@ impl AttestationContract {
         }
 
         Self::execute_batch_submission(&env, Some(&attestor), &items, true);
+
+        for item in items.iter() {
+            dispute::store_attestor_for_attestation(&env, &item.business, &item.period, &attestor);
+        }
     }
 
     fn execute_submission(
@@ -397,6 +403,9 @@ impl AttestationContract {
         }
 
         rate_limit::check_rate_limit(env, business);
+
+        // Handle fee bucket rollover and advance epoch if necessary.
+        dynamic_fees::handle_epoch_rollover(env);
 
         let key = DataKey::Attestation(business.clone(), period.clone());
         if env.storage().instance().has(&key) {
@@ -487,6 +496,8 @@ impl AttestationContract {
 
         for item in items.iter() {
             let fee_payer = payer.unwrap_or(&item.business);
+            // Handle fee bucket rollover per item (consistent with single submission path).
+            dynamic_fees::handle_epoch_rollover(env);
             let dynamic_fee = dynamic_fees::collect_fee_from(env, fee_payer, &item.business);
             let flat_fee = fees::collect_flat_fee(env, fee_payer);
             let total_fee = dynamic_fee + flat_fee;
@@ -1208,6 +1219,15 @@ impl AttestationContract {
         dynamic_fees::get_admin(&env)
     }
 
+    /// Returns the current fee-bucket epoch counter.
+    ///
+    /// The counter starts at 0 (uninitialized) and advances to 1 on the first
+    /// attestation submission. It increments once per elapsed `FEE_BUCKET_WINDOW_SECONDS`
+    /// window. The value is monotonically non-decreasing.
+    pub fn get_epoch(env: Env) -> u64 {
+        dynamic_fees::get_epoch(&env)
+    }
+
     pub fn get_submission_window_count(env: Env, business: Address) -> u32 {
         rate_limit::get_submission_count(&env, &business)
     }
@@ -1323,6 +1343,11 @@ impl AttestationContract {
         dispute::store_dispute(&env, &d);
         dispute::add_dispute_to_attestation_index(&env, &business, &period, id);
         dispute::add_dispute_to_challenger_index(&env, &d.challenger, id);
+
+        if let Some(attestor) = dispute::get_attestor_for_attestation(&env, &business, &period) {
+            dispute::lock_attestor(&env, &attestor, &business, &period, id);
+        }
+
         id
     }
 
@@ -1346,6 +1371,12 @@ impl AttestationContract {
             d.status = DisputeStatus::Resolved;
             d.resolution = OptionalResolution::Some(resolution);
             dispute::store_dispute(&env, &d);
+
+            if let Some(attestor) =
+                dispute::get_attestor_for_attestation(&env, &d.business, &d.period)
+            {
+                dispute::unlock_attestor(&env, &attestor);
+            }
         }
     }
 
@@ -1651,6 +1682,8 @@ impl AttestationContract {
 // ── Test Modules ──
 // Issue #369 tests always run. Enable `full-tests` for the legacy attestation suite
 // (some modules need updates on this branch before they compile).
+#[cfg(test)]
+mod attestor_lock_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod access_control_test;
 #[cfg(all(test, feature = "full-tests"))]
@@ -1667,6 +1700,8 @@ mod dao_override_test;
 mod dispute_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod dynamic_fees_test;
+#[cfg(all(test, feature = "full-tests"))]
+mod epoch_counter_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod events_test;
 #[cfg(all(test, feature = "full-tests"))]
@@ -1706,7 +1741,11 @@ mod rate_limit_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod registry_test;
 #[cfg(all(test, feature = "full-tests"))]
+mod replay_nonce_test;
+#[cfg(all(test, feature = "full-tests"))]
 mod revocation_test;
+#[cfg(test)]
+mod schema_export_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod test;
 #[cfg(all(test, feature = "full-tests"))]

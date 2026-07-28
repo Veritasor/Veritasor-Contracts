@@ -128,6 +128,8 @@ pub const TOPIC_BIZ_SUSPENDED: Symbol = symbol_short!("biz_sus");
 pub const TOPIC_BIZ_REACTIVATE: Symbol = symbol_short!("biz_rea");
 /// Topic: proof hash updated
 pub const TOPIC_PROOF_HASH_UPDATED: Symbol = symbol_short!("ph_upd");
+/// Topic: attestor locked for dispute in progress
+pub const TOPIC_ATTESTOR_LOCKED: Symbol = symbol_short!("att_lock");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -433,6 +435,25 @@ pub struct ProofHashUpdatedEvent {
     pub new_proof_hash: Option<BytesN<32>>,
     /// Address that performed the update.
     pub updated_by: Address,
+}
+
+/// Normalized payload for `AttestorLockedForDispute` events.
+///
+/// Emitted when an attestor is locked because a dispute has been opened
+/// against an attestation they submitted. The attestor is prevented from
+/// submitting new attestations until the dispute is resolved and the lock
+/// is cleared.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AttestorLockedForDisputeEvent {
+    /// Address of the attestor being locked.
+    pub attestor: Address,
+    /// Business address associated with the disputed attestation.
+    pub business: Address,
+    /// Period identifier of the disputed attestation.
+    pub period: String,
+    /// Dispute ID that triggered the lock.
+    pub dispute_id: u64,
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -1062,4 +1083,35 @@ pub fn emit_proof_hash_updated(
     };
     env.events()
         .publish((TOPIC_PROOF_HASH_UPDATED, business.clone()), event);
+}
+
+// ── Multisig owner ────────────────────────────────────────────────
+
+/// Topic: multisig owner recovery phrase acknowledged
+pub const TOPIC_OWNER_RECOVERY_PHRASE_ACKNOWLEDGED: Symbol = symbol_short!("own_ack");
+
+/// Normalized payload for `OwnerRecoveryPhraseAcknowledged` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct OwnerRecoveryPhraseAcknowledgedEvent {
+    /// The incoming key confirming recovery-phrase custody.
+    pub new_owner: Address,
+}
+
+/// Emit an `OwnerRecoveryPhraseAcknowledged` event.
+///
+/// # Arguments
+///
+/// * `env`       - Soroban execution environment.
+/// * `new_owner` - The incoming key confirming recovery-phrase custody.
+///
+/// # Events
+///
+/// Publishes `(own_ack, new_owner)` → `OwnerRecoveryPhraseAcknowledgedEvent`.
+pub fn emit_owner_recovery_phrase_acknowledged(env: &Env, new_owner: &Address) {
+    let event = OwnerRecoveryPhraseAcknowledgedEvent {
+        new_owner: new_owner.clone(),
+    };
+    env.events()
+        .publish((TOPIC_OWNER_RECOVERY_PHRASE_ACKNOWLEDGED, new_owner.clone()), event);
 }
