@@ -547,9 +547,143 @@ O(N) → O(N²) regressions across the three batch sizes.
 
 ---
 
+## `get_multi_period_ranges` Sweep Benchmarks
+
+### Motivation
+
+`get_multi_period_ranges` is a read-only view function that returns all
+`AttestationRange` entries stored for a given business address.  Because
+the implementation reads a single `Vec<AttestationRange>` from instance
+storage in one call, the cost scales with the serialised byte length of
+that vector.  Lenders and indexers that call this function should understand
+the worst-case cost at the maximum expected vector length.
+
+This sweep confirms that:
+
+1. Cost grows **linearly** (not quadratically) with range count.
+2. The operation stays within budget at the practical upper bound of **500
+   ranges per business**.
+3. Zero-range reads (no entry in storage) return an empty `Vec` and do not
+   panic or charge unexpectedly.
+
+### Implementation
+
+```rust
+pub fn get_multi_period_ranges(env: Env, business: Address) -> Vec<AttestationRange> {
+    let key = MultiPeriodKey::Ranges(business);
+    env.storage().instance().get(&key).unwrap_or(Vec::new(&env))
+}
+```
+
+The function performs a single instance-storage read keyed by `business`.
+No loops or cross-address lookups occur.
+
+### Methodology
+
+For each N in `{1, 10, 100, 500}`:
+
+1. Create a fresh `Env` and call `setup_basic()` (fees disabled).
+2. Submit N non-overlapping `AttestationRange` entries for a single business
+   address via `submit_multi_period_attestation`.  Range `i` occupies
+   `[i×1000+1, i×1000+999]` to avoid the contract's overlap guard.
+3. Capture a `BudgetSnapshot` before the call.
+4. Call `get_multi_period_ranges`.
+5. Capture a `BudgetSnapshot` after the call.
+6. Assert the returned `Vec` has exactly N entries.
+7. Emit a CSV row and assert total cost is within the per-size ceiling.
+
+The zero-range case runs on a fresh address that has never submitted any
+ranges, verifying that a missing storage key returns `[]` gracefully.
+
+### CSV Output Format
+
+```
+operation,range_count,total_cpu,total_mem,per_range_cpu,per_range_mem
+get_multi_period_ranges,1,...,...,...,...
+get_multi_period_ranges,10,...,...,...,...
+get_multi_period_ranges,100,...,...,...,...
+get_multi_period_ranges,500,...,...,...,...
+```
+
+Run the sweep test to produce this report:
+
+```bash
+cd contracts/attestation
+cargo test bench_get_multi_period_ranges_sweep -- --nocapture 2>&1 \
+    | grep -E '^(operation|get_multi)' > multi_period_gas.csv
+```
+
+### Per-Size Cost Ceilings
+
+The ceiling formula is:
+
+```
+total_cpu_ceiling = OVERHEAD_FLOOR + N × PER_RANGE_CPU_CEILING
+                  = 500 000 + N × 150 000
+```
+
+| N ranges | Total CPU ceiling (instructions) | Total Mem ceiling (bytes) |
+|----------|----------------------------------|--------------------------|
+| 0        | N/A (correctness only)           | N/A                      |
+| 1        | 650 000                          | 14 000                   |
+| 10       | 2 000 000                        | 50 000                   |
+| 100      | 15 500 000                       | 410 000                  |
+| 500      | 75 500 000                       | 2 010 000                |
+
+Ceilings are set at approximately **3× the empirically observed cost** so
+that legitimate refactors do not cause spurious failures, while O(N²) or
+worse regressions are caught reliably.
+
+### Linear-Growth Assertion
+
+The sweep test additionally computes the **per-range CPU cost** at N=1 and
+N=500.  If the N=500 per-range cost exceeds 10× the N=1 per-range cost, a
+warning is printed to the test output:
+
+```
+WARNING: per-range CPU at N=500 (…) is >10× that at N=1 (…); possible super-linear scaling – investigate
+```
+
+This is a warning rather than a hard failure because the Soroban mock
+environment's cost model may not be perfectly linear at very small N values.
+The individual size tests catch hard regressions via the ceiling.
+
+### Test Coverage
+
+| Test | Description |
+|------|-------------|
+| `bench_get_multi_period_ranges_n1` | Single range, baseline cost |
+| `bench_get_multi_period_ranges_n10` | 10 ranges, early scaling check |
+| `bench_get_multi_period_ranges_n100` | 100 ranges, large-batch scenario |
+| `bench_get_multi_period_ranges_n500` | 500 ranges, upper-bound stress test |
+| `bench_get_multi_period_ranges_sweep` | All four sizes, CSV report + linear-growth assertion |
+| `bench_get_multi_period_ranges_zero_returns_empty` | No storage entry → empty Vec, no panic |
+| `regression_get_multi_period_ranges_budget` | Hard gate for all sizes + zero case |
+
+### Security Notes
+
+- `get_multi_period_ranges` is **read-only** and requires **no authentication**.
+  A caller cannot trigger storage modification or access another business's data.
+- Each business's ranges are stored under `MultiPeriodKey::Ranges(business)`.
+  There is no cross-business data mixing in the returned `Vec`.
+- The only denial-of-service vector is a business accumulating an
+  unbounded number of ranges, which inflates the deserialization cost for
+  any caller reading that address.  Operators should apply an application-level
+  limit on the number of multi-period ranges per business; the 500-range upper
+  bound used in these benchmarks is the recommended maximum.
+- Callers reading **untrusted** business addresses should budget using the
+  N=500 row (worst case).
+
+---
+
 ## Changelog
 
 ### 2026-07-28
+
+- Added `get_multi_period_ranges` sweep benchmarks (N=1, 10, 100, 500)
+- New tests: sweep with CSV output, linear-growth assertion, zero-range edge case, regression gate
+- Per-size ceilings: `500 000 + N × 150 000` CPU instructions / `10 000 + N × 4 000` bytes
+- Added `get_multi_period_ranges` section to this document
 
 - Added batch cleanup benchmark section for `cleanup_expired_attestation` (#482)
 - New tests: sweep (N=1, 10, 100), per-item regression gate, edge-case guards
