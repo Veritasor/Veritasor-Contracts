@@ -21,7 +21,16 @@ fn submit_without_expiry_succeeds() {
     let period = String::from_str(&env, "2026-Q1");
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
 
-        client.submit_attestation(&business, &period, &merkle_root, &1000, &1, &0i128, &None, &None);
+    client.submit_attestation(
+        &business,
+        &period,
+        &merkle_root,
+        &1000,
+        &1,
+        &0i128,
+        &None,
+        &None,
+    );
 
     let result = client.get_attestation(&business, &period);
     assert!(result.is_some());
@@ -63,7 +72,16 @@ fn submit_with_past_expiry_panics() {
     let period = String::from_str(&env, "2026-Q1");
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.submit_attestation(&business, &period, &merkle_root, &1000, &1, &0i128, &None, &None);
+    client.submit_attestation(
+        &business,
+        &period,
+        &merkle_root,
+        &1000,
+        &1,
+        &0i128,
+        &None,
+        &None,
+    );
 
     env.ledger().set_timestamp(2_000);
     client.submit_attestation(

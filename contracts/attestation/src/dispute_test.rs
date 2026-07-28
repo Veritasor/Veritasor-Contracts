@@ -492,3 +492,213 @@ fn test_dispute_lifecycle_complete_flow() {
     assert_eq!(challenger_disputes.len(), 1);
     assert_eq!(challenger_disputes.get(0), Some(dispute_id));
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  Parallel-dispute rejection tests
+//  (feat: reject parallel disputes on same attestation)
+// ════════════════════════════════════════════════════════════════════
+
+/// A second open dispute from a *different* challenger must be rejected while
+/// the first is still open.
+#[test]
+fn test_parallel_dispute_different_challenger_rejected() {
+    let (env, client) = setup();
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-05");
+    let root = BytesN::from_array(&env, &[2u8; 32]);
+    client.submit_attestation(
+        &business, &period, &root, &1700000000u64, &1u32, &0i128, &None, &None,
+    );
+
+    let challenger_a = Address::generate(&env);
+    let challenger_b = Address::generate(&env);
+
+    // First dispute opens successfully.
+    let _id1 = client.open_dispute(
+        &challenger_a,
+        &business,
+        &period,
+        &DisputeType::RevenueMismatch,
+        &String::from_str(&env, "First challenger"),
+    );
+
+    // Second dispute from a different challenger must fail.
+    let result = client.try_open_dispute(
+        &challenger_b,
+        &business,
+        &period,
+        &DisputeType::DataIntegrity,
+        &String::from_str(&env, "Second challenger"),
+    );
+    assert!(
+        result.is_err(),
+        "expected DisputeAlreadyOpen error for parallel dispute"
+    );
+}
+
+/// A second open dispute from the *same* challenger must also be rejected.
+#[test]
+fn test_parallel_dispute_same_challenger_rejected() {
+    let (env, client) = setup();
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-06");
+    let root = BytesN::from_array(&env, &[3u8; 32]);
+    client.submit_attestation(
+        &business, &period, &root, &1700000000u64, &1u32, &0i128, &None, &None,
+    );
+
+    let challenger = Address::generate(&env);
+
+    client.open_dispute(
+        &challenger,
+        &business,
+        &period,
+        &DisputeType::RevenueMismatch,
+        &String::from_str(&env, "First attempt"),
+    );
+
+    let result = client.try_open_dispute(
+        &challenger,
+        &business,
+        &period,
+        &DisputeType::RevenueMismatch,
+        &String::from_str(&env, "Second attempt"),
+    );
+    assert!(result.is_err(), "same challenger parallel dispute must be rejected");
+}
+
+/// After a dispute is resolved AND closed, a new dispute may be opened on the
+/// same attestation.
+#[test]
+fn test_new_dispute_allowed_after_prior_closed() {
+    let (env, client) = setup();
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-07");
+    let root = BytesN::from_array(&env, &[4u8; 32]);
+    client.submit_attestation(
+        &business, &period, &root, &1700000000u64, &1u32, &0i128, &None, &None,
+    );
+
+    let challenger_a = Address::generate(&env);
+    let id1 = client.open_dispute(
+        &challenger_a,
+        &business,
+        &period,
+        &DisputeType::RevenueMismatch,
+        &String::from_str(&env, "First dispute"),
+    );
+
+    // Resolve then close the first dispute.
+    let resolver = Address::generate(&env);
+    client.resolve_dispute(
+        &id1,
+        &resolver,
+        &DisputeOutcome::Rejected,
+        &String::from_str(&env, "No merit found"),
+    );
+    client.close_dispute(&id1);
+
+    // A new dispute from a different challenger is now allowed.
+    let challenger_b = Address::generate(&env);
+    let id2 = client.open_dispute(
+        &challenger_b,
+        &business,
+        &period,
+        &DisputeType::DataIntegrity,
+        &String::from_str(&env, "New evidence"),
+    );
+
+    let d2 = client.get_dispute(&id2).unwrap();
+    assert_eq!(d2.status, DisputeStatus::Open);
+    assert_eq!(d2.challenger, challenger_b);
+}
+
+/// A dispute that has been resolved (but not yet closed) still blocks a new one.
+#[test]
+fn test_new_dispute_blocked_while_resolved_not_closed() {
+    let (env, client) = setup();
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-08");
+    let root = BytesN::from_array(&env, &[5u8; 32]);
+    client.submit_attestation(
+        &business, &period, &root, &1700000000u64, &1u32, &0i128, &None, &None,
+    );
+
+    let challenger_a = Address::generate(&env);
+    let id1 = client.open_dispute(
+        &challenger_a,
+        &business,
+        &period,
+        &DisputeType::RevenueMismatch,
+        &String::from_str(&env, "First"),
+    );
+
+    // Resolve but do NOT close.
+    let resolver = Address::generate(&env);
+    client.resolve_dispute(
+        &id1,
+        &resolver,
+        &DisputeOutcome::Upheld,
+        &String::from_str(&env, "Upheld"),
+    );
+
+    // A new dispute must still be blocked (status is Resolved, not Closed).
+    let challenger_b = Address::generate(&env);
+    let result = client.try_open_dispute(
+        &challenger_b,
+        &business,
+        &period,
+        &DisputeType::DataIntegrity,
+        &String::from_str(&env, "Attempted parallel"),
+    );
+    assert!(
+        result.is_err(),
+        "resolved-but-unclosed dispute must still block new disputes"
+    );
+}
+
+/// Opening disputes on *different* attestations (different period) is independent
+/// and must succeed.
+#[test]
+fn test_parallel_disputes_on_different_attestations_allowed() {
+    let (env, client) = setup();
+
+    let business = Address::generate(&env);
+    let period_a = String::from_str(&env, "2026-09");
+    let period_b = String::from_str(&env, "2026-10");
+    let root = BytesN::from_array(&env, &[6u8; 32]);
+
+    client.submit_attestation(
+        &business, &period_a, &root, &1700000000u64, &1u32, &0i128, &None, &None,
+    );
+    client.submit_attestation(
+        &business, &period_b, &root, &1700000001u64, &1u32, &0i128, &None, &None,
+    );
+
+    let challenger = Address::generate(&env);
+
+    let id_a = client.open_dispute(
+        &challenger,
+        &business,
+        &period_a,
+        &DisputeType::RevenueMismatch,
+        &String::from_str(&env, "Period A dispute"),
+    );
+    let id_b = client.open_dispute(
+        &challenger,
+        &business,
+        &period_b,
+        &DisputeType::RevenueMismatch,
+        &String::from_str(&env, "Period B dispute"),
+    );
+
+    assert_ne!(id_a, id_b);
+    let da = client.get_dispute(&id_a).unwrap();
+    let db = client.get_dispute(&id_b).unwrap();
+    assert_eq!(da.status, DisputeStatus::Open);
+    assert_eq!(db.status, DisputeStatus::Open);
+}
