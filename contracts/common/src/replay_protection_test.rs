@@ -983,8 +983,8 @@ fn simulated_brute_force_nonce_guessing_fails() {
 /// and tries two substitutions:
 /// 1. Nonce 6 (stale — the previous call's nonce): fails.
 /// 2. Nonce 8 (skip-ahead — one ahead of current): fails.
-/// In both cases the counter is unchanged at 7. The original call with the
-/// correct nonce 7 then succeeds.
+///    In both cases the counter is unchanged at 7. The original call with the
+///    correct nonce 7 then succeeds.
 #[test]
 fn simulated_man_in_middle_nonce_substitution_fails() {
     let env = Env::default();

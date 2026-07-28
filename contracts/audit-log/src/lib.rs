@@ -80,6 +80,7 @@ fn zero_hash(env: &Env) -> BytesN<32> {
     BytesN::from_array(env, &[0; 32])
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_entry_hash(
     env: &Env,
     seq: u64,

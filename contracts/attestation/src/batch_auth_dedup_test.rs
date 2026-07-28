@@ -4,8 +4,6 @@
 //! for business A must never satisfy `require_auth()` for business B. Soroban evaluates
 //! `require_auth` per address at each call site; there is no cross-address reuse.
 
-#![cfg(test)]
-
 extern crate std;
 
 use super::*;

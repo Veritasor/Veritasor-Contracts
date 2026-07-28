@@ -40,6 +40,12 @@ Successfully implemented comprehensive gas and cost benchmarks for the Veritasor
 - `bench_grant_role` - Role assignment
 - `bench_has_role` - Role verification
 
+#### Pause / Unpause (4 tests)
+- `bench_pause_cold` - First pause (flag not yet in storage)
+- `bench_pause_hot` - Repeated pause (flag already in storage)
+- `bench_unpause_cold` - Unpause from paused state
+- `bench_unpause_hot` - Idempotent unpause when already unpaused
+
 #### Worst-Case Scenarios (2 tests)
 - `bench_worst_case_verify_revoked` - Verify revoked attestation
 - `bench_worst_case_large_merkle_root` - Maximum entropy Merkle root
@@ -84,6 +90,10 @@ Comprehensive documentation including:
 | migrate_attestation | 400k | 10k | 600k / 15k |
 | get_attestation | 100k | 3k | 150k / 4.5k |
 | get_fee_quote | 150k | 5k | 225k / 7.5k |
+| pause (cold) | 250k | 7k | 375k / 10.5k |
+| pause (hot) | 220k | 6k | 330k / 9k |
+| unpause (cold) | 250k | 7k | 375k / 10.5k |
+| unpause (hot) | 220k | 6k | 330k / 9k |
 
 ## Test Results
 
@@ -115,8 +125,8 @@ All operations are **well within target ranges**, demonstrating efficient implem
 
 ## Test Coverage
 
-- **Total tests**: 106 (up from 86)
-- **New benchmark tests**: 20
+- **Total tests**: 114 (up from 106)
+- **New benchmark tests**: 24
 - **Coverage**: >95% (requirement met)
 - **All tests passing**: ✓
 
@@ -244,4 +254,4 @@ The gas benchmark implementation is **complete, tested, and documented** accordi
 - Clear documentation for maintenance and extension
 - Integration-ready for CI/CD pipelines
 
-All 106 tests pass, coverage exceeds 95%, and the implementation is production-ready.
+All 114 tests pass, coverage exceeds 95%, and the implementation is production-ready.
