@@ -502,7 +502,12 @@ fn test_fuzz_grant_revoke_role_random_bitmaps() {
     for &roles in valid_roles.iter() {
         contract.set_roles(&user1, &0u32);
         contract.grant_role(&user1, &roles);
-        assert_eq!(contract.get_roles(&user1), roles, "grant_role failed for bitmap {}", roles);
+        assert_eq!(
+            contract.get_roles(&user1),
+            roles,
+            "grant_role failed for bitmap {}",
+            roles
+        );
     }
 
     contract.set_roles(&user1, &0u32);
@@ -527,7 +532,11 @@ fn test_fuzz_grant_revoke_role_random_bitmaps() {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             contract.grant_role(&user1, &invalid);
         }));
-        assert!(result.is_err(), "grant_role should panic for invalid bitmap: {}", invalid);
+        assert!(
+            result.is_err(),
+            "grant_role should panic for invalid bitmap: {}",
+            invalid
+        );
     }
 
     assert!(contract.is_valid_role_bitmap(0b0000u32));

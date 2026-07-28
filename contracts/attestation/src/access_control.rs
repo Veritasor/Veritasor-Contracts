@@ -49,8 +49,8 @@
 //! - Role bitmaps must only use defined bits (0b1111 = 0xF)
 //! - Nonce sequences must be monotonically increasing per account
 //! - Admin must always exist (at least one address holds ADMIN role)
-
 use soroban_sdk::{contracttype, Address, Env, Vec};
+
 use crate::dispute;
 
 /// Role identifiers as bit flags for efficient storage
