@@ -181,10 +181,122 @@ pub struct AttestationSubmittedEvent {
     pub expiry_timestamp: Option<u64>,
 }
 
+// ── Revocation reason code ────────────────────────────────────────
+
+/// Machine-readable classification of why an attestation was revoked.
+///
+/// ## Mapping contract
+///
+/// The `revoke_attestation` entrypoint accepts a free-text `reason` string.
+/// The contract maps well-known lowercase reason strings to the corresponding
+/// variant at emit time:
+///
+/// | Reason string (case-insensitive prefix match) | Variant          |
+/// |----------------------------------------------|------------------|
+/// | `"dispute"`                                   | `Dispute`        |
+/// | `"fraud"`                                     | `Fraud`          |
+/// | `"attestor_slash"` / `"attestorslash"`        | `AttestorSlash`  |
+/// | `"admin"`                                     | `Admin`          |
+/// | *(anything else)*                             | `Other`          |
+///
+/// ## Security Notes
+///
+/// - The classification is performed by the contract, not the caller; callers
+///   cannot inject a fabricated variant value.
+/// - `Other` is the safe default for any unrecognised string, preventing new
+///   free-text values from causing panics or unexpected behaviour.
+/// - This enum is `#[contracttype]` and XDR-serialised; variant order is
+///   stable and part of the indexer compatibility contract.
+///
+/// ## Indexer Usage
+///
+/// Indexers should match on `reason_code` for programmatic classification and
+/// retain `reason` for the human-readable audit trail.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum RevocationReason {
+    /// Revocation triggered by a resolved or upheld dispute.
+    Dispute,
+    /// Revocation triggered by detected fraud.
+    Fraud,
+    /// Revocation triggered by an attestor slash event.
+    AttestorSlash,
+    /// Administrative revocation by a contract admin.
+    Admin,
+    /// Any reason that does not match the well-known variants above.
+    Other,
+}
+
+impl RevocationReason {
+    /// Derive a `RevocationReason` from a free-text reason string.
+    ///
+    /// Matching is case-insensitive and prefix-based so callers using
+    /// slightly different casing or suffixes still get the right variant.
+    ///
+    /// Returns `RevocationReason::Other` for any unrecognised string.
+    pub fn from_reason_str(reason: &String) -> Self {
+        // We need to compare strings in no_std Soroban environment.
+        // Use byte-level prefix matching via a helper that works with
+        // soroban_sdk::String (which is XDR bytes under the hood).
+        let len = reason.len();
+
+        // "dispute" – 7 bytes
+        if len >= 7 && Self::starts_with_ci(reason, b"dispute") {
+            return RevocationReason::Dispute;
+        }
+        // "fraud" – 5 bytes
+        if len >= 5 && Self::starts_with_ci(reason, b"fraud") {
+            return RevocationReason::Fraud;
+        }
+        // "attestor_slash" – 14 bytes  /  "attestorslash" – 13 bytes
+        if len >= 13 && Self::starts_with_ci(reason, b"attestor") {
+            return RevocationReason::AttestorSlash;
+        }
+        // "admin" – 5 bytes
+        if len >= 5 && Self::starts_with_ci(reason, b"admin") {
+            return RevocationReason::Admin;
+        }
+
+        RevocationReason::Other
+    }
+
+    /// Returns `true` if `s` starts with `prefix` in a case-insensitive manner.
+    ///
+    /// Works with Soroban's `String` by iterating over individual bytes.
+    /// Only ASCII lowercase/uppercase is handled; non-ASCII bytes are compared
+    /// literally, which is fine since all known prefixes are ASCII.
+    fn starts_with_ci(s: &String, prefix: &[u8]) -> bool {
+        let n = prefix.len() as u32;
+        if s.len() < n {
+            return false;
+        }
+        let mut buf = [0u8; 16]; // prefix is at most 16 bytes
+        s.copy_into_slice(&mut buf[..n as usize]);
+        for (i, &p) in prefix.iter().enumerate() {
+            let b = buf[i];
+            // Lowercase both bytes (ASCII only).
+            let bl = if b.is_ascii_uppercase() { b + 32 } else { b };
+            if bl != p {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 /// Normalized payload for `AttestationRevoked` events.
 ///
 /// Emitted once per successful `revoke_attestation` call.  The
 /// `reason` field is a free-form string supplied by the revoker.
+/// `reason_code` is a machine-readable enumerated classification that
+/// indexers can use to filter or aggregate revocations without parsing
+/// free-text.
+///
+/// ## Backwards Compatibility
+///
+/// `reason_code` was appended as the last field.  Per the append-only
+/// compatibility policy, this is a non-breaking change and does NOT
+/// increment `EVENT_SCHEMA_VERSION`.
 ///
 /// This struct is an indexer-facing wire contract; field order and types are
 /// part of compatibility guarantees.
@@ -199,6 +311,12 @@ pub struct AttestationRevokedEvent {
     pub revoked_by: Address,
     /// Human-readable revocation reason for audit trail.
     pub reason: String,
+    /// Machine-readable reason code for programmatic classification.
+    ///
+    /// Derived from the free-text `reason` by the contract at emit time.
+    /// Callers that pass a well-known reason string receive the corresponding
+    /// variant; any unrecognised string maps to `RevocationReason::Other`.
+    pub reason_code: RevocationReason,
 }
 
 /// Normalized payload for `AttestationMigrated` events.
@@ -566,11 +684,12 @@ pub fn emit_attestation_submitted(
 ///
 /// # Arguments
 ///
-/// * `env`        – Soroban execution environment.
-/// * `business`   – Business whose attestation was revoked.
-/// * `period`     – Period identifier.
-/// * `revoked_by` – Address that performed the revocation.
-/// * `reason`     – Free-form revocation reason.
+/// * `env`         – Soroban execution environment.
+/// * `business`    – Business whose attestation was revoked.
+/// * `period`      – Period identifier.
+/// * `revoked_by`  – Address that performed the revocation.
+/// * `reason`      – Free-form revocation reason.
+/// * `reason_code` – Machine-readable classification derived by the caller.
 ///
 /// # Events
 ///
@@ -581,12 +700,14 @@ pub fn emit_attestation_revoked(
     period: &String,
     revoked_by: &Address,
     reason: &String,
+    reason_code: RevocationReason,
 ) {
     let event = AttestationRevokedEvent {
         business: business.clone(),
         period: period.clone(),
         revoked_by: revoked_by.clone(),
         reason: reason.clone(),
+        reason_code,
     };
     env.events()
         .publish((TOPIC_ATTESTATION_REVOKED, business.clone()), event);
