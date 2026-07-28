@@ -119,6 +119,26 @@ baseline = 0
 status = blocked
 status_reason = shared-library-not-deployable
 
+[gas-benchmark.veritasor-attestation.pause_cold]
+target_cpu = 250000
+target_mem = 7000
+regression_pct = 10
+
+[gas-benchmark.veritasor-attestation.pause_hot]
+target_cpu = 220000
+target_mem = 6000
+regression_pct = 10
+
+[gas-benchmark.veritasor-attestation.unpause_cold]
+target_cpu = 250000
+target_mem = 7000
+regression_pct = 10
+
+[gas-benchmark.veritasor-attestation.unpause_hot]
+target_cpu = 220000
+target_mem = 6000
+regression_pct = 10
+
 [profile.release]
 # Release profile settings that affect WASM size
 opt-level = z

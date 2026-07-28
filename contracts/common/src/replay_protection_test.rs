@@ -2000,3 +2000,448 @@ fn multiple_custom_channels_are_independent() {
         assert_eq!(get_nonce(&env, &actor, custom3), 6);
     });
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Block 12 — Concurrent Batch Nonce Isolation
+//
+// When two batch submissions arrive in the same ledger from the same business,
+// the nonce counters for both channels must advance strictly and cannot be
+// shared or reused across batches.
+//
+// # Scenario
+// A business submits two interleaved batches ("concurrent" in the sense that
+// both are authored for the same ledger slot before either is committed):
+//
+//   Batch A: covers periods P1 and P2, uses CHANNEL_ADMIN nonce 0 and
+//            CHANNEL_BUSINESS nonce 0.
+//   Batch B: covers periods P2 and P3 (P2 overlaps with Batch A), uses
+//            CHANNEL_ADMIN nonce 1 and CHANNEL_BUSINESS nonce 1.
+//
+// The test verifies:
+//   1. Batch A's admin and business nonces are consumed correctly (0 → 1).
+//   2. Batch B's nonces increment from the post-Batch-A state (1 → 2).
+//   3. Replaying any nonce from Batch A in a third submission is rejected.
+//   4. Nonces across CHANNEL_ADMIN and CHANNEL_BUSINESS remain independent.
+//   5. Nonce streams for two distinct business actors never interfere.
+//   6. After all batches, the admin channel and business channel are both
+//      at nonce 2 and monotonically advance correctly.
+//
+// # Security properties asserted
+//
+// - **No nonce reuse**: submitting a previously-consumed nonce panics on both
+//   channels, regardless of which batch originally consumed it.
+// - **No cross-channel bleed**: a nonce valid on CHANNEL_ADMIN cannot satisfy
+//   the check on CHANNEL_BUSINESS, and vice versa.
+// - **No cross-actor bleed**: Business B's nonce advancement does not affect
+//   Business A's counters, even when both submit batches for the same period.
+// - **Monotonicity**: after two complete batch cycles, each (actor, channel)
+//   counter equals exactly the number of batches that used it (here, 2).
+// - **Atomicity of failure**: a failed nonce check inside a simulated batch
+//   leaves the pre-batch nonce value intact; the valid subsequent batch then
+//   succeeds from that unchanged base.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Simulates two interleaved batch submissions from the same business and
+/// asserts strict nonce isolation across admin and business channels.
+///
+/// The test is structured in phases that mirror a real batch processor:
+///
+/// **Phase 1 — Batch A**
+/// The business signs a batch covering periods P1 and P2. Each item in the
+/// batch is guarded by a nonce check. We consume nonce 0 on CHANNEL_ADMIN
+/// (representing the admin-authorised batch-submit operation) and nonce 0 on
+/// CHANNEL_BUSINESS (representing the per-item business action).
+///
+/// **Phase 2 — Replay rejection**
+/// An attacker (or a bug) attempts to re-submit Batch A's nonces (both 0)
+/// after Batch A has already been processed. Both attempts must panic.
+///
+/// **Phase 3 — Batch B**
+/// A second, concurrent batch covering periods P2 and P3 is processed. It
+/// must use nonce 1 on both channels (the next expected values). Despite P2
+/// appearing in Batch A, the nonce mechanism itself is not responsible for
+/// duplicate-period detection — that is handled by the attestation layer.
+/// Here we simply verify that Batch B's nonces advance correctly from 1 → 2.
+///
+/// **Phase 4 — Monotonicity assertions**
+/// After both batches, CHANNEL_ADMIN and CHANNEL_BUSINESS are both at 2.
+/// Providing nonce 0 or 1 again must still panic; providing nonce 2 must
+/// succeed and bring both counters to 3.
+///
+/// **Phase 5 — Second-business isolation**
+/// A second, independent business address runs its own batch cycle and
+/// reaches nonce 2 on both channels. The first business's counters are
+/// checked again and must remain unchanged at 3.
+#[test]
+fn concurrent_batches_nonce_isolation() {
+    let env = Env::default();
+    let contract_id = env.register(ReplayProtectionTestContract, ());
+
+    // Two independent business actors to exercise cross-actor isolation.
+    let business_a = Address::generate(&env);
+    let business_b = Address::generate(&env);
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Phase 1 — Batch A: first batch from business_a
+    //
+    // A real batch processor would loop over batch items and call
+    // verify_and_increment_nonce for each protected action.  Here we model
+    // the two relevant nonce checks that guard a single batch submission:
+    //
+    //   • CHANNEL_ADMIN nonce   — the admin-level authorisation of the batch.
+    //   • CHANNEL_BUSINESS nonce — the per-business action nonce.
+    //
+    // Both channels start at 0.  After Batch A both advance to 1.
+    // ──────────────────────────────────────────────────────────────────────
+    env.as_contract(&contract_id, || {
+        // Pre-conditions: fresh state, both channels at 0.
+        assert_eq!(
+            get_nonce(&env, &business_a, CHANNEL_ADMIN),
+            0,
+            "Batch A pre-condition: CHANNEL_ADMIN should start at 0"
+        );
+        assert_eq!(
+            get_nonce(&env, &business_a, CHANNEL_BUSINESS),
+            0,
+            "Batch A pre-condition: CHANNEL_BUSINESS should start at 0"
+        );
+        assert_eq!(
+            peek_next_nonce(&env, &business_a, CHANNEL_ADMIN),
+            0,
+            "peek_next_nonce must agree with get_nonce before first use"
+        );
+        assert_eq!(
+            peek_next_nonce(&env, &business_a, CHANNEL_BUSINESS),
+            0,
+            "peek_next_nonce must agree with get_nonce before first use"
+        );
+
+        // Batch A — admin authorisation nonce check (nonce 0 → 1).
+        verify_and_increment_nonce(&env, &business_a, CHANNEL_ADMIN, 0);
+
+        // Batch A — business action nonce check (nonce 0 → 1).
+        verify_and_increment_nonce(&env, &business_a, CHANNEL_BUSINESS, 0);
+
+        // Post-conditions: both channels now at 1.
+        assert_eq!(
+            get_nonce(&env, &business_a, CHANNEL_ADMIN),
+            1,
+            "After Batch A: CHANNEL_ADMIN must be 1"
+        );
+        assert_eq!(
+            get_nonce(&env, &business_a, CHANNEL_BUSINESS),
+            1,
+            "After Batch A: CHANNEL_BUSINESS must be 1"
+        );
+
+        // Channels are independent of each other — both happened to advance
+        // to 1 here, but they track separate counters.
+        assert_ne!(
+            get_nonce(&env, &business_a, CHANNEL_ADMIN),
+            0,
+            "CHANNEL_ADMIN must not still be 0 after Batch A"
+        );
+        assert_ne!(
+            get_nonce(&env, &business_a, CHANNEL_BUSINESS),
+            0,
+            "CHANNEL_BUSINESS must not still be 0 after Batch A"
+        );
+    });
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Phase 2 — Replay rejection
+    //
+    // An attacker intercepts Batch A and replays it.  They attempt to
+    // resubmit nonce 0 on CHANNEL_ADMIN and CHANNEL_BUSINESS.  Both must
+    // fail because the counters have already advanced to 1.
+    //
+    // Security invariant: a failed verify_and_increment_nonce does NOT
+    // advance the counter.  After each rejected replay the counter is read
+    // back and confirmed to still be 1.
+    // ──────────────────────────────────────────────────────────────────────
+
+    // Replay attack on CHANNEL_ADMIN.
+    let replay_admin = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        env.as_contract(&contract_id, || {
+            verify_and_increment_nonce(&env, &business_a, CHANNEL_ADMIN, 0);
+        });
+    }));
+    assert!(
+        replay_admin.is_err(),
+        "Replay of Batch A admin nonce (0) must be rejected; counter already at 1"
+    );
+
+    // State integrity: CHANNEL_ADMIN must still be 1 after the failed replay.
+    let admin_nonce_after_replay =
+        env.as_contract(&contract_id, || get_nonce(&env, &business_a, CHANNEL_ADMIN));
+    assert_eq!(
+        admin_nonce_after_replay, 1,
+        "CHANNEL_ADMIN must remain 1 after a failed replay attempt"
+    );
+
+    // Replay attack on CHANNEL_BUSINESS.
+    let replay_business = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        env.as_contract(&contract_id, || {
+            verify_and_increment_nonce(&env, &business_a, CHANNEL_BUSINESS, 0);
+        });
+    }));
+    assert!(
+        replay_business.is_err(),
+        "Replay of Batch A business nonce (0) must be rejected; counter already at 1"
+    );
+
+    // State integrity: CHANNEL_BUSINESS must still be 1 after the failed replay.
+    let business_nonce_after_replay =
+        env.as_contract(&contract_id, || get_nonce(&env, &business_a, CHANNEL_BUSINESS));
+    assert_eq!(
+        business_nonce_after_replay, 1,
+        "CHANNEL_BUSINESS must remain 1 after a failed replay attempt"
+    );
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Phase 3 — Batch B: second concurrent batch from business_a
+    //
+    // Batch B covers periods P2 and P3 — P2 intentionally overlaps with
+    // Batch A (the attestation layer is responsible for duplicate-period
+    // rejection; this test focuses solely on nonce semantics).
+    //
+    // Batch B must use nonce 1 on both channels.  Providing nonce 0 again
+    // must be rejected (verified in phase 2).  After Batch B, both channels
+    // advance to 2.
+    // ──────────────────────────────────────────────────────────────────────
+    env.as_contract(&contract_id, || {
+        // Pre-condition: both counters are at 1 going into Batch B.
+        assert_eq!(
+            get_nonce(&env, &business_a, CHANNEL_ADMIN),
+            1,
+            "Batch B pre-condition: CHANNEL_ADMIN must be 1"
+        );
+        assert_eq!(
+            get_nonce(&env, &business_a, CHANNEL_BUSINESS),
+            1,
+            "Batch B pre-condition: CHANNEL_BUSINESS must be 1"
+        );
+
+        // Batch B — admin nonce check (nonce 1 → 2).
+        verify_and_increment_nonce(&env, &business_a, CHANNEL_ADMIN, 1);
+
+        // Batch B — business nonce check (nonce 1 → 2).
+        verify_and_increment_nonce(&env, &business_a, CHANNEL_BUSINESS, 1);
+
+        // Post-conditions: both counters are now at 2.
+        assert_eq!(
+            get_nonce(&env, &business_a, CHANNEL_ADMIN),
+            2,
+            "After Batch B: CHANNEL_ADMIN must be 2"
+        );
+        assert_eq!(
+            get_nonce(&env, &business_a, CHANNEL_BUSINESS),
+            2,
+            "After Batch B: CHANNEL_BUSINESS must be 2"
+        );
+
+        // Channels remain independent even though they have the same value.
+        // Advancing one must not affect the other — verified explicitly below.
+    });
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Phase 4 — Monotonicity and no-reuse assertions
+    //
+    // After two complete batch cycles:
+    //   - CHANNEL_ADMIN   = 2
+    //   - CHANNEL_BUSINESS = 2
+    //
+    // Both stale nonces (0 and 1) must still be rejected.
+    // The correct current nonce (2) must succeed and bring both to 3.
+    // The two channels must remain independent throughout.
+    // ──────────────────────────────────────────────────────────────────────
+
+    // Stale replay: nonce 0 on CHANNEL_ADMIN (consumed by Batch A).
+    let stale_0_admin = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        env.as_contract(&contract_id, || {
+            verify_and_increment_nonce(&env, &business_a, CHANNEL_ADMIN, 0);
+        });
+    }));
+    assert!(
+        stale_0_admin.is_err(),
+        "Nonce 0 on CHANNEL_ADMIN must be permanently stale after two batches"
+    );
+
+    // Stale replay: nonce 1 on CHANNEL_ADMIN (consumed by Batch B).
+    let stale_1_admin = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        env.as_contract(&contract_id, || {
+            verify_and_increment_nonce(&env, &business_a, CHANNEL_ADMIN, 1);
+        });
+    }));
+    assert!(
+        stale_1_admin.is_err(),
+        "Nonce 1 on CHANNEL_ADMIN must be permanently stale after two batches"
+    );
+
+    // Stale replay: nonce 0 on CHANNEL_BUSINESS (consumed by Batch A).
+    let stale_0_business = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        env.as_contract(&contract_id, || {
+            verify_and_increment_nonce(&env, &business_a, CHANNEL_BUSINESS, 0);
+        });
+    }));
+    assert!(
+        stale_0_business.is_err(),
+        "Nonce 0 on CHANNEL_BUSINESS must be permanently stale after two batches"
+    );
+
+    // Stale replay: nonce 1 on CHANNEL_BUSINESS (consumed by Batch B).
+    let stale_1_business = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        env.as_contract(&contract_id, || {
+            verify_and_increment_nonce(&env, &business_a, CHANNEL_BUSINESS, 1);
+        });
+    }));
+    assert!(
+        stale_1_business.is_err(),
+        "Nonce 1 on CHANNEL_BUSINESS must be permanently stale after two batches"
+    );
+
+    // Confirm counters are still 2 after all the failed replay attempts above.
+    env.as_contract(&contract_id, || {
+        assert_eq!(
+            get_nonce(&env, &business_a, CHANNEL_ADMIN),
+            2,
+            "CHANNEL_ADMIN must remain 2 after all stale-replay attempts"
+        );
+        assert_eq!(
+            get_nonce(&env, &business_a, CHANNEL_BUSINESS),
+            2,
+            "CHANNEL_BUSINESS must remain 2 after all stale-replay attempts"
+        );
+    });
+
+    // Cross-channel isolation check: advance CHANNEL_ADMIN to 3 and verify
+    // CHANNEL_BUSINESS is completely unaffected.
+    env.as_contract(&contract_id, || {
+        verify_and_increment_nonce(&env, &business_a, CHANNEL_ADMIN, 2);
+        assert_eq!(
+            get_nonce(&env, &business_a, CHANNEL_ADMIN),
+            3,
+            "CHANNEL_ADMIN must advance to 3 via the correct nonce"
+        );
+        // CHANNEL_BUSINESS must still be 2 — admin increment must not bleed over.
+        assert_eq!(
+            get_nonce(&env, &business_a, CHANNEL_BUSINESS),
+            2,
+            "CHANNEL_BUSINESS must be unaffected by CHANNEL_ADMIN advancement"
+        );
+    });
+
+    // Now advance CHANNEL_BUSINESS to 3 and verify CHANNEL_ADMIN is unaffected.
+    env.as_contract(&contract_id, || {
+        verify_and_increment_nonce(&env, &business_a, CHANNEL_BUSINESS, 2);
+        assert_eq!(
+            get_nonce(&env, &business_a, CHANNEL_BUSINESS),
+            3,
+            "CHANNEL_BUSINESS must advance to 3 via the correct nonce"
+        );
+        // CHANNEL_ADMIN was already incremented to 3 above and must not change.
+        assert_eq!(
+            get_nonce(&env, &business_a, CHANNEL_ADMIN),
+            3,
+            "CHANNEL_ADMIN must remain 3 after CHANNEL_BUSINESS advancement"
+        );
+    });
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Phase 5 — Second-business actor isolation
+    //
+    // business_b runs the same two-batch cycle independently.  Its counters
+    // must advance from 0 to 2 without influencing business_a's counters,
+    // which must stay at exactly 3 throughout this phase.
+    // ──────────────────────────────────────────────────────────────────────
+    env.as_contract(&contract_id, || {
+        // business_b starts with fresh counters regardless of business_a's history.
+        assert_eq!(
+            get_nonce(&env, &business_b, CHANNEL_ADMIN),
+            0,
+            "business_b CHANNEL_ADMIN must start at 0, independent of business_a"
+        );
+        assert_eq!(
+            get_nonce(&env, &business_b, CHANNEL_BUSINESS),
+            0,
+            "business_b CHANNEL_BUSINESS must start at 0, independent of business_a"
+        );
+
+        // business_b Batch A (nonce 0 on both channels).
+        verify_and_increment_nonce(&env, &business_b, CHANNEL_ADMIN, 0);
+        verify_and_increment_nonce(&env, &business_b, CHANNEL_BUSINESS, 0);
+
+        assert_eq!(get_nonce(&env, &business_b, CHANNEL_ADMIN), 1);
+        assert_eq!(get_nonce(&env, &business_b, CHANNEL_BUSINESS), 1);
+
+        // business_b Batch B (nonce 1 on both channels).
+        verify_and_increment_nonce(&env, &business_b, CHANNEL_ADMIN, 1);
+        verify_and_increment_nonce(&env, &business_b, CHANNEL_BUSINESS, 1);
+
+        assert_eq!(get_nonce(&env, &business_b, CHANNEL_ADMIN), 2);
+        assert_eq!(get_nonce(&env, &business_b, CHANNEL_BUSINESS), 2);
+
+        // business_a's counters must be completely unaffected by business_b's activity.
+        assert_eq!(
+            get_nonce(&env, &business_a, CHANNEL_ADMIN),
+            3,
+            "business_a CHANNEL_ADMIN must still be 3 after business_b's batches"
+        );
+        assert_eq!(
+            get_nonce(&env, &business_a, CHANNEL_BUSINESS),
+            3,
+            "business_a CHANNEL_BUSINESS must still be 3 after business_b's batches"
+        );
+
+        // And business_b cannot use business_a's higher nonce value (3).
+        // (business_b is at 2; nonce 3 is a skip-ahead for business_b.)
+    });
+
+    // Cross-actor skip-ahead rejection: business_b's nonce is 2, so trying to
+    // use 3 (which is business_a's current value) must fail on business_b.
+    let cross_actor_skip = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        env.as_contract(&contract_id, || {
+            // business_b expects 2; providing 3 (business_a's value) must panic.
+            verify_and_increment_nonce(&env, &business_b, CHANNEL_ADMIN, 3);
+        });
+    }));
+    assert!(
+        cross_actor_skip.is_err(),
+        "business_a nonce value (3) must be rejected for business_b (expects 2)"
+    );
+
+    // Final state snapshot: verify all four (actor, channel) streams.
+    env.as_contract(&contract_id, || {
+        // business_a: advanced through 3 batch cycles (0→1→2→3).
+        assert_eq!(
+            get_nonce(&env, &business_a, CHANNEL_ADMIN),
+            3,
+            "Final: business_a CHANNEL_ADMIN must be 3"
+        );
+        assert_eq!(
+            get_nonce(&env, &business_a, CHANNEL_BUSINESS),
+            3,
+            "Final: business_a CHANNEL_BUSINESS must be 3"
+        );
+
+        // business_b: advanced through 2 batch cycles (0→1→2).
+        assert_eq!(
+            get_nonce(&env, &business_b, CHANNEL_ADMIN),
+            2,
+            "Final: business_b CHANNEL_ADMIN must be 2"
+        );
+        assert_eq!(
+            get_nonce(&env, &business_b, CHANNEL_BUSINESS),
+            2,
+            "Final: business_b CHANNEL_BUSINESS must be 2"
+        );
+
+        // The two actors have diverged: business_a at 3, business_b at 2.
+        // This is the expected outcome of independent nonce streams.
+        assert_ne!(
+            get_nonce(&env, &business_a, CHANNEL_ADMIN),
+            get_nonce(&env, &business_b, CHANNEL_ADMIN),
+            "business_a and business_b nonces must diverge after different numbers of batches"
+        );
+    });
+}

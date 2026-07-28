@@ -8,7 +8,7 @@ extern crate std;
 
 use core::cmp::Ordering;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, BytesN, Env, String, Symbol, Vec,
+    contract, contractimpl, contracttype, token, Address, BytesN, Env, String, Symbol, TryIntoVal, Vec,
 };
 
 use veritasor_common::replay_protection;
@@ -59,13 +59,14 @@ pub use access_control::{ROLE_ADMIN, ROLE_ATTESTOR, ROLE_BUSINESS, ROLE_OPERATOR
 pub use dispute::{
     Dispute, DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType, OptionalResolution,
 };
-pub use dynamic_fees::{compute_fee, ArchivePointerRecord, DataKey, FeeConfig};
+pub use dynamic_fees::{compute_fee, DataKey, FeeConfig};
+pub use dynamic_fees::{RevokeProposal, DEFAULT_REVOKE_GRACE_SECONDS};
 pub use events::{
     AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
-    AttestationSubmittedEvent, PauseScheduledEvent, PauseScheduledCancelledEvent,
-    ProofHashUpdatedEvent,
+    AttestationSubmittedEvent, ProofHashUpdatedEvent,
+    RevocationCancelledEvent, RevocationCommittedEvent, RevocationProposedEvent,
 };
-pub use fees::{collect_flat_fee, FlatFeeConfig};
+pub use fees::{collect_flat_fee, CollectorRotationProposal, FlatFeeConfig};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
 pub use rate_limit::RateLimitConfig;
 pub use registry::{BusinessRecord, BusinessStatus};
@@ -122,13 +123,37 @@ pub const MAX_BATCH_SIZE_VERIFY: u32 = 30;
 #[soroban_sdk::contractclient(name = "AttestorStakingClient")]
 pub trait AttestorStakingContractTrait {
     fn is_eligible(env: Env, attestor: Address) -> bool;
+    fn slash(env: Env, attestor: Address, amount: i128, dispute_id: u64) -> u32;
+}
+
+#[soroban_sdk::contractclient(name = "AuditLogClient")]
+pub trait AuditLogContractTrait {
+    fn append(
+        env: Env,
+        nonce: u64,
+        actor: Address,
+        source_contract: Address,
+        action: String,
+        payload: String,
+    ) -> u64;
+    fn get_replay_nonce(env: Env, actor: Address, channel: u32) -> u64;
 }
 
 #[contract]
 pub struct AttestationContract;
 
+#[cfg(test)]
+mod audit_log_integration_test;
+
 #[cfg(all(test, feature = "full-tests"))]
 mod active_submission_test;
+
+/// Vote-weight snapshot tests (issue #512). Always compiled into the test
+/// harness so the flash-vote defence is covered regardless of which
+/// feature gate is enabled (the regression it closes is impossible to
+/// reproduce without these tests).
+#[cfg(test)]
+mod vote_weight_snapshot_test;
 
 #[contractimpl]
 impl AttestationContract {
@@ -166,6 +191,106 @@ impl AttestationContract {
             config.enabled,
             &admin,
         );
+    }
+
+    /// Propose a fee configuration change that enters a time-locked pending state.
+    ///
+    /// The configuration will not take effect until `FEE_TIMELOCK_SECONDS` have
+    /// elapsed and `commit_fee_config` is called. Only one pending proposal may
+    /// exist at a time.
+    ///
+    /// # Panics
+    /// - Caller does not have ADMIN role
+    /// - `base_fee` is negative
+    /// - A pending fee config is already scheduled (cancel it first)
+    pub fn propose_fee_config(
+        env: Env,
+        caller: Address,
+        token: Address,
+        collector: Address,
+        base_fee: i128,
+        enabled: bool,
+        nonce: u64,
+    ) {
+        let admin = dynamic_fees::require_admin(&env);
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
+        assert!(base_fee >= 0, "base_fee must be non-negative");
+        assert!(
+            dynamic_fees::get_pending_fee_config(&env).is_none(),
+            "pending fee config already scheduled"
+        );
+        let effective_at = env.ledger().timestamp() + FEE_TIMELOCK_SECONDS;
+        let config = FeeConfig {
+            token,
+            collector,
+            base_fee,
+            enabled,
+        };
+        let pending = dynamic_fees::PendingFeeConfig {
+            config,
+            effective_at,
+            proposed_by: admin,
+        };
+        dynamic_fees::set_pending_fee_config(&env, &pending);
+        events::emit_fee_config_proposed(
+            &env,
+            &pending.config.token,
+            &pending.config.collector,
+            pending.config.base_fee,
+            pending.config.enabled,
+            &pending.proposed_by,
+            effective_at,
+        );
+    }
+
+    /// Commit a previously proposed fee configuration after its timelock has expired.
+    ///
+    /// Applies the pending configuration to the live fee config and clears the pending state.
+    ///
+    /// # Panics
+    /// - Caller does not have ADMIN role
+    /// - No pending fee config exists
+    /// - Timelock has not yet expired
+    pub fn commit_fee_config(env: Env, caller: Address, nonce: u64) {
+        let admin = dynamic_fees::require_admin(&env);
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
+        let pending = dynamic_fees::get_pending_fee_config(&env)
+            .expect("no pending fee config to commit");
+        assert!(
+            env.ledger().timestamp() >= pending.effective_at,
+            "timelock not yet expired"
+        );
+        dynamic_fees::set_fee_config(&env, &pending.config);
+        dynamic_fees::clear_pending_fee_config(&env);
+        events::emit_fee_config_committed(
+            &env,
+            &pending.config.token,
+            &pending.config.collector,
+            pending.config.base_fee,
+            pending.config.enabled,
+            &admin,
+        );
+    }
+
+    /// Cancel a previously proposed fee configuration change.
+    ///
+    /// # Panics
+    /// - Caller does not have ADMIN role
+    /// - No pending fee config exists
+    pub fn cancel_pending_fee_config(env: Env, caller: Address, nonce: u64) {
+        let admin = dynamic_fees::require_admin(&env);
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
+        assert!(
+            dynamic_fees::get_pending_fee_config(&env).is_some(),
+            "no pending fee config to cancel"
+        );
+        dynamic_fees::clear_pending_fee_config(&env);
+        events::emit_fee_config_cancelled(&env, &admin);
+    }
+
+    /// Returns the pending fee configuration, if any.
+    pub fn get_pending_fee_config(env: Env) -> Option<PendingFeeConfig> {
+        dynamic_fees::get_pending_fee_config(&env)
     }
 
     pub fn set_tier_discount(env: Env, tier: u32, discount_bps: u32) {
@@ -239,6 +364,54 @@ impl AttestationContract {
         );
     }
 
+    pub fn propose_collector_rotation(
+        env: Env,
+        caller: Address,
+        new_collector: Address,
+    ) {
+        let current_config = fees::get_flat_fee_config(&env).expect("flat fee not configured");
+        assert!(
+            caller == current_config.collector,
+            "only current collector may propose rotation"
+        );
+
+        let current_balance = token::Client::new(&env, &current_config.token)
+            .balance(&current_config.collector);
+
+        fees::propose_collector_rotation(&env, &caller, &new_collector);
+        events::emit_collector_rotation_proposed(
+            &env,
+            &current_config.collector,
+            &new_collector,
+            &current_config.token,
+            current_balance,
+        );
+    }
+
+    pub fn accept_collector_rotation(env: Env, caller: Address) {
+        let proposal = fees::get_pending_collector_rotation(&env)
+            .expect("no pending collector rotation");
+        assert!(
+            caller == proposal.new_collector,
+            "only proposed new collector may accept rotation"
+        );
+
+        fees::accept_collector_rotation(&env, &caller);
+        events::emit_collector_rotation_accepted(
+            &env,
+            &proposal.old_collector,
+            &proposal.new_collector,
+            &proposal.token,
+            proposal.escrowed_amount,
+        );
+    }
+
+    pub fn get_pending_collector_rotation(
+        env: Env,
+    ) -> Option<CollectorRotationProposal> {
+        fees::get_pending_collector_rotation(&env)
+    }
+
     pub fn set_attestor_staking_contract(env: Env, caller: Address, staking_contract: Address) {
         access_control::require_admin(&env, &caller);
         env.storage()
@@ -252,6 +425,15 @@ impl AttestationContract {
             .get(&DataKey::AttestorStakingContract)
     }
 
+    pub fn set_audit_log_contract(env: Env, caller: Address, audit_log: Address) {
+        access_control::require_admin(&env, &caller);
+        env.storage().instance().set(&DataKey::AuditLogContract, &audit_log);
+    }
+
+    pub fn get_audit_log_contract(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::AuditLogContract)
+    }
+
     pub fn grant_role(env: Env, caller: Address, account: Address, role: u32) {
         access_control::require_admin(&env, &caller);
         access_control::grant_role(&env, &account, role, &caller);
@@ -262,8 +444,49 @@ impl AttestationContract {
         access_control::revoke_role(&env, &account, role, &caller);
     }
 
+    pub fn swap_admin(env: Env, caller: Address, old_admin: Address, new_admin: Address) {
+        access_control::swap_admin(&env, &old_admin, &new_admin, &caller);
+    }
+
     pub fn has_role(env: Env, account: Address, role: u32) -> bool {
         access_control::has_role(&env, &account, role)
+    }
+
+    /// Set the voting weight for an admin member (1 ..= MAX_ADMIN_WEIGHT).
+    ///
+    /// Only an existing admin may call this function; the target `account` must
+    /// also hold `ROLE_ADMIN`.  Weight `0` is rejected — use `revoke_role` to
+    /// remove an admin from the quorum entirely.
+    ///
+    /// Emits `AdminWeightChanged` for an auditable on-chain trail.
+    ///
+    /// # Panics
+    ///
+    /// - `"admin weight cannot be zero"` when `weight == 0`.
+    /// - `"admin weight exceeds MAX_ADMIN_WEIGHT"` when `weight > 1_000`.
+    /// - `"account does not hold ROLE_ADMIN"` when `account` is not an admin.
+    /// - `"caller does not have ADMIN role"` when `caller` is not an admin.
+    pub fn set_admin_weight(env: Env, caller: Address, account: Address, weight: u32) {
+        access_control::require_admin(&env, &caller);
+        access_control::set_admin_weight(&env, &account, weight, &caller);
+    }
+
+    /// Return the current voting weight of an admin address.
+    ///
+    /// Returns `DEFAULT_ADMIN_WEIGHT` (= 1) for admins that have never had an
+    /// explicit weight set.  The return value is meaningful only for addresses
+    /// that currently hold `ROLE_ADMIN`.
+    pub fn get_admin_weight(env: Env, account: Address) -> u32 {
+        access_control::get_admin_weight(&env, &account)
+    }
+
+    /// Return the total quorum weight across all current admin members.
+    ///
+    /// This is the sum of `get_admin_weight` for every address that currently
+    /// holds `ROLE_ADMIN`.  Use this value to verify that a proposed weighted
+    /// threshold is reachable, or to compute percentage-based quorum fractions.
+    pub fn get_admin_quorum_weight(env: Env) -> u64 {
+        access_control::admin_quorum_weight(&env)
     }
 
     pub fn get_business_count(env: Env, business: Address) -> u64 {
@@ -749,6 +972,34 @@ impl AttestationContract {
         events::emit_attestation_cleaned_up(&env, &business, &period);
     }
 
+    /// Cleanup orphaned revocation index entries for a business.
+    pub fn cleanup_revocation_index(env: Env, business: Address) -> Result<u32, ()> {
+        let mut periods = dispute::get_revoked_periods(&env, &business);
+        if periods.is_empty() {
+            return Ok(0);
+        }
+
+        let mut cleaned_count = 0;
+        let mut new_periods = soroban_sdk::Vec::new(&env);
+
+        for period in periods.iter() {
+            let key = DataKey::Attestation(business.clone(), period.clone());
+            // If the attestation no longer exists, the entry is an orphan
+            if !env.storage().instance().has(&key) {
+                cleaned_count += 1;
+            } else {
+                new_periods.push_back(period);
+            }
+        }
+
+        if cleaned_count > 0 {
+            dispute::set_revoked_periods(&env, &business, &new_periods);
+            events::emit_revocation_index_cleaned(&env, &business, cleaned_count);
+        }
+
+        Ok(cleaned_count)
+    }
+
     pub fn get_revocation_info(
         env: Env,
         business: Address,
@@ -1039,8 +1290,37 @@ impl AttestationContract {
         multisig::get_proposal(&env, proposal_id)
     }
 
+    /// Return the immutable vote-weight snapshot captured at the moment
+    /// `proposal_id` was created (issue #512).
+    ///
+    /// The snapshot records the owner set, threshold, and total vote weight
+    /// that govern the proposal's approval tally. Subsequent `AddOwner`,
+    /// `RemoveOwner`, or `ChangeThreshold` actions do not modify this
+    /// snapshot, so callers can deterministically reconstruct the exact
+    /// approval rules in force at creation.
+    ///
+    /// Returns `None` if the proposal ID has no snapshot stored — this
+    /// would only occur for legacy proposals created before this feature
+    /// was live, or for IDs that do not correspond to any proposal.
+    ///
+    /// # Authorization
+    /// Read-only; no auth required.
+    pub fn get_proposal_snapshot(env: Env, proposal_id: u64) -> Option<VoteWeightSnapshot> {
+        multisig::get_vote_weight_snapshot(&env, proposal_id)
+    }
+
     pub fn get_approval_count(env: Env, proposal_id: u64) -> u32 {
         multisig::get_approval_count(&env, proposal_id)
+    }
+
+    /// Return the raw list of addresses that have approved the proposal.
+    ///
+    /// Unlike [`get_approval_count`] (which is snapshot-aware when a
+    /// snapshot exists), this view returns the **stored** approvals vector
+    /// verbatim — useful for off-chain forensic tooling that needs to
+    /// reconstruct exactly who signed.
+    pub fn get_proposal_approvals(env: Env, proposal_id: u64) -> Vec<Address> {
+        multisig::get_approvals(&env, proposal_id)
     }
 
     pub fn is_proposal_approved(env: Env, proposal_id: u64) -> bool {
@@ -1664,6 +1944,48 @@ impl AttestationContract {
         dispute::get_dispute_ids_by_challenger(&env, &challenger)
     }
 
+    /// Triggers a slash for a resolved dispute and records the event in the audit log.
+    pub fn trigger_slash(
+        env: Env,
+        caller: Address,
+        attestor: Address,
+        amount: i128,
+        dispute_id: u64,
+    ) {
+        access_control::require_admin(&env, &caller);
+
+        let staking_addr = Self::get_attestor_staking_contract(env.clone())
+            .expect("staking contract not configured");
+
+        // Execute the slash
+        let staking_client = AttestorStakingClient::new(&env, &staking_addr);
+        let mut args = soroban_sdk::vec![&env];
+        args.push_back(attestor.into_val(&env));
+        args.push_back(amount.into_val(&env));
+        args.push_back(dispute_id.into_val(&env));
+        let _ = env.invoke_contract::<soroban_sdk::Val>(&staking_addr, &soroban_sdk::Symbol::new(&env, "slash"), args);
+
+        events::emit_slash_triggered(&env, &attestor, amount, dispute_id);
+
+        if let Some(audit_log) = Self::get_audit_log_contract(env.clone()) {
+            let audit_client = AuditLogClient::new(&env, &audit_log);
+            let current_contract = env.current_contract_address();
+            
+            // 1 is NONCE_CHANNEL_ADMIN in audit-log
+            let nonce = audit_client.get_replay_nonce(&current_contract, &1u32);
+            let action = String::from_str(&env, "SlashTriggered");
+            let payload = String::from_str(&env, "SlashPayload");
+
+            audit_client.append(
+                &nonce,
+                &caller,
+                &current_contract,
+                &action,
+                &payload,
+            );
+        }
+    }
+
     /// Revoke an attestation.
     ///
     /// The caller must be the business owner or hold the ADMIN role.
@@ -1696,7 +2018,8 @@ impl AttestationContract {
         dispute::require_revocation_authorized(&env, &caller, &business, &period);
         let revocation: RevocationData = (caller.clone(), env.ledger().timestamp(), reason.clone());
         dispute::record_revocation(&env, &business, &period, &revocation);
-        events::emit_attestation_revoked(&env, &business, &period, &caller, &reason);
+        let reason_code = events::RevocationReason::from_reason_str(&reason);
+        events::emit_attestation_revoked(&env, &business, &period, &caller, &reason, reason_code);
     }
 
     /// Return `true` when the attestation has been revoked.
@@ -1705,6 +2028,242 @@ impl AttestationContract {
     /// so callers do not need to go through the dispute module directly.
     pub fn is_revoked(env: Env, business: Address, period: String) -> bool {
         dispute::is_attestation_revoked(&env, &business, &period)
+    }
+
+    // ── Time-locked revocation (grace-window appeal path) ──────────────
+
+    /// Admin: configure the appeal grace window duration.
+    ///
+    /// During the grace window after a `propose_revoke` call the business (or
+    /// an admin) may call `cancel_revoke_proposal` to block the revocation.
+    /// After the window elapses, anyone may call `commit_revoke` to finalise it.
+    ///
+    /// Setting `seconds` to `0` disables the grace window entirely (commit is
+    /// immediately allowed after proposal).
+    ///
+    /// # Panics
+    /// - Caller does not hold the ADMIN role.
+    pub fn set_revoke_grace_seconds(env: Env, caller: Address, seconds: u64) {
+        access_control::require_admin(&env, &caller);
+        dynamic_fees::set_revoke_grace_seconds(&env, seconds);
+    }
+
+    /// Return the currently configured appeal grace window in seconds.
+    ///
+    /// Defaults to [`DEFAULT_REVOKE_GRACE_SECONDS`] (86 400 s = 24 h) when the
+    /// admin has not explicitly called `set_revoke_grace_seconds`.
+    pub fn get_revoke_grace_seconds(env: Env) -> u64 {
+        dynamic_fees::get_revoke_grace_seconds(&env)
+    }
+
+    /// Return the pending revocation proposal for (business, period), if any.
+    pub fn get_revoke_proposal(env: Env, business: Address, period: String) -> Option<RevokeProposal> {
+        dynamic_fees::get_revoke_proposal(&env, &business, &period)
+    }
+
+    /// Propose a time-locked revocation.
+    ///
+    /// Registers a pending revocation proposal and starts the appeal grace window.
+    /// During the grace window, the business (or an admin) can call
+    /// [`Self::cancel_revoke_proposal`] to block the revocation.  After the
+    /// window elapses, anyone can call [`Self::commit_revoke`] to finalise it.
+    ///
+    /// This path is intended for **non-emergency** revocations where the business
+    /// should have a chance to appeal.  For an immediate, admin-only revocation
+    /// (no grace window), use [`Self::revoke_attestation`].
+    ///
+    /// # Parameters
+    /// - `caller`   — must be the business owner or hold the ADMIN role
+    /// - `business` — business whose attestation is targeted
+    /// - `period`   — period string identifying the attestation
+    /// - `reason`   — human-readable revocation reason stored on-chain
+    ///
+    /// # Panics
+    /// - Contract is paused
+    /// - Attestation does not exist
+    /// - Attestation is already revoked
+    /// - A proposal for this (business, period) is already pending
+    /// - Caller is neither the business owner nor an admin
+    pub fn propose_revoke(
+        env: Env,
+        caller: Address,
+        business: Address,
+        period: String,
+        reason: String,
+    ) {
+        // Pause check and auth first (same order as require_revocation_authorized).
+        access_control::require_not_paused(&env);
+        caller.require_auth();
+
+        // Attestation must exist.
+        let attestation_key = DataKey::Attestation(business.clone(), period.clone());
+        assert!(
+            env.storage().instance().has(&attestation_key),
+            "attestation not found"
+        );
+
+        // Already revoked — nothing to propose.
+        assert!(
+            !dispute::is_attestation_revoked(&env, &business, &period),
+            "attestation already revoked"
+        );
+
+        // Prevent duplicate proposals.
+        assert!(
+            dynamic_fees::get_revoke_proposal(&env, &business, &period).is_none(),
+            "revocation already proposed"
+        );
+
+        // Role / ownership check.
+        let caller_is_admin = caller == dynamic_fees::get_admin(&env)
+            || access_control::has_role(&env, &caller, ROLE_ADMIN);
+        assert!(
+            caller_is_admin || caller == business,
+            "caller must be ADMIN or the business owner"
+        );
+
+        let proposed_at = env.ledger().timestamp();
+        let grace_seconds = dynamic_fees::get_revoke_grace_seconds(&env);
+
+        let proposal = RevokeProposal {
+            proposer: caller.clone(),
+            proposed_at,
+            reason: reason.clone(),
+        };
+        dynamic_fees::store_revoke_proposal(&env, &business, &period, &proposal);
+
+        events::emit_revocation_proposed(
+            &env,
+            &business,
+            &period,
+            &caller,
+            proposed_at,
+            grace_seconds,
+            &reason,
+        );
+
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+    }
+
+    /// Finalise a pending revocation after the grace window has elapsed.
+    ///
+    /// Any caller may invoke this once the appeal window has passed.  The
+    /// proposal is consumed and the revocation is written atomically via the
+    /// same [`dispute::record_revocation`] path used by the emergency route.
+    ///
+    /// # Parameters
+    /// - `committed_by` — any address; does NOT need to be the original proposer
+    /// - `business`     — business whose attestation is being revoked
+    /// - `period`       — period string identifying the attestation
+    ///
+    /// # Panics
+    /// - Contract is paused
+    /// - No pending proposal for (business, period)
+    /// - Grace window has not yet elapsed
+    /// - Attestation already revoked (proposal lingered after an emergency revoke)
+    pub fn commit_revoke(env: Env, committed_by: Address, business: Address, period: String) {
+        access_control::require_not_paused(&env);
+        committed_by.require_auth();
+
+        let proposal = dynamic_fees::get_revoke_proposal(&env, &business, &period)
+            .expect("no pending revocation proposal");
+
+        let grace_seconds = dynamic_fees::get_revoke_grace_seconds(&env);
+        let now = env.ledger().timestamp();
+        let earliest_commit = proposal.proposed_at.saturating_add(grace_seconds);
+        assert!(
+            now >= earliest_commit,
+            "grace window has not elapsed"
+        );
+
+        // Guard against the edge case where an emergency revoke happened while
+        // the proposal was pending.
+        assert!(
+            !dispute::is_attestation_revoked(&env, &business, &period),
+            "attestation already revoked"
+        );
+
+        // Consume the proposal before writing the revocation record to prevent
+        // any re-entrancy concerns in future upgrades.
+        dynamic_fees::remove_revoke_proposal(&env, &business, &period);
+
+        let committed_at = now;
+        let revocation: RevocationData = (
+            proposal.proposer.clone(),
+            committed_at,
+            proposal.reason.clone(),
+        );
+        dispute::record_revocation(&env, &business, &period, &revocation);
+
+        events::emit_revocation_committed(
+            &env,
+            &business,
+            &period,
+            &proposal.proposer,
+            &committed_by,
+            committed_at,
+            &proposal.reason,
+        );
+
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+    }
+
+    /// Cancel a pending revocation proposal within the grace window.
+    ///
+    /// This is the on-chain appeal mechanism: the business (or an admin) calls
+    /// this function before the grace window elapses to block the revocation.
+    /// After a successful cancellation the attestation remains active and the
+    /// proposal is removed — a fresh `propose_revoke` call is required to
+    /// restart the process.
+    ///
+    /// # Parameters
+    /// - `caller`   — must be the business owner or hold the ADMIN role
+    /// - `business` — business whose attestation is protected
+    /// - `period`   — period string identifying the attestation
+    ///
+    /// # Panics
+    /// - Contract is paused
+    /// - No pending proposal for (business, period)
+    /// - The grace window has already elapsed (commit window is open)
+    /// - Caller is neither the business owner nor an admin
+    pub fn cancel_revoke_proposal(
+        env: Env,
+        caller: Address,
+        business: Address,
+        period: String,
+    ) {
+        access_control::require_not_paused(&env);
+        caller.require_auth();
+
+        let proposal = dynamic_fees::get_revoke_proposal(&env, &business, &period)
+            .expect("no pending revocation proposal");
+
+        // Role / ownership check.
+        let caller_is_admin = caller == dynamic_fees::get_admin(&env)
+            || access_control::has_role(&env, &caller, ROLE_ADMIN);
+        assert!(
+            caller_is_admin || caller == business,
+            "caller must be ADMIN or the business owner"
+        );
+
+        // Cancellation is only meaningful while the grace window is open.
+        // Once the window has elapsed the commit path is unlocked and cancelling
+        // would be a no-op that misleads callers.
+        let grace_seconds = dynamic_fees::get_revoke_grace_seconds(&env);
+        let now = env.ledger().timestamp();
+        let earliest_commit = proposal.proposed_at.saturating_add(grace_seconds);
+        assert!(
+            now < earliest_commit,
+            "grace window has elapsed; use commit_revoke instead"
+        );
+
+        dynamic_fees::remove_revoke_proposal(&env, &business, &period);
+
+        events::emit_revocation_cancelled(&env, &business, &period, &caller);
     }
 
     pub fn get_revocation_sequence(env: Env) -> u64 {
@@ -1992,6 +2551,8 @@ mod fee_reconciliation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod fees_test;
 #[cfg(test)]
+mod fuzz_volume_brackets_test;
+#[cfg(test)]
 mod gas_benchmark_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod key_rotation_test;
@@ -2003,6 +2564,8 @@ mod multisig_e2e_test;
 mod multisig_test;
 #[cfg(test)]
 mod pause_test;
+#[cfg(test)]
+mod timelock_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod proof_hash_test;
 #[cfg(all(test, feature = "full-tests"))]
@@ -2031,5 +2594,5 @@ mod ttl_test;
 mod verify_attestation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod verify_attestations_batch_test;
-#[cfg(test)]
-mod archival_tier_test;
+#[cfg(all(test, feature = "full-tests"))]
+mod revoke_reason_test;
