@@ -26,6 +26,3 @@ pub mod merkle_test;
 
 #[cfg(test)]
 pub mod replay_protection_test;
-
-#[cfg(test)]
-pub mod security_invariant_test;

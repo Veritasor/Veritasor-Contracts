@@ -2589,3 +2589,5 @@ mod ttl_test;
 mod verify_attestation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod verify_attestations_batch_test;
+#[cfg(all(test, feature = "full-tests"))]
+mod security_invariant_test;
