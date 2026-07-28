@@ -1753,6 +1753,15 @@ impl AttestationContract {
         registry::get_status(&env, &business)
     }
 
+    /// Return one page from a caller-provided, stable period list.
+    ///
+    /// `cursor` is an index into `periods`, rather than a storage key. Use the
+    /// returned cursor with the same list (or an append-only extension of it):
+    /// inserts appended after the cursor do not invalidate earlier indices, and
+    /// deleted or expired attestations leave a gap that is consumed normally.
+    /// The cursor advances over gaps and filtered entries, preventing a filter
+    /// from stalling pagination. A cursor at or beyond `periods.len()` returns
+    /// an empty page unchanged. `limit` is capped at 30.
     pub fn get_attestations_page(
         env: Env,
         business: Address,

@@ -32,7 +32,10 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String, Vec};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    Address, BytesN, Env, String, Vec,
+};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -578,4 +581,342 @@ fn combined_range_and_version_filter_no_match_cursor_at_end() {
     );
     assert_eq!(out.len(), 0);
     assert_eq!(next, 5); // scanned all 5 periods
+}
+
+// ── Fuzz: pagination cursor stability ─────────────────────────────────────────
+//
+// ## What is tested
+//
+// A deterministic pseudo-random sequence of up to 50 operations (Insert,
+// DeleteExpired) is applied to the contract state. After *every* operation the full
+// `periods` list is walked page-by-page with `limit = 3` and the collected
+// results are compared against a ground-truth map maintained outside the
+// contract. The following invariants are checked on every walk:
+//
+//   1. **No duplicates** – each period string appears at most once.
+//   2. **No omissions**  – every period that is known to exist appears exactly
+//      once.
+//   3. **Correct status** – the status field matches the expected value.
+//   4. **Cursor terminates** – the walk always ends within `periods.len()` steps.
+//
+// A separate targeted test (`delete_at_cursor_edge_case`) exercises the most
+// dangerous corner case: deleting the expired attestation that sits exactly at
+// the current `cursor` position between two page fetches.
+//
+// ## Security notes
+//
+// - The `periods` Vec is caller-supplied and never stored by the contract. A
+//   cursor at or beyond its length performs no storage access and returns an
+//   empty page.
+// - Inserts append to the caller's stable period list. Existing cursor indices
+//   therefore retain their meaning after an insert.
+// - Expiring (and cleaning up) an attestation mid-walk causes that slot to
+//   become a "gap": the cursor skips it just like a period with no attestation.
+//   The walk remains duplicate-free and omits only the removed entry (which is
+//   also removed from the expected map before the assertion).
+// - The PRNG is seeded with a fixed constant so failures are fully reproducible
+//   in CI without external tooling.
+
+/// Minimal linear-congruential PRNG (Knuth constants) for deterministic fuzzing.
+/// Not cryptographically random — only used to drive test sequences.
+struct Lcg(u64);
+
+impl Lcg {
+    fn next(&mut self) -> u64 {
+        // Multiplier and addend from Knuth "The Art of Computer Programming" vol 2.
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        self.0
+    }
+
+    /// Return a value in `0..n`.
+    fn next_usize(&mut self, n: usize) -> usize {
+        if n == 0 {
+            return 0;
+        }
+        (self.next() as usize) % n
+    }
+}
+
+/// Operations the fuzzer can apply.
+#[derive(Debug)]
+enum FuzzOp {
+    /// Insert a brand-new period into the contract.
+    Insert,
+    /// Advance the ledger and remove a randomly chosen expired attestation.
+    DeleteExpired,
+}
+
+/// Convert a `soroban_sdk::String` to a `std::string::String` by copying bytes.
+fn soroban_str_to_std(s: &String) -> std::string::String {
+    const MAX: usize = 64;
+    let n = s.len() as usize;
+    assert!(n <= MAX, "period string too long for soroban_str_to_std");
+    let mut buf = [0u8; MAX];
+    s.copy_into_slice(&mut buf[..n]);
+    std::string::String::from_utf8(buf[..n].to_vec()).expect("period string is valid UTF-8")
+}
+
+/// Walk every page with `limit = 3` and return `(period_string, status)` pairs.
+///
+/// Panics if the cursor loops, goes backwards, or exceeds `periods.len()`.
+fn walk_all_pages(
+    client: &AttestationContractClient<'_>,
+    biz: &Address,
+    periods: &Vec<String>,
+) -> std::vec::Vec<(std::string::String, u32)> {
+    let mut collected = std::vec::Vec::new();
+    let mut cursor = 0u32;
+    let periods_len = periods.len();
+
+    loop {
+        let (page, next) = client.get_attestations_page(
+            biz,
+            periods,
+            &None,
+            &None,
+            &STATUS_FILTER_ALL,
+            &None,
+            &3,
+            &cursor,
+        );
+
+        for i in 0..page.len() {
+            let (p, _root, _ts, _ver, status) = page.get(i).unwrap();
+            let p_std = soroban_str_to_std(&p);
+            collected.push((p_std, status));
+        }
+
+        assert!(
+            next >= cursor,
+            "cursor must never go backwards: was {cursor}, now {next}"
+        );
+        assert!(
+            next <= periods_len,
+            "cursor exceeded periods.len(): {next} > {periods_len}"
+        );
+
+        if next >= periods_len || next == cursor {
+            break;
+        }
+        cursor = next;
+    }
+    collected
+}
+
+/// Core assertion: the observed multiset matches the expected map exactly.
+fn assert_walk_matches(
+    observed: &[(std::string::String, u32)],
+    expected: &std::collections::BTreeMap<std::string::String, u32>,
+    op_label: &str,
+) {
+    // 1. No duplicates.
+    let mut seen = std::collections::BTreeSet::new();
+    for (p, _) in observed {
+        assert!(
+            seen.insert(p.clone()),
+            "[{op_label}] duplicate period in walk: {p}"
+        );
+    }
+
+    // 2. Observed set == expected set.
+    let observed_map: std::collections::BTreeMap<std::string::String, u32> =
+        observed.iter().cloned().collect();
+
+    for (p, &exp_status) in expected {
+        let obs_status = observed_map.get(p).copied();
+        assert_eq!(
+            obs_status,
+            Some(exp_status),
+            "[{op_label}] period {p}: expected status {exp_status}, got {:?}",
+            obs_status
+        );
+    }
+
+    for (p, _) in &observed_map {
+        assert!(
+            expected.contains_key(p),
+            "[{op_label}] unexpected period in walk: {p}"
+        );
+    }
+}
+
+/// Fuzz pagination cursor stability over 50 random operations.
+///
+/// Seed: 0xDEAD_BEEF_1234_5678 — fixed so CI reproduces every failure.
+#[test]
+fn fuzz_pagination_cursor_stability() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    client.initialize(&Address::generate(&env), &0u64);
+
+    let biz = Address::generate(&env);
+
+    // Ground-truth: period_string -> status. This is deliberately maintained
+    // outside the contract, so the assertion does not reproduce contract state.
+    // Absent key means the period was never inserted or has been cleaned up.
+    let mut expected: std::collections::BTreeMap<std::string::String, u32> =
+        std::collections::BTreeMap::new();
+
+    // The `periods` Vec passed to the contract must contain every known period
+    // in a stable order (insertion order here) so cursor indices stay valid.
+    let mut periods: Vec<String> = Vec::new(&env);
+
+    // Separate lists to make random selection O(n) but predictable.
+    // (period, expiry timestamp) for records that can still be deleted.
+    let mut active_periods: std::vec::Vec<(std::string::String, u64)> = std::vec::Vec::new();
+
+    let mut prng = Lcg(0xDEAD_BEEF_1234_5678);
+    let mut ledger_ts: u64 = 1_000_000; // start well above zero
+    env.ledger().set_timestamp(ledger_ts);
+    let mut insert_counter: u32 = 0;
+
+    const OPS: usize = 50;
+
+    for op_idx in 0..OPS {
+        // Decide which operation to apply, biased toward Insert early on so
+        // there is always an attestation eligible for deletion.
+        let op = if active_periods.is_empty() || prng.next_usize(4) == 0 {
+            FuzzOp::Insert
+        } else {
+            match prng.next_usize(3) {
+                0 => FuzzOp::Insert,
+                _ => FuzzOp::DeleteExpired,
+            }
+        };
+
+        let op_label = std::format!("op#{op_idx} {op:?}");
+
+        match op {
+            FuzzOp::Insert => {
+                // Generate a unique period string using a monotonic counter.
+                insert_counter += 1;
+                let period_str = std::format!("2030-{:04}", insert_counter);
+                let p = String::from_str(&env, &period_str);
+                periods.push_back(p.clone());
+
+                let root_byte = (op_idx % 255 + 1) as u8;
+                let root = BytesN::from_array(&env, &[root_byte; 32]);
+
+                client.submit_attestation(
+                    &biz,
+                    &p,
+                    &root,
+                    &ledger_ts,
+                    &1u32,
+                    &0i128,
+                    &None,
+                    &Some(ledger_ts + 10),
+                );
+
+                expected.insert(period_str.clone(), STATUS_ACTIVE);
+                active_periods.push((period_str, ledger_ts + 10));
+            }
+
+            FuzzOp::DeleteExpired => {
+                // Pick a live record, advance past its expiry, and delete it.
+                let idx = prng.next_usize(active_periods.len());
+                let (period_str, expiry_ts) = active_periods.remove(idx);
+                let p = String::from_str(&env, &period_str);
+
+                ledger_ts = expiry_ts + 1;
+                env.ledger().set_timestamp(ledger_ts);
+                client.cleanup_expired_attestation(&biz, &biz, &p);
+                expected.remove(&period_str);
+                // The period remains in `periods` as a gap and must not be
+                // returned by a subsequent full walk.
+            }
+        }
+
+        // After each op: full paginated walk and assertion.
+        let observed = walk_all_pages(&client, &biz, &periods);
+        assert_walk_matches(&observed, &expected, &op_label);
+    }
+}
+
+/// Deleting the item at the cursor creates a gap but does not skip or repeat a
+/// later item. This models an expiry cleanup between two page requests.
+#[test]
+fn delete_at_cursor_edge_case() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    client.initialize(&Address::generate(&env), &0u64);
+
+    let biz = Address::generate(&env);
+    let mut periods: Vec<String> = Vec::new(&env);
+
+    env.ledger().set_timestamp(10);
+
+    // Insert 5 periods. Only C has a short expiry.
+    for i in 1u32..=5 {
+        let p = period(&env, i);
+        periods.push_back(p.clone());
+        client.submit_attestation(
+            &biz,
+            &p,
+            &BytesN::from_array(&env, &[i as u8; 32]),
+            &10u64,
+            &i,
+            &0i128,
+            &None,
+            &if i == 3 { Some(20u64) } else { None },
+        );
+    }
+
+    // Page 1: fetch the first two items.
+    let (page1, next1) = client.get_attestations_page(
+        &biz,
+        &periods,
+        &None,
+        &None,
+        &STATUS_FILTER_ALL,
+        &None,
+        &2,
+        &0,
+    );
+    assert_eq!(page1.len(), 2);
+    assert_eq!(page1.get(0).unwrap().0, period(&env, 1));
+    assert_eq!(page1.get(1).unwrap().0, period(&env, 2));
+    assert_eq!(next1, 2); // cursor now points at index 2 (period 3)
+
+    // ** Concurrent expiry cleanup of C — exactly at cursor index 2. **
+    env.ledger().set_timestamp(21);
+    client.cleanup_expired_attestation(&biz, &biz, &period(&env, 3));
+
+    // C is gone, so page 2 returns D and E, while consuming the C gap.
+    let (page2_all, next2_all) = client.get_attestations_page(
+        &biz,
+        &periods,
+        &None,
+        &None,
+        &STATUS_FILTER_ALL,
+        &None,
+        &2,
+        &next1,
+    );
+    assert_eq!(page2_all.len(), 2);
+    assert_eq!(page2_all.get(0).unwrap().0, period(&env, 4));
+    assert_eq!(page2_all.get(1).unwrap().0, period(&env, 5));
+    assert_eq!(next2_all, 5);
+
+    // A complete walk sees the four remaining records exactly once.
+    let full = walk_all_pages(&client, &biz, &periods);
+    assert_eq!(full.len(), 4);
+
+    let mut expected: std::collections::BTreeMap<std::string::String, u32> =
+        std::collections::BTreeMap::new();
+    for i in 1u32..=5 {
+        if i != 3 {
+            expected.insert(soroban_str_to_std(&period(&env, i)), STATUS_ACTIVE);
+        }
+    }
+    assert_walk_matches(&full, &expected, "delete_at_cursor_edge_case");
 }
