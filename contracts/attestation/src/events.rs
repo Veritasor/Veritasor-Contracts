@@ -27,6 +27,7 @@
 //! | `AttestationMigrated`       | `att_mig`      | `business`        |
 //! | `RoleGranted`               | `role_gr`      | `account`         |
 //! | `RoleRevoked`               | `role_rv`      | `account`         |
+//! | `AdminWeightChanged`        | `adm_wt`       | `account`         |
 //! | `ContractPaused`            | `paused`       | *(none)*          |
 //! | `ContractUnpaused`          | `unpaus`       | *(none)*          |
 //! | `FeeConfigChanged`          | `fee_cfg`      | *(none)*          |
@@ -102,6 +103,8 @@ pub const TOPIC_ATTESTATION_CLEANED_UP: Symbol = symbol_short!("att_cl");
 pub const TOPIC_ROLE_GRANTED: Symbol = symbol_short!("role_gr");
 /// Topic: role revoked from an address
 pub const TOPIC_ROLE_REVOKED: Symbol = symbol_short!("role_rv");
+/// Topic: admin voting weight changed
+pub const TOPIC_ADMIN_WEIGHT_CHANGED: Symbol = symbol_short!("adm_wt");
 /// Topic: contract paused
 pub const TOPIC_PAUSED: Symbol = symbol_short!("paused");
 /// Topic: contract unpaused
@@ -369,6 +372,24 @@ pub struct RoleChangedEvent {
     /// Role bitmap that was granted or revoked.
     pub role: u32,
     /// Address that authorized the change (must hold ADMIN role).
+    pub changed_by: Address,
+}
+
+/// Normalized payload for `AdminWeightChanged` events.
+///
+/// Emitted whenever `set_admin_weight` successfully updates the quorum weight
+/// of an admin member.  Both old and new weights are included so indexers can
+/// track the full weight history without needing to reconstruct prior state.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AdminWeightChangedEvent {
+    /// Admin address whose weight was changed.
+    pub account: Address,
+    /// Weight before the change.
+    pub old_weight: u32,
+    /// Weight after the change.
+    pub new_weight: u32,
+    /// Address that authorized the change (must hold ROLE_ADMIN).
     pub changed_by: Address,
 }
 
@@ -898,6 +919,40 @@ pub fn emit_role_revoked(env: &Env, account: &Address, role: u32, changed_by: &A
     };
     env.events()
         .publish((TOPIC_ROLE_REVOKED, account.clone()), event);
+}
+
+/// Emit an `AdminWeightChanged` event.
+///
+/// Called by `set_admin_weight` after the new weight has been written to
+/// storage.  Both old and new weights are included so indexers can reconstruct
+/// the full weight history.
+///
+/// # Arguments
+///
+/// * `env`        – Soroban execution environment.
+/// * `account`    – Admin address whose weight changed.
+/// * `old_weight` – Weight before the change.
+/// * `new_weight` – Weight after the change.
+/// * `changed_by` – Address that authorized the change (must hold ROLE_ADMIN).
+///
+/// # Events
+///
+/// Publishes `(adm_wt, account)` → `AdminWeightChangedEvent`.
+pub fn emit_admin_weight_changed(
+    env: &Env,
+    account: &Address,
+    old_weight: u32,
+    new_weight: u32,
+    changed_by: &Address,
+) {
+    let event = AdminWeightChangedEvent {
+        account: account.clone(),
+        old_weight,
+        new_weight,
+        changed_by: changed_by.clone(),
+    };
+    env.events()
+        .publish((TOPIC_ADMIN_WEIGHT_CHANGED, account.clone()), event);
 }
 
 // ── Pause / unpause ───────────────────────────────────────────────

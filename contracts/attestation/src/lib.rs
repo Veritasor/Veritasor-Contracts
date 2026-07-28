@@ -62,8 +62,8 @@ pub use dispute::{
 pub use dynamic_fees::{compute_fee, ArchivePointerRecord, DataKey, FeeConfig};
 pub use events::{
     AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
-    AttestationSubmittedEvent, PauseScheduledCancelledEvent, PauseScheduledEvent,
-    ProofHashUpdatedEvent, RevocationReason,
+    AttestationSubmittedEvent, PauseScheduledEvent, PauseScheduledCancelledEvent,
+    ProofHashUpdatedEvent, AdminWeightChangedEvent,
 };
 pub use fees::{collect_flat_fee, FlatFeeConfig};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus, VoteWeightSnapshot};
@@ -297,6 +297,43 @@ impl AttestationContract {
 
     pub fn has_role(env: Env, account: Address, role: u32) -> bool {
         access_control::has_role(&env, &account, role)
+    }
+
+    /// Set the voting weight for an admin member (1 ..= MAX_ADMIN_WEIGHT).
+    ///
+    /// Only an existing admin may call this function; the target `account` must
+    /// also hold `ROLE_ADMIN`.  Weight `0` is rejected — use `revoke_role` to
+    /// remove an admin from the quorum entirely.
+    ///
+    /// Emits `AdminWeightChanged` for an auditable on-chain trail.
+    ///
+    /// # Panics
+    ///
+    /// - `"admin weight cannot be zero"` when `weight == 0`.
+    /// - `"admin weight exceeds MAX_ADMIN_WEIGHT"` when `weight > 1_000`.
+    /// - `"account does not hold ROLE_ADMIN"` when `account` is not an admin.
+    /// - `"caller does not have ADMIN role"` when `caller` is not an admin.
+    pub fn set_admin_weight(env: Env, caller: Address, account: Address, weight: u32) {
+        access_control::require_admin(&env, &caller);
+        access_control::set_admin_weight(&env, &account, weight, &caller);
+    }
+
+    /// Return the current voting weight of an admin address.
+    ///
+    /// Returns `DEFAULT_ADMIN_WEIGHT` (= 1) for admins that have never had an
+    /// explicit weight set.  The return value is meaningful only for addresses
+    /// that currently hold `ROLE_ADMIN`.
+    pub fn get_admin_weight(env: Env, account: Address) -> u32 {
+        access_control::get_admin_weight(&env, &account)
+    }
+
+    /// Return the total quorum weight across all current admin members.
+    ///
+    /// This is the sum of `get_admin_weight` for every address that currently
+    /// holds `ROLE_ADMIN`.  Use this value to verify that a proposed weighted
+    /// threshold is reachable, or to compute percentage-based quorum fractions.
+    pub fn get_admin_quorum_weight(env: Env) -> u64 {
+        access_control::admin_quorum_weight(&env)
     }
 
     pub fn get_business_count(env: Env, business: Address) -> u64 {

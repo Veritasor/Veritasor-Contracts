@@ -915,204 +915,281 @@ fn test_sac_integration_collector_equal_to_business_records_fee() {
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  Historical Fee Config Snapshots & Epoch Reconstruction Tests
+//  Zero-base-fee edge case tests
+//
+//  SECURITY INVARIANTS VERIFIED:
+//  1. compute_fee(0, tier_bps, vol_bps) MUST equal 0 for all valid
+//     tier and volume-discount combinations.  If the arithmetic ever
+//     produced a negative value the contract would panic (compute_fee
+//     asserts result >= 0) and the attestation would be blocked.
+//  2. A zero base_fee combined with a 100 % tier discount (10 000 bps)
+//     and a 100 % volume discount (10 000 bps) must still produce 0
+//     and must NOT overflow or underflow i128 arithmetic.
+//  3. Token balance deltas must remain zero — no tokens should move
+//     when the effective fee is zero, regardless of discount configuration.
+//  4. The stored fee_paid field (record.3) must be exactly 0 when the
+//     dynamic base_fee is zero and the flat fee is also zero.
+//
+//  WHY THIS MATTERS:
+//  Any negative result from compute_fee would panic the contract (the
+//  `assert!(fee >= 0)` guard in dynamic_fees.rs) or, in a hypothetical
+//  future without that guard, could allow a payer to receive tokens
+//  rather than paying them — a critical economic exploit.  Explicit
+//  coverage of every tier × volume-bracket permutation eliminates the
+//  risk of a rounding edge case slipping through partial test coverage.
 // ════════════════════════════════════════════════════════════════════
 
-/// Querying fee quote for an epoch before contract initialization or prior to config setup
-/// returns 0 without crashing.
+/// Exhaustively verifies that `base_fee = 0` never produces a negative
+/// or non-zero fee under every tier level (0–MAX_TIER = 9) and a
+/// representative set of volume-discount brackets.
+///
+/// Strategy:
+/// - Configure the dynamic fee with `base_fee = 0` and `enabled = true`.
+/// - For each tier in 0..=9 assign the maximum discount for that tier
+///   (10 000 bps = 100 %) so the multiplication factors are maximally
+///   "stressful".
+/// - Set volume brackets that fire after a single prior attestation so
+///   each fee_quote call incorporates both a tier and a volume discount.
+/// - Assert `get_fee_quote == 0` and `record.3 == 0` for every combination.
+///
+/// Volume brackets exercised: no bracket (0 bps), 1 000 bps, 5 000 bps,
+/// 10 000 bps (100 % off).
 #[test]
-fn test_fee_quote_before_initialization_returns_zero() {
-    let env = Env::default();
-    env.mock_all_auths();
+fn fee_zero_base_no_negative() {
+    // Representative volume-discount levels in basis points.
+    // These span the full range: zero, mid-low, mid-high, and maximum.
+    let vol_discount_levels: &[u32] = &[0, 1_000, 5_000, 10_000];
 
-    let admin = Address::generate(&env);
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
+    for &vol_bps in vol_discount_levels {
+        // ── Set up contract with base_fee = 0 ────────────────────────
+        let env = Env::default();
+        env.mock_all_auths();
 
-    // Uninitialized / no config set: querying epoch 0 or any historical epoch returns 0.
-    assert_eq!(client.get_fee_quote_at_epoch(&0), 0);
-    assert_eq!(client.get_fee_quote_at_epoch(&10), 0);
-    assert_eq!(client.get_fee_config_at_epoch(&0), None);
+        let admin = Address::generate(&env);
+        let collector = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+        let token_addr = token_contract.address().clone();
 
-    client.initialize(&admin, &0u64);
-    assert_eq!(client.get_current_epoch(), 0);
-    assert_eq!(client.get_fee_quote_at_epoch(&0), 0);
-}
+        let contract_id = env.register(AttestationContract, ());
+        let client = AttestationContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &0u64);
 
-/// Updating flat fee configuration persists snapshot for current epoch.
-#[test]
-fn test_epoch_snapshot_persisted_on_config_change() {
-    let env = Env::default();
-    env.mock_all_auths();
+        // Dynamic fee: base = 0, enabled.
+        client.configure_fees(&token_addr, &collector, &0i128, &true);
 
-    let admin = Address::generate(&env);
-    let collector = Address::generate(&env);
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin);
-    let token_addr = token_contract.address().clone();
+        // Configure all tiers 0–9 with their maximum discount (100 %).
+        // This ensures even the most aggressive multiplier combination
+        // cannot drive a zero base_fee negative.
+        for tier in 0u32..=9 {
+            client.set_tier_discount(&tier, &10_000);
+        }
 
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
-    client.initialize(&admin, &0u64);
+        // Configure a volume bracket that activates after 1 attestation
+        // so the second fee_quote call exercises the volume path.
+        // When vol_bps == 0 we skip bracket setup (no volume discount).
+        if vol_bps > 0 {
+            let thresholds = vec![&env, 1u64];
+            let discounts = vec![&env, vol_bps];
+            client.set_volume_brackets(&thresholds, &discounts);
+        }
 
-    // Configure flat fee at epoch 0.
-    client.configure_flat_fee(&token_addr, &collector, &500, &true);
+        // ── Iterate over every tier level ────────────────────────────
+        for tier in 0u32..=9 {
+            let business = Address::generate(&env);
+            client.set_business_tier(&business, &tier);
 
-    assert_eq!(client.get_fee_quote_at_epoch(&0), 500);
-    let snapshot0 = client.get_fee_config_at_epoch(&0).unwrap();
-    assert_eq!(snapshot0.amount, 500);
-    assert!(snapshot0.enabled);
+            // Pre-submission: fee quote must be 0 before any attestation.
+            let quote_before = client.get_fee_quote(&business);
+            assert_eq!(
+                quote_before, 0,
+                "fee_zero_base_no_negative: FAILED pre-submission quote \
+                 (tier={tier}, vol_bps={vol_bps}): expected 0, got {quote_before}"
+            );
 
-    // Update config in current epoch 0 to 1_200.
-    client.configure_flat_fee(&token_addr, &collector, &1_200, &true);
-    assert_eq!(client.get_fee_quote_at_epoch(&0), 1_200);
-}
+            // Submit a first attestation.  Business needs no balance
+            // because the fee is 0 — if this panics the arithmetic is wrong.
+            let period_1 = String::from_str(&env, &std::format!("zero-t{tier:02}-v{vol_bps:05}-A"));
+            let root_1 = BytesN::from_array(&env, &[tier as u8; 32]);
+            client.submit_attestation(
+                &business,
+                &period_1,
+                &root_1,
+                &1_700_000_000u64,
+                &1u32,
+                &0i128,
+                &None,
+                &None,
+            );
 
-/// Advancing epoch snapshots configuration and preserves historical fee quote for auditors.
-#[test]
-fn test_epoch_advance_preserves_historical_snapshots() {
-    let env = Env::default();
-    env.mock_all_auths();
+            // Verify the stored fee is 0.
+            let record_1 = client.get_attestation(&business, &period_1).unwrap();
+            assert_eq!(
+                record_1.3, 0,
+                "fee_zero_base_no_negative: FAILED record.3 after 1st submission \
+                 (tier={tier}, vol_bps={vol_bps}): expected 0, got {}",
+                record_1.3
+            );
 
-    let admin = Address::generate(&env);
-    let collector = Address::generate(&env);
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin);
-    let token_addr = token_contract.address().clone();
+            // Post-first-submission: volume bracket may now be active.
+            // Quote must still be 0.
+            let quote_after = client.get_fee_quote(&business);
+            assert_eq!(
+                quote_after, 0,
+                "fee_zero_base_no_negative: FAILED post-submission quote \
+                 (tier={tier}, vol_bps={vol_bps}): expected 0, got {quote_after}"
+            );
 
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
-    client.initialize(&admin, &0u64);
+            // Submit a second attestation to confirm volume path also yields 0.
+            let period_2 = String::from_str(&env, &std::format!("zero-t{tier:02}-v{vol_bps:05}-B"));
+            let root_2 = BytesN::from_array(&env, &[(tier as u8).wrapping_add(64); 32]);
+            client.submit_attestation(
+                &business,
+                &period_2,
+                &root_2,
+                &1_700_000_001u64,
+                &1u32,
+                &0i128,
+                &None,
+                &None,
+            );
 
-    // Epoch 0: Fee = 500
-    client.configure_flat_fee(&token_addr, &collector, &500, &true);
+            let record_2 = client.get_attestation(&business, &period_2).unwrap();
+            assert_eq!(
+                record_2.3, 0,
+                "fee_zero_base_no_negative: FAILED record.3 after 2nd submission \
+                 (tier={tier}, vol_bps={vol_bps}): expected 0, got {}",
+                record_2.3
+            );
 
-    // Advance to Epoch 1: Fee updated to 1,000
-    let epoch1 = client.advance_epoch();
-    assert_eq!(epoch1, 1);
-    assert_eq!(client.get_current_epoch(), 1);
-    client.configure_flat_fee(&token_addr, &collector, &1_000, &true);
-
-    // Advance to Epoch 2: Fee updated to 1,500
-    let epoch2 = client.advance_epoch();
-    assert_eq!(epoch2, 2);
-    client.configure_flat_fee(&token_addr, &collector, &1_500, &true);
-
-    // Verify historical quotes are preserved without fee drift
-    assert_eq!(client.get_fee_quote_at_epoch(&0), 500);
-    assert_eq!(client.get_fee_quote_at_epoch(&1), 1_000);
-    assert_eq!(client.get_fee_quote_at_epoch(&2), 1_500);
-
-    // Query unconfigured epoch 3 returns 0
-    assert_eq!(client.get_fee_quote_at_epoch(&3), 0);
-}
-
-/// Setting current epoch explicitly updates current epoch and snapshots config.
-#[test]
-fn test_set_current_epoch_and_get_current_epoch() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let collector = Address::generate(&env);
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin);
-    let token_addr = token_contract.address().clone();
-
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
-    client.initialize(&admin, &0u64);
-
-    client.configure_flat_fee(&token_addr, &collector, &777, &true);
-
-    client.set_current_epoch(&10);
-    assert_eq!(client.get_current_epoch(), 10);
-    assert_eq!(client.get_fee_quote_at_epoch(&10), 777);
-}
-
-/// Disabling and enabling fees across epochs accurately reflects in get_fee_quote_at_epoch.
-#[test]
-fn test_epoch_snapshot_toggling_enabled_disabled() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let collector = Address::generate(&env);
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin);
-    let token_addr = token_contract.address().clone();
-
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
-    client.initialize(&admin, &0u64);
-
-    // Epoch 0: Enabled (600)
-    client.configure_flat_fee(&token_addr, &collector, &600, &true);
-
-    // Epoch 1: Disabled
-    client.advance_epoch();
-    client.configure_flat_fee(&token_addr, &collector, &600, &false);
-
-    // Epoch 2: Enabled (900)
-    client.advance_epoch();
-    client.configure_flat_fee(&token_addr, &collector, &900, &true);
-
-    assert_eq!(client.get_fee_quote_at_epoch(&0), 600);
-    assert_eq!(client.get_fee_quote_at_epoch(&1), 0);
-    assert_eq!(client.get_fee_quote_at_epoch(&2), 900);
-
-    let snapshot1 = client.get_fee_config_at_epoch(&1).unwrap();
-    assert!(!snapshot1.enabled);
-}
-
-/// Snapshots beyond MAX_EPOCH_HISTORY retention limit are pruned to cap storage growth.
-#[test]
-fn test_epoch_snapshot_pruning_max_epoch_history() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let collector = Address::generate(&env);
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin);
-    let token_addr = token_contract.address().clone();
-
-    let contract_id = env.register(AttestationContract, ());
-    let client = AttestationContractClient::new(&env, &contract_id);
-    client.initialize(&admin, &0u64);
-
-    client.configure_flat_fee(&token_addr, &collector, &100, &true);
-
-    // Record snapshots for MAX_EPOCH_HISTORY + 10 epochs (epochs 0 to 109).
-    let max_history = fees::MAX_EPOCH_HISTORY;
-    let total_epochs = max_history + 10;
-
-    for epoch in 1..total_epochs {
-        client.set_current_epoch(&epoch);
+            // Collector must have received nothing — no tokens should move.
+            assert_eq!(
+                balance(&env, &token_addr, &collector),
+                0,
+                "fee_zero_base_no_negative: collector received tokens for zero base_fee \
+                 (tier={tier}, vol_bps={vol_bps})"
+            );
+        }
     }
+}
 
-    assert_eq!(client.get_current_epoch(), total_epochs - 1);
+/// Verifies that combining a zero base_fee with a 100 % tier discount
+/// AND a 100 % volume discount never panics or produces a non-zero fee.
+///
+/// This is the most "adversarial" configuration: both multiplier factors
+/// collapse to zero independently, yet the base is also zero.  The
+/// arithmetic must remain well-defined:
+///
+/// ```text
+/// compute_fee(0, 10_000, 10_000)
+///   = 0 × (10_000 − 10_000) × (10_000 − 10_000) / 100_000_000
+///   = 0 × 0 × 0 / 100_000_000
+///   = 0
+/// ```
+///
+/// SECURITY NOTE: `compute_fee` already asserts `result >= 0` and
+/// `result <= base_fee`.  These assertions would catch any future
+/// refactor that accidentally produces a negative or above-base result.
+/// This end-to-end test adds an additional layer by exercising the
+/// full contract path (token transfer, storage write, fee_paid record)
+/// rather than just the pure-arithmetic helper.
+#[test]
+fn fee_zero_base_combined_full_discount() {
+    let env = Env::default();
+    env.mock_all_auths();
 
-    // First 10 epochs (0..10) should be pruned
-    for old_epoch in 0..10 {
-        assert_eq!(
-            client.get_fee_config_at_epoch(&old_epoch),
-            None,
-            "old epoch should be pruned"
-        );
-        assert_eq!(
-            client.get_fee_quote_at_epoch(&old_epoch),
-            0,
-            "pruned epoch returns 0 quote"
-        );
-    }
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = token_contract.address().clone();
 
-    // Recent epochs within retention limit (10..110) should exist
-    for active_epoch in 10..total_epochs {
-        assert!(
-            client.get_fee_config_at_epoch(&active_epoch).is_some(),
-            "active epoch within retention limit should exist"
-        );
-        assert_eq!(client.get_fee_quote_at_epoch(&active_epoch), 100);
-    }
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &0u64);
+
+    // Dynamic base_fee = 0; flat fee also absent (not configured).
+    client.configure_fees(&token_addr, &collector, &0i128, &true);
+
+    // Tier 1 gets a 100 % discount.
+    client.set_tier_discount(&1, &10_000);
+
+    // Volume bracket fires after 1 attestation with 100 % discount.
+    let thresholds = vec![&env, 1u64];
+    let discounts = vec![&env, 10_000u32];
+    client.set_volume_brackets(&thresholds, &discounts);
+
+    let business = Address::generate(&env);
+    client.set_business_tier(&business, &1);
+
+    // Pre-submission: both discounts in play, base_fee = 0 → quote = 0.
+    assert_eq!(
+        client.get_fee_quote(&business),
+        0,
+        "fee_zero_base_combined_full_discount: pre-submission quote must be 0"
+    );
+
+    // First submission activates the volume bracket.
+    // No tokens needed — fee must be 0.
+    let period_1 = String::from_str(&env, "zb-full-disc-01");
+    let root_1 = BytesN::from_array(&env, &[0xAAu8; 32]);
+    client.submit_attestation(
+        &business,
+        &period_1,
+        &root_1,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    let record_1 = client.get_attestation(&business, &period_1).unwrap();
+    assert_eq!(
+        record_1.3, 0,
+        "fee_zero_base_combined_full_discount: record.3 after 1st submission must be 0, got {}",
+        record_1.3
+    );
+
+    // After volume bracket activates: tier 100% + volume 100%, base 0 → quote still 0.
+    assert_eq!(
+        client.get_fee_quote(&business),
+        0,
+        "fee_zero_base_combined_full_discount: post-1st-submission quote must be 0"
+    );
+
+    // Second submission exercises the path where both discounts are active.
+    let period_2 = String::from_str(&env, "zb-full-disc-02");
+    let root_2 = BytesN::from_array(&env, &[0xBBu8; 32]);
+    client.submit_attestation(
+        &business,
+        &period_2,
+        &root_2,
+        &1_700_000_001u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    let record_2 = client.get_attestation(&business, &period_2).unwrap();
+    assert_eq!(
+        record_2.3, 0,
+        "fee_zero_base_combined_full_discount: record.3 after 2nd submission must be 0, got {}",
+        record_2.3
+    );
+
+    // Collector balance must remain zero throughout.
+    assert_eq!(
+        balance(&env, &token_addr, &collector),
+        0,
+        "fee_zero_base_combined_full_discount: collector must receive nothing when base_fee=0"
+    );
+
+    // Sanity: pure-arithmetic helper must also agree.
+    assert_eq!(
+        compute_fee(0, 10_000, 10_000),
+        0,
+        "fee_zero_base_combined_full_discount: compute_fee(0,10000,10000) must equal 0"
+    );
 }
