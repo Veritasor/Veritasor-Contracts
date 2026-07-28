@@ -1858,8 +1858,7 @@ impl AttestationContract {
         assert!(caller == pending.new_admin, "not new admin");
         veritasor_common::key_rotation::confirm_rotation(&env, &pending.new_admin);
         dynamic_fees::set_admin(&env, &pending.new_admin);
-        access_control::revoke_role(&env, &old_admin, ROLE_ADMIN, &caller);
-        access_control::grant_role(&env, &pending.new_admin, ROLE_ADMIN, &caller);
+        access_control::swap_admin_after_verified_rotation(&env, &old_admin, &pending.new_admin, &caller);
     }
 
     pub fn cancel_key_rotation(env: Env) {
@@ -2478,8 +2477,7 @@ impl AttestationContract {
                 let old_admin = dynamic_fees::get_admin(env);
                 veritasor_common::key_rotation::emergency_rotate(env, &old_admin, new_admin);
                 dynamic_fees::set_admin(env, new_admin);
-                access_control::revoke_role(env, &old_admin, ROLE_ADMIN, executor);
-                access_control::grant_role(env, new_admin, ROLE_ADMIN, executor);
+                access_control::swap_admin(env, &old_admin, new_admin, executor);
                 events::emit_key_rotation_emergency(env, &old_admin, new_admin);
             }
         }
