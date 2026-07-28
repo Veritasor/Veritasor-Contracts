@@ -12,10 +12,6 @@ doctest = false
 [dependencies]
 soroban-sdk = { workspace = true }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# Host builds (tests): use crate client. wasm32 uses contractimport! to avoid duplicate symbols.
-veritasor-attestation = { path = "../attestation" }
-
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
 veritasor-attestation = { path = "../attestation" }
