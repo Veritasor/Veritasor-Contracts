@@ -1523,6 +1523,7 @@ impl AttestationContract {
         new_proof_hash: Option<BytesN<32>>,
     ) {
         access_control::require_admin(&env, &caller);
+        Self::validate_proof_hash(&new_proof_hash);
 
         let key = DataKey::Attestation(business.clone(), period.clone());
         let (merkle_root, timestamp, version, fee, old_proof_hash, expiry): AttestationData = env
