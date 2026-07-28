@@ -13,7 +13,6 @@ soroban-sdk = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
-veritasor-attestation = { path = "../attestation" }
 veritasor-lender-access-list = { path = "../lender-access-list" }
 
 [profile.release]
