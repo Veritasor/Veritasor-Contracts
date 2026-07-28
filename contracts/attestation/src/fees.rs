@@ -127,7 +127,8 @@ pub fn collect_flat_fee(env: &Env, payer: &Address) -> i128 {
     config.amount
 }
 
-/// Retrieve the current epoch number. Defaults to 0 if unset.
+/// Returns the current epoch number.
+/// If no epoch has been initialized, returns `0`.
 pub fn get_current_epoch(env: &Env) -> u64 {
     env.storage()
         .instance()
@@ -143,8 +144,8 @@ pub fn set_current_epoch(env: &Env, epoch: u64) {
     persist_epoch_snapshot_for(env, epoch);
 }
 
-/// Advance to the next epoch and persist snapshot for the new epoch.
-/// Returns the new epoch number.
+/// Advances the current epoch by one, persists the fee snapshot for the
+/// new epoch, and returns the updated epoch number.
 pub fn advance_epoch(env: &Env) -> u64 {
     let next_epoch = get_current_epoch(env) + 1;
     set_current_epoch(env, next_epoch);
