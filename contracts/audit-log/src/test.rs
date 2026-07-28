@@ -552,9 +552,9 @@ fn test_log_correlation_identifiers_unique() {
     let unique: std::vec::Vec<u64> = seqs.to_vec();
     assert_eq!(unique.len(), 5);
 
-    for i in 0..unique.len() {
-        let record = client.get_entry(&unique[i]).unwrap();
-        assert_eq!(record.seq, unique[i]);
+    for &seq in &unique {
+        let record = client.get_entry(&seq).unwrap();
+        assert_eq!(record.seq, seq);
     }
 }
 

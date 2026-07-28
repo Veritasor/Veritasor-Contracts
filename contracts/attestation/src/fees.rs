@@ -3,6 +3,12 @@
 //! This module implements a flat fee mechanism for the Veritasor attestation protocol.
 //! Fees are collected in a specified token and sent to a collector address.
 //!
+//! ## Historical Reconstruction and Per-Epoch Snapshots
+//! - Per-epoch snapshots of the effective fee configuration are persisted on config change
+//!   and on epoch advance.
+//! - Queries for `get_fee_quote_at_epoch` retrieve the fee amount that actually applied at that time.
+//! - Historical snapshots are capped at `MAX_EPOCH_HISTORY` retention entries to prevent unbounded storage growth.
+//!
 //! ## Invariants
 //! - If `enabled` is true and `amount > 0`, fee collection is mandatory.
 //! - Insufficient balance will cause the transaction to panic, preventing
@@ -10,6 +16,9 @@
 //! - DAO configuration overrides local contract configuration if set.
 
 use soroban_sdk::{contracttype, token, Address, Env, Symbol, Val, Vec};
+
+/// Maximum retention cap for per-epoch fee configuration history snapshots.
+pub const MAX_EPOCH_HISTORY: u64 = 100;
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -31,6 +40,12 @@ pub enum FlatFeeDataKey {
     FlatFeeConfig,
     /// Protocol DAO contract address controlling fee configuration.
     Dao,
+    /// Current epoch tracker (`u64`).
+    CurrentEpoch,
+    /// Per-epoch snapshot of effective `FlatFeeConfig` (`u64`).
+    EpochSnapshot(u64),
+    /// List of tracked snapshot epoch numbers for retention pruning (`Vec<u64>`).
+    EpochHistory,
 }
 
 /// Retrieve the current flat fee configuration from instance storage.
@@ -38,16 +53,18 @@ pub fn get_flat_fee_config(env: &Env) -> Option<FlatFeeConfig> {
     env.storage().instance().get(&FlatFeeDataKey::FlatFeeConfig)
 }
 
-/// Store a new flat fee configuration in instance storage.
+/// Store a new flat fee configuration in instance storage and persist snapshot for current epoch.
 pub fn set_flat_fee_config(env: &Env, config: &FlatFeeConfig) {
     env.storage()
         .instance()
         .set(&FlatFeeDataKey::FlatFeeConfig, config);
+    persist_epoch_snapshot(env);
 }
 
-/// Set the Protocol DAO contract address.
+/// Set the Protocol DAO contract address and persist snapshot for current epoch.
 pub fn set_dao(env: &Env, dao: &Address) {
     env.storage().instance().set(&FlatFeeDataKey::Dao, dao);
+    persist_epoch_snapshot(env);
 }
 
 /// Get the Protocol DAO contract address if set.
@@ -108,4 +125,97 @@ pub fn collect_flat_fee(env: &Env, payer: &Address) -> i128 {
     client.transfer(payer, &config.collector, &config.amount);
 
     config.amount
+}
+
+/// Returns the current epoch number.
+/// If no epoch has been initialized, returns `0`.
+pub fn get_current_epoch(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&FlatFeeDataKey::CurrentEpoch)
+        .unwrap_or(0)
+}
+
+/// Set the current epoch number and persist snapshot for that epoch.
+pub fn set_current_epoch(env: &Env, epoch: u64) {
+    env.storage()
+        .instance()
+        .set(&FlatFeeDataKey::CurrentEpoch, &epoch);
+    persist_epoch_snapshot_for(env, epoch);
+}
+
+/// Advances the current epoch by one, persists the fee snapshot for the
+/// new epoch, and returns the updated epoch number.
+pub fn advance_epoch(env: &Env) -> u64 {
+    let next_epoch = get_current_epoch(env) + 1;
+    set_current_epoch(env, next_epoch);
+    next_epoch
+}
+
+/// Retrieve the fee config snapshot for a specific historical epoch.
+pub fn get_fee_config_at_epoch(env: &Env, epoch: u64) -> Option<FlatFeeConfig> {
+    env.storage()
+        .instance()
+        .get(&FlatFeeDataKey::EpochSnapshot(epoch))
+}
+
+/// Retrieve the fee quote that applied at a historical epoch.
+///
+/// Returns 0 for disabled/unconfigured fees or epochs before contract initialization / pruned beyond `MAX_EPOCH_HISTORY`.
+pub fn get_fee_quote_at_epoch(env: &Env, epoch: u64) -> i128 {
+    match get_fee_config_at_epoch(env, epoch) {
+        Some(config) if config.enabled => config.amount,
+        _ => 0,
+    }
+}
+
+/// Persist an effective fee config snapshot for the current epoch.
+pub fn persist_epoch_snapshot(env: &Env) {
+    let epoch = get_current_epoch(env);
+    persist_epoch_snapshot_for(env, epoch);
+}
+
+/// Persist snapshot for a specified epoch and prune expired history beyond `MAX_EPOCH_HISTORY`.
+pub fn persist_epoch_snapshot_for(env: &Env, epoch: u64) {
+    let config = match get_effective_flat_fee_config(env) {
+        Some(c) => c,
+        None => return,
+    };
+
+    env.storage()
+        .instance()
+        .set(&FlatFeeDataKey::EpochSnapshot(epoch), &config);
+
+    let mut history: Vec<u64> = env
+        .storage()
+        .instance()
+        .get(&FlatFeeDataKey::EpochHistory)
+        .unwrap_or_else(|| Vec::new(env));
+
+    let mut exists = false;
+    for i in 0..history.len() {
+        if history.get(i).unwrap() == epoch {
+            exists = true;
+            break;
+        }
+    }
+
+    if !exists {
+        history.push_back(epoch);
+    }
+
+    while (history.len() as u64) > MAX_EPOCH_HISTORY {
+        if let Some(oldest_epoch) = history.get(0) {
+            env.storage()
+                .instance()
+                .remove(&FlatFeeDataKey::EpochSnapshot(oldest_epoch));
+            history.remove(0);
+        } else {
+            break;
+        }
+    }
+
+    env.storage()
+        .instance()
+        .set(&FlatFeeDataKey::EpochHistory, &history);
 }

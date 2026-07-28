@@ -20,7 +20,7 @@ use soroban_sdk::{Address, Env};
 fn setup() -> (Env, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register_contract(None, DummyContract);
+    let contract_id = env.register(DummyContract, ());
     (env, contract_id)
 }
 
