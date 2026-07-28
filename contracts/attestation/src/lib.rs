@@ -59,9 +59,11 @@ pub use dispute::{
     Dispute, DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType, OptionalResolution,
 };
 pub use dynamic_fees::{compute_fee, DataKey, FeeConfig};
+pub use dynamic_fees::{RevokeProposal, DEFAULT_REVOKE_GRACE_SECONDS};
 pub use events::{
     AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
     AttestationSubmittedEvent, ProofHashUpdatedEvent,
+    RevocationCancelledEvent, RevocationCommittedEvent, RevocationProposedEvent,
 };
 pub use fees::{collect_flat_fee, FlatFeeConfig};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
@@ -1411,6 +1413,242 @@ impl AttestationContract {
     /// so callers do not need to go through the dispute module directly.
     pub fn is_revoked(env: Env, business: Address, period: String) -> bool {
         dispute::is_attestation_revoked(&env, &business, &period)
+    }
+
+    // ── Time-locked revocation (grace-window appeal path) ──────────────
+
+    /// Admin: configure the appeal grace window duration.
+    ///
+    /// During the grace window after a `propose_revoke` call the business (or
+    /// an admin) may call `cancel_revoke_proposal` to block the revocation.
+    /// After the window elapses, anyone may call `commit_revoke` to finalise it.
+    ///
+    /// Setting `seconds` to `0` disables the grace window entirely (commit is
+    /// immediately allowed after proposal).
+    ///
+    /// # Panics
+    /// - Caller does not hold the ADMIN role.
+    pub fn set_revoke_grace_seconds(env: Env, caller: Address, seconds: u64) {
+        access_control::require_admin(&env, &caller);
+        dynamic_fees::set_revoke_grace_seconds(&env, seconds);
+    }
+
+    /// Return the currently configured appeal grace window in seconds.
+    ///
+    /// Defaults to [`DEFAULT_REVOKE_GRACE_SECONDS`] (86 400 s = 24 h) when the
+    /// admin has not explicitly called `set_revoke_grace_seconds`.
+    pub fn get_revoke_grace_seconds(env: Env) -> u64 {
+        dynamic_fees::get_revoke_grace_seconds(&env)
+    }
+
+    /// Return the pending revocation proposal for (business, period), if any.
+    pub fn get_revoke_proposal(env: Env, business: Address, period: String) -> Option<RevokeProposal> {
+        dynamic_fees::get_revoke_proposal(&env, &business, &period)
+    }
+
+    /// Propose a time-locked revocation.
+    ///
+    /// Registers a pending revocation proposal and starts the appeal grace window.
+    /// During the grace window, the business (or an admin) can call
+    /// [`Self::cancel_revoke_proposal`] to block the revocation.  After the
+    /// window elapses, anyone can call [`Self::commit_revoke`] to finalise it.
+    ///
+    /// This path is intended for **non-emergency** revocations where the business
+    /// should have a chance to appeal.  For an immediate, admin-only revocation
+    /// (no grace window), use [`Self::revoke_attestation`].
+    ///
+    /// # Parameters
+    /// - `caller`   — must be the business owner or hold the ADMIN role
+    /// - `business` — business whose attestation is targeted
+    /// - `period`   — period string identifying the attestation
+    /// - `reason`   — human-readable revocation reason stored on-chain
+    ///
+    /// # Panics
+    /// - Contract is paused
+    /// - Attestation does not exist
+    /// - Attestation is already revoked
+    /// - A proposal for this (business, period) is already pending
+    /// - Caller is neither the business owner nor an admin
+    pub fn propose_revoke(
+        env: Env,
+        caller: Address,
+        business: Address,
+        period: String,
+        reason: String,
+    ) {
+        // Pause check and auth first (same order as require_revocation_authorized).
+        access_control::require_not_paused(&env);
+        caller.require_auth();
+
+        // Attestation must exist.
+        let attestation_key = DataKey::Attestation(business.clone(), period.clone());
+        assert!(
+            env.storage().instance().has(&attestation_key),
+            "attestation not found"
+        );
+
+        // Already revoked — nothing to propose.
+        assert!(
+            !dispute::is_attestation_revoked(&env, &business, &period),
+            "attestation already revoked"
+        );
+
+        // Prevent duplicate proposals.
+        assert!(
+            dynamic_fees::get_revoke_proposal(&env, &business, &period).is_none(),
+            "revocation already proposed"
+        );
+
+        // Role / ownership check.
+        let caller_is_admin = caller == dynamic_fees::get_admin(&env)
+            || access_control::has_role(&env, &caller, ROLE_ADMIN);
+        assert!(
+            caller_is_admin || caller == business,
+            "caller must be ADMIN or the business owner"
+        );
+
+        let proposed_at = env.ledger().timestamp();
+        let grace_seconds = dynamic_fees::get_revoke_grace_seconds(&env);
+
+        let proposal = RevokeProposal {
+            proposer: caller.clone(),
+            proposed_at,
+            reason: reason.clone(),
+        };
+        dynamic_fees::store_revoke_proposal(&env, &business, &period, &proposal);
+
+        events::emit_revocation_proposed(
+            &env,
+            &business,
+            &period,
+            &caller,
+            proposed_at,
+            grace_seconds,
+            &reason,
+        );
+
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+    }
+
+    /// Finalise a pending revocation after the grace window has elapsed.
+    ///
+    /// Any caller may invoke this once the appeal window has passed.  The
+    /// proposal is consumed and the revocation is written atomically via the
+    /// same [`dispute::record_revocation`] path used by the emergency route.
+    ///
+    /// # Parameters
+    /// - `committed_by` — any address; does NOT need to be the original proposer
+    /// - `business`     — business whose attestation is being revoked
+    /// - `period`       — period string identifying the attestation
+    ///
+    /// # Panics
+    /// - Contract is paused
+    /// - No pending proposal for (business, period)
+    /// - Grace window has not yet elapsed
+    /// - Attestation already revoked (proposal lingered after an emergency revoke)
+    pub fn commit_revoke(env: Env, committed_by: Address, business: Address, period: String) {
+        access_control::require_not_paused(&env);
+        committed_by.require_auth();
+
+        let proposal = dynamic_fees::get_revoke_proposal(&env, &business, &period)
+            .expect("no pending revocation proposal");
+
+        let grace_seconds = dynamic_fees::get_revoke_grace_seconds(&env);
+        let now = env.ledger().timestamp();
+        let earliest_commit = proposal.proposed_at.saturating_add(grace_seconds);
+        assert!(
+            now >= earliest_commit,
+            "grace window has not elapsed"
+        );
+
+        // Guard against the edge case where an emergency revoke happened while
+        // the proposal was pending.
+        assert!(
+            !dispute::is_attestation_revoked(&env, &business, &period),
+            "attestation already revoked"
+        );
+
+        // Consume the proposal before writing the revocation record to prevent
+        // any re-entrancy concerns in future upgrades.
+        dynamic_fees::remove_revoke_proposal(&env, &business, &period);
+
+        let committed_at = now;
+        let revocation: RevocationData = (
+            proposal.proposer.clone(),
+            committed_at,
+            proposal.reason.clone(),
+        );
+        dispute::record_revocation(&env, &business, &period, &revocation);
+
+        events::emit_revocation_committed(
+            &env,
+            &business,
+            &period,
+            &proposal.proposer,
+            &committed_by,
+            committed_at,
+            &proposal.reason,
+        );
+
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+    }
+
+    /// Cancel a pending revocation proposal within the grace window.
+    ///
+    /// This is the on-chain appeal mechanism: the business (or an admin) calls
+    /// this function before the grace window elapses to block the revocation.
+    /// After a successful cancellation the attestation remains active and the
+    /// proposal is removed — a fresh `propose_revoke` call is required to
+    /// restart the process.
+    ///
+    /// # Parameters
+    /// - `caller`   — must be the business owner or hold the ADMIN role
+    /// - `business` — business whose attestation is protected
+    /// - `period`   — period string identifying the attestation
+    ///
+    /// # Panics
+    /// - Contract is paused
+    /// - No pending proposal for (business, period)
+    /// - The grace window has already elapsed (commit window is open)
+    /// - Caller is neither the business owner nor an admin
+    pub fn cancel_revoke_proposal(
+        env: Env,
+        caller: Address,
+        business: Address,
+        period: String,
+    ) {
+        access_control::require_not_paused(&env);
+        caller.require_auth();
+
+        let proposal = dynamic_fees::get_revoke_proposal(&env, &business, &period)
+            .expect("no pending revocation proposal");
+
+        // Role / ownership check.
+        let caller_is_admin = caller == dynamic_fees::get_admin(&env)
+            || access_control::has_role(&env, &caller, ROLE_ADMIN);
+        assert!(
+            caller_is_admin || caller == business,
+            "caller must be ADMIN or the business owner"
+        );
+
+        // Cancellation is only meaningful while the grace window is open.
+        // Once the window has elapsed the commit path is unlocked and cancelling
+        // would be a no-op that misleads callers.
+        let grace_seconds = dynamic_fees::get_revoke_grace_seconds(&env);
+        let now = env.ledger().timestamp();
+        let earliest_commit = proposal.proposed_at.saturating_add(grace_seconds);
+        assert!(
+            now < earliest_commit,
+            "grace window has elapsed; use commit_revoke instead"
+        );
+
+        dynamic_fees::remove_revoke_proposal(&env, &business, &period);
+
+        events::emit_revocation_cancelled(&env, &business, &period, &caller);
     }
 
     pub fn get_revocation_sequence(env: Env) -> u64 {

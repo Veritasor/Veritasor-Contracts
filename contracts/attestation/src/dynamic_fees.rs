@@ -107,6 +107,90 @@ pub enum DataKey {
     /// Stores a `Vec<u64>` of ledger timestamps.
     SubmissionTimestamps(Address),
     IsPaused,
+
+    // ── Time-locked revocation (grace-window appeal path) ──────
+    /// Pending revocation proposal keyed by (business, period).
+    ///
+    /// Written by `propose_revoke`; removed by either `commit_revoke`
+    /// (on commitment after grace) or `cancel_revoke_proposal` (on appeal).
+    RevokeProposal(Address, soroban_sdk::String),
+    /// Admin-configurable grace window in seconds.
+    ///
+    /// During this window after a proposal is raised, the business (or an
+    /// admin) can cancel it.  After the window elapses anyone can commit
+    /// the revocation.  Defaults to [`DEFAULT_REVOKE_GRACE_SECONDS`] when
+    /// not explicitly configured.
+    RevokeGraceSeconds,
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Time-locked revocation: grace window
+// ════════════════════════════════════════════════════════════════════
+
+/// Default grace period for the appeal window (86 400 s = 24 h).
+///
+/// Overridden by [`DataKey::RevokeGraceSeconds`] when the admin calls
+/// `set_revoke_grace_seconds`.
+pub const DEFAULT_REVOKE_GRACE_SECONDS: u64 = 86_400;
+
+/// Pending revocation proposal stored during the appeal grace window.
+///
+/// Stored under [`DataKey::RevokeProposal(business, period)`].
+#[soroban_sdk::contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct RevokeProposal {
+    /// Address that initiated the proposal (business owner or admin).
+    pub proposer: Address,
+    /// Ledger timestamp at which the proposal was submitted.
+    pub proposed_at: u64,
+    /// Human-readable revocation reason carried through to the final record.
+    pub reason: soroban_sdk::String,
+}
+
+/// Return the configured grace window in seconds, falling back to the default.
+pub fn get_revoke_grace_seconds(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::RevokeGraceSeconds)
+        .unwrap_or(DEFAULT_REVOKE_GRACE_SECONDS)
+}
+
+/// Set the grace window (admin-only enforcement is the caller's responsibility).
+pub fn set_revoke_grace_seconds(env: &Env, seconds: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::RevokeGraceSeconds, &seconds);
+}
+
+/// Store a revoke proposal.
+pub fn store_revoke_proposal(
+    env: &Env,
+    business: &Address,
+    period: &soroban_sdk::String,
+    proposal: &RevokeProposal,
+) {
+    env.storage().instance().set(
+        &DataKey::RevokeProposal(business.clone(), period.clone()),
+        proposal,
+    );
+}
+
+/// Load a revoke proposal, if present.
+pub fn get_revoke_proposal(
+    env: &Env,
+    business: &Address,
+    period: &soroban_sdk::String,
+) -> Option<RevokeProposal> {
+    env.storage()
+        .instance()
+        .get(&DataKey::RevokeProposal(business.clone(), period.clone()))
+}
+
+/// Remove a revoke proposal (after commit or cancel).
+pub fn remove_revoke_proposal(env: &Env, business: &Address, period: &soroban_sdk::String) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::RevokeProposal(business.clone(), period.clone()));
 }
 
 /// On-chain fee configuration.
