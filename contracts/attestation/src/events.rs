@@ -133,6 +133,8 @@ pub const TOPIC_KEY_ROTATION_CONFIRMED: Symbol = symbol_short!("kr_conf");
 pub const TOPIC_KEY_ROTATION_CANCELLED: Symbol = symbol_short!("kr_canc");
 /// Topic: emergency key rotation executed
 pub const TOPIC_KEY_ROTATION_EMERGENCY: Symbol = symbol_short!("kr_emer");
+/// Topic: emergency pause triggered (dual-key bypass)
+pub const TOPIC_EMERGENCY_PAUSE_TRIGGERED: Symbol = symbol_short!("emer_pause");
 /// Topic: business registered
 pub const TOPIC_BIZ_REGISTERED: Symbol = symbol_short!("biz_reg");
 /// Topic: business approved
@@ -428,6 +430,16 @@ pub struct PauseScheduledEvent {
 pub struct PauseScheduledCancelledEvent {
     /// Address that cancelled the scheduled pause.
     pub caller: Address,
+}
+
+/// Normalized payload for `EmergencyPauseTriggered` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EmergencyPauseTriggeredEvent {
+    /// First hardware key signer.
+    pub signer1: Address,
+    /// Second hardware key signer (distinct from signer1).
+    pub signer2: Address,
 }
 
 // ── Fee configuration ─────────────────────────────────────────────
@@ -1080,6 +1092,25 @@ pub fn emit_pause_scheduled_cancelled(env: &Env, caller: &Address) {
         caller: caller.clone(),
     };
     env.events().publish((TOPIC_PAUSE_SCHEDULED_CANCELLED,), event);
+}
+
+/// Emit an `EmergencyPauseTriggered` event.
+///
+/// # Arguments
+///
+/// * `env`      – Soroban execution environment.
+/// * `signer1`  – First hardware key signer.
+/// * `signer2`  – Second hardware key signer (must be distinct from signer1).
+///
+/// # Events
+///
+/// Publishes `(emer_pause,)` → `EmergencyPauseTriggeredEvent`.
+pub fn emit_emergency_pause_triggered(env: &Env, signer1: &Address, signer2: &Address) {
+    let event = EmergencyPauseTriggeredEvent {
+        signer1: signer1.clone(),
+        signer2: signer2.clone(),
+    };
+    env.events().publish((TOPIC_EMERGENCY_PAUSE_TRIGGERED,), event);
 }
 
 // ── Fee configuration ─────────────────────────────────────────────

@@ -36,9 +36,10 @@
 //! See `docs/attestation-vote-weight-snapshot.md` for the full threat model,
 //! security notes, and migration considerations.
 
-use soroban_sdk::{contracttype, Address, Env, Vec};
+use soroban_sdk::{contracttype, signature, Signature, Address, Env, Vec};
 
 use crate::events;
+use crate::access_control::{is_paused, set_paused};
 
 /// Default proposal expiry, expressed in ledger sequences after creation.
 pub const DEFAULT_PROPOSAL_EXPIRY: u32 = 100_000;
@@ -133,6 +134,8 @@ pub enum ProposalAction {
     UpdateFeeConfig(Address, Address, i128, bool),
     /// Emergency admin key rotation (bypasses timelock)
     EmergencyRotateAdmin(Address), // new_admin
+    /// Emergency pause bypass (requires two independent hardware keys)
+    EmergencyPause,
 }
 
 /// Proposal state
@@ -313,6 +316,7 @@ fn action_tag(action: &ProposalAction) -> u32 {
         ProposalAction::RevokeRole(_, _) => 7,
         ProposalAction::UpdateFeeConfig(_, _, _, _) => 8,
         ProposalAction::EmergencyRotateAdmin(_) => 9,
+        ProposalAction::EmergencyPause => 10,
     }
 }
 
@@ -525,6 +529,48 @@ pub fn remove_owner(env: &Env, owner: &Address) {
         "cannot remove owner: would drop below threshold"
     );
     set_owners(env, &next);
+}
+
+/// Emergency pause bypass requiring two independent hardware keys.
+/// Bypasses multisig time-locks for zero-day incident response.
+///
+/// This function allows immediate emergency pausing of the contract
+/// by requiring two distinct hardware key signatures from the owner
+/// set (or appropriate privileges), providing strong security while
+/// eliminating review window delays.
+///
+/// # Arguments
+/// * `sig1` - First hardware key signature
+/// * `sig2` - Second hardware key signature (must be from different key)
+///
+/// # Events
+/// Emits EmergencyPauseTriggered event on success
+///
+/// # Panics
+/// - If either signature is invalid
+/// - If signatures come from the same key
+/// - If either key is not in owner set
+/// - If contract is already paused
+pub fn emergency_pause(env: &Env, sig1: &Signature, sig2: &Signature) {
+    // Verify both signatures are valid and from owners
+    let addr1 = env.verify(sig1);
+    let addr2 = env.verify(sig2);
+
+    // Ensure distinct signers (different hardware keys)
+    assert!(addr1 != addr2, "both signatures must come from distinct keys");
+
+    // Validate both addresses are in owner set
+    let owners = get_owners(env);
+    assert!(owners.contains(&addr1), "first signature not from owner");
+    assert!(owners.contains(&addr2), "second signature not from owner");
+
+    // Verify contract is not already paused before proceeding
+    if is_paused(env) {
+        panic!("contract already paused");
+    }
+
+    // Execute pause using access control module
+    access_control::emergency_pause_execute(env, &addr1, &addr2);
 }
 
 pub fn get_next_proposal_id(env: &Env) -> u64 {

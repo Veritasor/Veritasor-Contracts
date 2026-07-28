@@ -8,7 +8,7 @@ extern crate std;
 
 use core::cmp::Ordering;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, token, Address, BytesN, Env, String, Symbol, TryIntoVal, Vec,
+    contract, contractimpl, contracttype, signature, Signature, token, Address, BytesN, Env, String, Symbol, TryIntoVal, Vec,
 };
 
 use veritasor_common::replay_protection;
@@ -1226,6 +1226,29 @@ impl AttestationContract {
     /// Returns the effective-at timestamp of a pending scheduled pause, if any.
     pub fn get_pending_pause_effective_at(env: Env) -> Option<u64> {
         access_control::get_pending_pause_effective_at(&env)
+    }
+
+    /// Emergency pause bypass (admin role, dual-key requirement).
+    ///
+    /// This function allows immediate emergency pausing of the contract,
+    /// bypassing all multisig time‑lock mechanisms. It requires two
+    /// independent hardware key signatures from the admin (or equivalent
+    /// privileges) to mitigate single‑key compromise attacks.
+    ///
+    /// Used for zero‑day incident response without review windows.
+    ///
+    /// # Panics
+    /// - Caller does not have ADMIN role
+    /// - One or more signatures are invalid
+    /// - Signatures come from the same key
+    /// - Contract is already paused
+    ///
+    /// # Events
+    /// Emits `EmergencyPauseTriggered` event
+    pub fn emergency_pause(env: Env, caller: Address, sig1: Signature, sig2: Signature, nonce: u64) {
+        let admin = access_control::require_admin(&env, &caller);
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
+        multisig::emergency_pause(&env, &sig1, &sig2);
     }
 
     // ── Multisig governance ─────────────────────────────────────────

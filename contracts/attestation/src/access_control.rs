@@ -513,6 +513,30 @@ pub fn get_pending_pause_effective_at(env: &Env) -> Option<u64> {
         .get(&AccessControlKey::PendingPauseEffectiveAt)
 }
 
+/// Emergency pause execution function.
+///
+/// This function is called by emergency_pause to directly pause the contract
+/// without requiring multisig approval. It bypasses time-lock mechanisms
+/// for immediate emergency response.
+///
+/// # Arguments
+/// * `env` – Soroban execution environment.
+/// * `signer1` – First hardware key signer (already verified).
+/// * `signer2` – Second hardware key signer (already verified).
+///
+/// # Panics
+/// - Contract is already paused.
+pub fn emergency_pause_execute(env: &Env, signer1: &Address, signer2: &Address) {
+    // Verify contract is not already paused (should have been checked by caller)
+    assert!(!is_paused(env), "contract already paused");
+
+    // Apply pause using the existing set_paused function
+    set_paused(env, true);
+
+    // Emit the emergency pause triggered event
+    events::emit_emergency_pause_triggered(env, signer1, signer2);
+}
+
 /// Stores a pending pause effective-at timestamp.
 pub fn set_pending_pause_effective_at(env: &Env, effective_at: u64) {
     env.storage()
