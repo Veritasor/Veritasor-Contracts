@@ -53,6 +53,12 @@ use soroban_sdk::{contracttype, token, Address, Env, Symbol, Val, Vec};
 //  Tier bounds
 // ════════════════════════════════════════════════════════════════════
 
+/// Minimum supported business tier index (inclusive).
+///
+/// Tier 0 is the default (Standard) tier. At this tier the discount must be
+/// exactly zero so that businesses pay the full base fee.
+pub const MIN_TIER: u32 = 0;
+
 /// Maximum supported business tier index (inclusive).
 ///
 /// Tiers are 0-indexed: 0 = Standard, 1 = Pro, 2 = Enterprise, …, MAX_TIER = top tier.
@@ -137,6 +143,14 @@ pub enum DataKey {
     /// the revocation.  Defaults to [`DEFAULT_REVOKE_GRACE_SECONDS`] when
     /// not explicitly configured.
     RevokeGraceSeconds,
+
+    // ── Epoch / backfill checkpoint tracking ────────────────────
+    /// Per-period submission count within the current epoch.
+    EpochSubmissions(soroban_sdk::String),
+    /// Per-period accumulated fees within the current epoch.
+    EpochFees(soroban_sdk::String),
+    /// Global running submission count for backfill checkpointing.
+    BackfillSubmissionCount,
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -615,4 +629,106 @@ pub fn get_archive_pointer(
     env.storage()
         .instance()
         .get(&DataKey::ArchivePointer(business.clone(), period.clone()))
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Epoch tracking (fee-bucket window rollover)
+// ════════════════════════════════════════════════════════════════════
+
+/// Return the current epoch counter. Starts at 0 and advances to 1 on
+/// the first submission, then increments on each fee-bucket window rollover.
+pub fn get_epoch(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::EpochCounter)
+        .unwrap_or(0u64)
+}
+
+/// Check whether the fee-bucket window has rolled over since the last
+/// submission.  If so, advance the epoch counter and emit one
+/// `EpochAdvanced` event per elapsed window.
+pub fn handle_epoch_rollover(env: &Env) {
+    let current_bucket = env.ledger().timestamp() / FEE_BUCKET_WINDOW_SECONDS;
+    let was_stored = env.storage().instance().has(&DataKey::LastFeeBucket);
+
+    if !was_stored {
+        // First ever submission — initialise epoch to 1.
+        env.storage()
+            .instance()
+            .set(&DataKey::EpochCounter, &1u64);
+        env.storage()
+            .instance()
+            .set(&DataKey::LastFeeBucket, &current_bucket);
+        crate::events::emit_epoch_advanced(env, 1, env.ledger().timestamp());
+        return;
+    }
+
+    let last_bucket: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::LastFeeBucket)
+        .unwrap_or(0u64);
+
+    if current_bucket > last_bucket {
+        let mut epoch: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::EpochCounter)
+            .unwrap_or(0u64);
+
+        let now = env.ledger().timestamp();
+        for _b in (last_bucket + 1)..=current_bucket {
+            epoch += 1;
+            env.storage()
+                .instance()
+                .set(&DataKey::EpochCounter, &epoch);
+            crate::events::emit_epoch_advanced(env, epoch, now);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::LastFeeBucket, &current_bucket);
+    }
+}
+
+/// Increment the per-period submission counter and return the new value.
+pub fn increment_epoch_submissions(
+    env: &Env,
+    period: &soroban_sdk::String,
+    delta: u64,
+) -> u64 {
+    let key = DataKey::EpochSubmissions(period.clone());
+    let count: u64 = env.storage().instance().get(&key).unwrap_or(0u64);
+    let new = count + delta;
+    env.storage().instance().set(&key, &new);
+    new
+}
+
+/// Add `fee` to the per-period fee accumulator and return the new total.
+pub fn accumulate_epoch_fees(env: &Env, period: &soroban_sdk::String, fee: i128) -> i128 {
+    let key = DataKey::EpochFees(period.clone());
+    let total: i128 = env.storage().instance().get(&key).unwrap_or(0i128);
+    let new = total + fee;
+    env.storage().instance().set(&key, &new);
+    new
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Backfill checkpoint counter (global running total)
+// ════════════════════════════════════════════════════════════════════
+
+/// Return the global running submission count.
+pub fn get_backfill_count(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::BackfillSubmissionCount)
+        .unwrap_or(0u64)
+}
+
+/// Increment the global submission counter and return the *new* value.
+pub fn increment_backfill_count(env: &Env) -> u64 {
+    let count = get_backfill_count(env) + 1;
+    env.storage()
+        .instance()
+        .set(&DataKey::BackfillSubmissionCount, &count);
+    count
 }
