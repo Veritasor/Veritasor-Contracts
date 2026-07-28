@@ -16,7 +16,7 @@
 extern crate std;
 
 use soroban_sdk::xdr::ToXdr;
-use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, String, Vec};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, BytesN, Env, String, Vec};
 use veritasor_common::replay_protection;
 
 #[cfg(test)]
@@ -24,6 +24,16 @@ mod test;
 
 /// Nonce channels for replay protection
 pub const NONCE_CHANNEL_ADMIN: u32 = 1;
+
+/// Maximum number of entries the audit log can hold
+pub const MAX_ENTRIES: u64 = 100_000;
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum AuditLogError {
+    Full = 1,
+}
 
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -154,7 +164,7 @@ impl AuditLogContract {
         source_contract: Address,
         action: String,
         payload: String,
-    ) -> u64 {
+    ) -> Result<u64, AuditLogError> {
         let admin: Address = env
             .storage()
             .instance()
@@ -166,6 +176,9 @@ impl AuditLogContract {
         replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
 
         let seq: u64 = env.storage().instance().get(&DataKey::NextSeq).unwrap_or(0);
+        if seq >= MAX_ENTRIES {
+            return Err(AuditLogError::Full);
+        }
         let ledger_seq = env.ledger().sequence();
 
         let prev_hash: BytesN<32> = env
@@ -222,7 +235,7 @@ impl AuditLogContract {
             .instance()
             .set(&DataKey::ContractIndex(source_contract), &contract_seqs);
 
-        seq
+        Ok(seq)
     }
 
     /// Get total number of log entries.
