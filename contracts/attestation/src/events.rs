@@ -1063,3 +1063,34 @@ pub fn emit_proof_hash_updated(
     env.events()
         .publish((TOPIC_PROOF_HASH_UPDATED, business.clone()), event);
 }
+
+// ── Multisig owner ────────────────────────────────────────────────
+
+/// Topic: multisig owner recovery phrase acknowledged
+pub const TOPIC_OWNER_RECOVERY_PHRASE_ACKNOWLEDGED: Symbol = symbol_short!("own_ack");
+
+/// Normalized payload for `OwnerRecoveryPhraseAcknowledged` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct OwnerRecoveryPhraseAcknowledgedEvent {
+    /// The incoming key confirming recovery-phrase custody.
+    pub new_owner: Address,
+}
+
+/// Emit an `OwnerRecoveryPhraseAcknowledged` event.
+///
+/// # Arguments
+///
+/// * `env`       - Soroban execution environment.
+/// * `new_owner` - The incoming key confirming recovery-phrase custody.
+///
+/// # Events
+///
+/// Publishes `(own_ack, new_owner)` → `OwnerRecoveryPhraseAcknowledgedEvent`.
+pub fn emit_owner_recovery_phrase_acknowledged(env: &Env, new_owner: &Address) {
+    let event = OwnerRecoveryPhraseAcknowledgedEvent {
+        new_owner: new_owner.clone(),
+    };
+    env.events()
+        .publish((TOPIC_OWNER_RECOVERY_PHRASE_ACKNOWLEDGED, new_owner.clone()), event);
+}
