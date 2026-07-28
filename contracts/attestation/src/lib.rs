@@ -1409,6 +1409,49 @@ impl AttestationContract {
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
     }
 
+    /// Bump the instance TTL for a specific business's AttestationRange entry.
+    ///
+    /// Only bumps ranges that are still live (non-revoked and non-expired).
+    /// This ensures long-lived multi-period attestation entries survive Soroban
+    /// archival without indiscriminately extending dead data.
+    ///
+    /// # Authorization
+    /// Caller must be either the contract admin or the business owner.
+    ///
+    /// # Panics
+    /// - `"not admin or business owner"` — caller lacks authorization.
+    /// - `"no ranges found"` — business has no multi-period attestation ranges.
+    /// - `"range_id out of bounds"` — `range_id` exceeds the stored range count.
+    /// - `"range is revoked"` — the targeted range has been revoked.
+    /// - `"range is expired"` — the range's expiry timestamp has elapsed.
+    pub fn bump_range_ttl(env: Env, caller: Address, business: Address, range_id: u32) {
+        caller.require_auth();
+
+        // Admin or business owner
+        let is_admin = access_control::has_role(&env, &caller, ROLE_ADMIN);
+        let is_business = caller == business;
+        assert!(is_admin || is_business, "not admin or business owner");
+
+        let key = MultiPeriodKey::Ranges(business);
+        let ranges: Vec<AttestationRange> = env
+            .storage()
+            .instance()
+            .get(&key)
+            .expect("no ranges found");
+
+        let range = ranges.get(range_id).expect("range_id out of bounds");
+
+        assert!(!range.revoked, "range is revoked");
+
+        if let Some(expiry) = range.expiry_timestamp {
+            assert!(env.ledger().timestamp() < expiry, "range is expired");
+        }
+
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+    }
+
     pub fn submit_multi_period_attestation(
         env: Env,
         business: Address,
