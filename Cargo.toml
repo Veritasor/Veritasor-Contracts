@@ -24,6 +24,9 @@ members = [
 ]
 resolver = "2"
 
+[workspace.dependencies]
+soroban-sdk = "22.0"
+
 # ---------------------------------------------------------------------------
 # Workspace-level metadata — referenced by CI and tooling.
 # ---------------------------------------------------------------------------

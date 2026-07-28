@@ -22,12 +22,12 @@ default = []
 full-tests = []
 
 [dependencies]
-soroban-sdk = "22.0"
+soroban-sdk = { workspace = true }
 veritasor-common = { path = "../common" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 arbitrary = { version = "1.4", features = ["derive"] }
-soroban-sdk = { version = "22.0", features = ["testutils"] }
+soroban-sdk = { workspace = true, features = ["testutils"] }
 serde_json = "1.0"
 proptest    = { version = "=1.5.0", default-features = false, features = ["std"] }
 veritasor-common = { path = "../common" }

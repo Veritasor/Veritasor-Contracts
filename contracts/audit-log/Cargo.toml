@@ -10,11 +10,11 @@ crate-type = ["cdylib"]
 doctest = false
 
 [dependencies]
-soroban-sdk = "22.0"
+soroban-sdk = { workspace = true }
 veritasor-common = { path = "../common" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-soroban-sdk = { version = "22.0", features = ["testutils"] }
+soroban-sdk = { workspace = true, features = ["testutils"] }
 
 [profile.release]
 opt-level = "z"
