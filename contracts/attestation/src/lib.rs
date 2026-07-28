@@ -1682,6 +1682,8 @@ mod fee_reconciliation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod fees_test;
 #[cfg(test)]
+mod fuzz_volume_brackets_test;
+#[cfg(test)]
 mod gas_benchmark_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod key_rotation_test;
