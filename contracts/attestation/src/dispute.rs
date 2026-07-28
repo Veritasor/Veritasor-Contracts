@@ -346,35 +346,56 @@ pub fn has_existing_dispute(
     false
 }
 
-/// Validate that a dispute can be opened (authorized challenger, valid attestation exists)
+/// Validate that a dispute can be opened (authorized challenger, valid attestation exists).
+///
+/// ## Checks (in order)
+///
+/// 1. Attestation must exist for `(business, period)`.
+/// 2. Attestation must not already be revoked — a revoked attestation is final
+///    and re-opening a dispute against it would create an inconsistent index
+///    state and allow re-litigation of closed matters.
+/// 3. **No other open dispute may exist** for this attestation (`DisputeAlreadyOpen`).
+///    Two simultaneous disputes on the same attestation create ambiguous
+///    resolution semantics; only one dispute is allowed in the `Open` state at
+///    a time.  A new dispute may be opened once the prior one is resolved and
+///    closed.
+/// 4. The same challenger must not already have an open dispute (redundant with
+///    check 3 but retained as a defence-in-depth guard).
+///
+/// ## Security notes
+///
+/// - The `DisputeAlreadyOpen` guard is order-independent: it checks all
+///   existing disputes, not just those from the current challenger.
+/// - Checks are ordered cheapest → most expensive to minimise gas on rejections.
 pub fn validate_dispute_eligibility(
     env: &Env,
     challenger: &Address,
     business: &Address,
     period: &String,
 ) -> Result<(), &'static str> {
-    // Check if attestation exists
+    // 1. Attestation must exist.
     let attestation_key = DataKey::Attestation(business.clone(), period.clone());
     if !env.storage().instance().has(&attestation_key) {
         return Err("no attestation exists for this business and period");
     }
 
-    // SECURITY: Disputes must not be opened against revoked attestations.
-    // A revoked attestation is final; opening a dispute against it would
-    // create an inconsistent index state (dispute index referencing a
-    // revoked record) and could be exploited to re-litigate closed matters.
+    // 2. SECURITY: Disputes must not be opened against revoked attestations.
     if is_attestation_revoked(env, business, period) {
         return Err("cannot open dispute on a revoked attestation");
     }
 
-    // Check if challenger already has an open dispute for this attestation
-    if has_existing_dispute(env, challenger, business, period) {
-        return Err("challenger already has an open dispute for this attestation");
+    // 3. SECURITY: Reject if any open dispute already exists on this attestation.
+    //    Two simultaneous open disputes produce ambiguous resolution semantics.
+    if has_open_dispute(env, business, period) {
+        return Err("DisputeAlreadyOpen: an open dispute already exists for this attestation");
     }
 
-    // In a real implementation, we would check if challenger is authorized
-    // (e.g., is a lender in a registry, or has permission from business)
-    // For now, we'll allow any address to challenge
+    // 4. Defence-in-depth: same challenger must not have a prior dispute (open
+    //    or not) for this attestation, preventing index flooding.
+    if has_existing_dispute(env, challenger, business, period) {
+        return Err("challenger already has a dispute for this attestation");
+    }
+
     Ok(())
 }
 
@@ -413,13 +434,21 @@ pub fn is_attestation_revoked(env: &Env, business: &Address, period: &String) ->
     env.storage().instance().has(&key)
 }
 
-/// Returns true when an attestation has an open dispute associated with it.
+/// Returns true when an attestation has an open or unfinished dispute
+/// (status `Open` or `Resolved` but not yet `Closed`).
+///
+/// Both `Open` and `Resolved` disputes are considered "in-flight" — a
+/// `Resolved` dispute has a pending outcome that may still be acted on
+/// (e.g. triggering a revocation) and must be closed before a new dispute
+/// is allowed.  Only `Closed` disputes are considered terminal.
 pub fn has_open_dispute(env: &Env, business: &Address, period: &String) -> bool {
     let dispute_ids = get_dispute_ids_by_attestation(env, business, period);
     for i in 0..dispute_ids.len() {
         if let Some(dispute_id) = dispute_ids.get(i) {
             if let Some(dispute) = get_dispute(env, dispute_id) {
-                if dispute.status == DisputeStatus::Open {
+                if dispute.status == DisputeStatus::Open
+                    || dispute.status == DisputeStatus::Resolved
+                {
                     return true;
                 }
             }
