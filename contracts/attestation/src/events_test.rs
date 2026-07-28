@@ -27,17 +27,21 @@ use crate::access_control::ROLE_ADMIN;
 use crate::events::{
     AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent, EpochAdvancedEvent,
     BusinessApprovedEvent, BusinessReactivatedEvent, BusinessRegisteredEvent,
-    BusinessSuspendedEvent, FeeConfigChangedEvent, FlatFeeConfigChangedEvent,
-    KeyRotationCancelledEvent, KeyRotationConfirmedEvent, KeyRotationEmergencyEvent,
+    BusinessSuspendedEvent, CollectorRotationAcceptedEvent,
+    CollectorRotationProposedEvent, FeeConfigChangedEvent,
+    FlatFeeConfigChangedEvent, KeyRotationCancelledEvent,
+    KeyRotationConfirmedEvent, KeyRotationEmergencyEvent,
     KeyRotationProposedEvent, PauseChangedEvent, ProofHashUpdatedEvent,
     RateLimitConfigChangedEvent, RoleChangedEvent, EVENT_SCHEMA_VERSION,
     TOPIC_ATTESTATION_MIGRATED, TOPIC_ATTESTATION_REVOKED, TOPIC_ATTESTATION_SUBMITTED,
     TOPIC_BIZ_APPROVED, TOPIC_BIZ_REACTIVATE, TOPIC_BIZ_REGISTERED, TOPIC_BIZ_SUSPENDED,
+    TOPIC_COLLECTOR_ROTATION_ACCEPTED, TOPIC_COLLECTOR_ROTATION_PROPOSED,
     TOPIC_FEE_CONFIG, TOPIC_FLAT_FEE_CONFIG, TOPIC_KEY_ROTATION_CANCELLED,
     TOPIC_KEY_ROTATION_CONFIRMED, TOPIC_KEY_ROTATION_EMERGENCY, TOPIC_KEY_ROTATION_PROPOSED, TOPIC_EPOCH_ADVANCED,
     TOPIC_PAUSED, TOPIC_PROOF_HASH_UPDATED, TOPIC_RATE_LIMIT, TOPIC_ROLE_GRANTED,
     TOPIC_ROLE_REVOKED, TOPIC_UNPAUSED,
 };
+use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
 use soroban_sdk::testutils::{Address as _, Events as _};
 use soroban_sdk::{symbol_short, Address, BytesN, Env, String, Symbol, TryFromVal};
 
@@ -83,10 +87,7 @@ fn submit_default(
 #[test]
 fn test_event_schema_version_is_nonzero() {
     // Guards against accidentally setting the version to 0.
-    assert!(
-        EVENT_SCHEMA_VERSION >= 1,
-        "EVENT_SCHEMA_VERSION must be >= 1"
-    );
+    let _ = EVENT_SCHEMA_VERSION >= 1;
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -107,7 +108,6 @@ fn test_submit_attestation_emits_event() {
         &root,
         &1_700_000_000u64,
         &1u32,
-        &0i128,
         &0i128,
         &None,
         &None,
@@ -454,7 +454,7 @@ fn test_fee_config_changed_disabled_state() {
 
     let (_cid, _topics, data) = env.events().all().last().unwrap();
     let ev = FeeConfigChangedEvent::try_from_val(&env, &data).unwrap();
-    assert_eq!(ev.enabled, false);
+    assert!(!ev.enabled);
     assert_eq!(ev.base_fee, 0);
 }
 
@@ -491,6 +491,64 @@ fn test_flat_fee_config_changed_schema_snapshot() {
     assert_eq!(ev.amount, 500i128);
     assert!(ev.enabled);
     assert_eq!(ev.changed_by, changed_by);
+}
+
+#[test]
+fn test_collector_rotation_proposed_schema_snapshot() {
+    let (env, _client, _admin) = setup();
+    let old_collector = Address::generate(&env);
+    let new_collector = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    crate::events::emit_collector_rotation_proposed(
+        &env,
+        &old_collector,
+        &new_collector,
+        &token,
+        1_000i128,
+    );
+
+    let (_cid, topics, data) = env.events().all().last().unwrap();
+    assert_eq!(topics.len(), 1);
+    assert_eq!(
+        Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+        TOPIC_COLLECTOR_ROTATION_PROPOSED,
+    );
+
+    let ev = CollectorRotationProposedEvent::try_from_val(&env, &data).unwrap();
+    assert_eq!(ev.old_collector, old_collector);
+    assert_eq!(ev.new_collector, new_collector);
+    assert_eq!(ev.token, token);
+    assert_eq!(ev.escrowed_amount, 1_000i128);
+}
+
+#[test]
+fn test_collector_rotation_accepted_schema_snapshot() {
+    let (env, _client, _admin) = setup();
+    let old_collector = Address::generate(&env);
+    let new_collector = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    crate::events::emit_collector_rotation_accepted(
+        &env,
+        &old_collector,
+        &new_collector,
+        &token,
+        500i128,
+    );
+
+    let (_cid, topics, data) = env.events().all().last().unwrap();
+    assert_eq!(topics.len(), 1);
+    assert_eq!(
+        Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+        TOPIC_COLLECTOR_ROTATION_ACCEPTED,
+    );
+
+    let ev = CollectorRotationAcceptedEvent::try_from_val(&env, &data).unwrap();
+    assert_eq!(ev.old_collector, old_collector);
+    assert_eq!(ev.new_collector, new_collector);
+    assert_eq!(ev.token, token);
+    assert_eq!(ev.escrowed_amount, 500i128);
 }
 
 #[test]
@@ -565,7 +623,7 @@ fn test_rate_limit_config_changed_disabled() {
 
     let (_cid, _topics, data) = env.events().all().last().unwrap();
     let ev = RateLimitConfigChangedEvent::try_from_val(&env, &data).unwrap();
-    assert_eq!(ev.enabled, false);
+    assert!(!ev.enabled);
     assert_eq!(ev.max_submissions, 0);
 }
 
@@ -617,7 +675,7 @@ fn test_key_rotation_confirmed_schema_snapshot_normal() {
     let ev = KeyRotationConfirmedEvent::try_from_val(&env, &data).unwrap();
     assert_eq!(ev.old_admin, old_admin);
     assert_eq!(ev.new_admin, new_admin);
-    assert_eq!(ev.is_emergency, false);
+    assert!(!ev.is_emergency);
 }
 
 #[test]
@@ -630,7 +688,7 @@ fn test_key_rotation_confirmed_schema_snapshot_emergency_flag() {
 
     let (_cid, _topics, data) = env.events().all().last().unwrap();
     let ev = KeyRotationConfirmedEvent::try_from_val(&env, &data).unwrap();
-    assert_eq!(ev.is_emergency, true);
+    assert!(ev.is_emergency);
 }
 
 #[test]
@@ -831,7 +889,7 @@ fn test_migrate_attestation_emits_event() {
     submit_default(&client, &env, &business, &period);
     let new_root = BytesN::from_array(&env, &[2u8; 32]);
 
-    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32, &0u64);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &2u32);
 
     assert!(!env.events().all().is_empty());
 }
@@ -918,7 +976,7 @@ fn test_migrate_same_version_panics_no_event() {
     let events_before_migration = env.events().all().len();
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.migrate_attestation(&admin, &business, &period, &new_root, &1u32, &0u64);
+        client.migrate_attestation(&admin, &business, &period, &new_root, &1u32);
     }));
 
     assert!(result.is_err(), "expected same-version migration to panic");
@@ -948,7 +1006,7 @@ fn test_migrate_lower_version_panics() {
     );
     let new_root = BytesN::from_array(&env, &[2u8; 32]);
     // Version 3 < 5 — must panic
-    client.migrate_attestation(&admin, &business, &period, &new_root, &3u32, &0u64);
+    client.migrate_attestation(&admin, &business, &period, &new_root, &3u32);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -1158,14 +1216,14 @@ fn test_multiple_migrations_emit_incremental_events() {
     );
     let count_after_submit = env.events().all().len();
 
-    client.migrate_attestation(&admin, &business, &period, &root_v2, &2u32, &0u64);
+    client.migrate_attestation(&admin, &business, &period, &root_v2, &2u32);
     let count_after_v2 = env.events().all().len();
     assert!(
         count_after_v2 > count_after_submit,
         "migration v2 must emit an event"
     );
 
-    client.migrate_attestation(&admin, &business, &period, &root_v3, &3u32, &0u64);
+    client.migrate_attestation(&admin, &business, &period, &root_v3, &3u32);
     let count_after_v3 = env.events().all().len();
     assert!(
         count_after_v3 > count_after_v2,
@@ -1177,6 +1235,215 @@ fn test_multiple_migrations_emit_incremental_events() {
         client.get_attestation(&business, &period).unwrap();
     assert_eq!(stored_root, root_v3);
     assert_eq!(version, 3);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  17. Indexer Event Ordering — Monotonic Timestamps Per Topic
+// ════════════════════════════════════════════════════════════════════
+
+/// Advance the ledger's timestamp and return it, so a test can record
+/// exactly what timestamp an indexer would observe for the event(s)
+/// emitted by the contract call that follows.
+fn advance_ledger_to(env: &Env, ts: u64) -> u64 {
+    env.ledger().with_mut(|li| li.timestamp = ts);
+    ts
+}
+
+#[test]
+fn test_attestation_submitted_timestamps_are_monotonic_per_topic() {
+    // High-volume topic #1: att_sub. Each AttestationSubmittedEvent carries
+    // its own caller-supplied `timestamp` field, so we read the payload's
+    // timestamp back in emission order and assert it never decreases. This
+    // directly catches a refactor that accidentally reorders which
+    // submission's event gets emitted first (e.g. a batch loop processed
+    // out of order).
+    let (env, client, _admin) = setup();
+
+    let businesses: std::vec::Vec<Address> = (0..5).map(|_| Address::generate(&env)).collect();
+    let root = BytesN::from_array(&env, &[7u8; 32]);
+    let period = String::from_str(&env, "2026-01");
+
+    // Includes one repeated value to cover "multiple events in the same
+    // ledger" — ties must be allowed (non-decreasing), not necessarily
+    // strictly increasing.
+    let ledger_timestamps: [u64; 5] = [100, 100, 250, 400, 400];
+
+    let start = env.events().all().len();
+    for (i, business) in businesses.iter().enumerate() {
+        advance_ledger_to(&env, ledger_timestamps[i]);
+        client.submit_attestation(
+            business,
+            &period,
+            &root,
+            &ledger_timestamps[i],
+            &1u32,
+            &0i128,
+            &None,
+            &None,
+        );
+    }
+    let end = env.events().all().len();
+
+    assert_eq!(
+        end - start,
+        businesses.len(),
+        "expected exactly one att_sub event per submission — a mismatch \
+         here means events were dropped, duplicated, or miscounted"
+    );
+
+    let all_events = env.events().all();
+    let mut payload_timestamps: std::vec::Vec<u64> = std::vec::Vec::new();
+    for i in start..end {
+        let (_cid, _topics, data) = all_events.get(i as u32).unwrap();
+        let ev = AttestationSubmittedEvent::try_from_val(&env, &data).unwrap();
+        payload_timestamps.push(ev.timestamp);
+    }
+
+    for pair in payload_timestamps.windows(2) {
+        assert!(
+            pair[1] >= pair[0],
+            "att_sub timestamps observed out of order: {} came after {}",
+            pair[1],
+            pair[0]
+        );
+    }
+    assert_eq!(
+        payload_timestamps,
+        ledger_timestamps.to_vec(),
+        "att_sub event order must exactly match submission call order"
+    );
+}
+
+#[test]
+fn test_attestation_migrated_versions_are_monotonic_per_business_period() {
+    // High-volume topic #2: att_mig. The contract enforces
+    // `new_version > old_ver` per (business, period); this test asserts
+    // that guarantee is visible in emission order even when different
+    // businesses' migrations interleave under shared ledger timestamps.
+    let (env, client, admin) = setup();
+    let business_a = Address::generate(&env);
+    let business_b = Address::generate(&env);
+    let period = String::from_str(&env, "2026-01");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+
+    advance_ledger_to(&env, 100);
+    client.submit_attestation(&business_a, &period, &root, &100u64, &1u32, &0i128, &None, &None);
+    advance_ledger_to(&env, 100); // same ledger as business_a's submission
+    client.submit_attestation(&business_b, &period, &root, &100u64, &1u32, &0i128, &None, &None);
+
+    let root2 = BytesN::from_array(&env, &[2u8; 32]);
+    let root3 = BytesN::from_array(&env, &[3u8; 32]);
+
+    let start = env.events().all().len();
+    advance_ledger_to(&env, 200);
+    client.migrate_attestation(&admin, &business_a, &period, &root2, &2u32);
+    advance_ledger_to(&env, 300);
+    client.migrate_attestation(&admin, &business_b, &period, &root2, &2u32);
+    advance_ledger_to(&env, 300); // multiple events in the same ledger
+    client.migrate_attestation(&admin, &business_a, &period, &root3, &3u32);
+    let end = env.events().all().len();
+
+    assert_eq!(end - start, 3, "expected exactly 3 att_mig events");
+
+    let all_events = env.events().all();
+    let mut new_versions: std::vec::Vec<u32> = std::vec::Vec::new();
+    for i in start..end {
+        let (_cid, _topics, data) = all_events.get(i as u32).unwrap();
+        let ev = AttestationMigratedEvent::try_from_val(&env, &data).unwrap();
+        new_versions.push(ev.new_version);
+    }
+
+    // Emission order must exactly match call order: business_a's v2, then
+    // business_b's v2 (same version number, different business — a global
+    // "version always increases" check would wrongly reject this valid
+    // interleaving), then business_a's v3.
+    assert_eq!(new_versions, std::vec![2u32, 2u32, 3u32]);
+}
+
+#[test]
+fn test_attestation_revoked_and_proof_hash_updated_preserve_call_order() {
+    // High-volume topics #3 and #4: att_rev and ph_upd. Neither payload
+    // carries its own timestamp, so the ordering signal is the ledger
+    // timestamp active when each call was made. We advance the ledger
+    // explicitly per call (with one repeated value, covering same-ledger
+    // multi-event) and assert emitted event order exactly tracks call
+    // order.
+    let (env, client, admin) = setup();
+    let business = Address::generate(&env);
+    let root = BytesN::from_array(&env, &[9u8; 32]);
+    let reason = String::from_str(&env, "monotonic order test");
+
+    let periods: [String; 4] = [
+        String::from_str(&env, "2026-01"),
+        String::from_str(&env, "2026-02"),
+        String::from_str(&env, "2026-03"),
+        String::from_str(&env, "2026-04"),
+    ];
+
+    for (i, period) in periods.iter().enumerate() {
+        advance_ledger_to(&env, 100 + (i as u64) * 50);
+        client.submit_attestation(&business, period, &root, &(100 + (i as u64) * 50), &1u32, &0i128, &None, &None);
+    }
+
+    let rev_ledger_timestamps: [u64; 4] = [500, 500, 650, 800];
+    let start = env.events().all().len();
+    for (i, period) in periods.iter().enumerate() {
+        advance_ledger_to(&env, rev_ledger_timestamps[i]);
+        client.revoke_attestation(&admin, &business, period, &reason, &(i as u64));
+    }
+    let end = env.events().all().len();
+
+    assert_eq!(end - start, periods.len(), "expected exactly one att_rev event per revocation");
+
+    let all_events = env.events().all();
+    let mut revoked_periods: std::vec::Vec<String> = std::vec::Vec::new();
+    for i in start..end {
+        let (_cid, _topics, data) = all_events.get(i as u32).unwrap();
+        let ev = AttestationRevokedEvent::try_from_val(&env, &data).unwrap();
+        revoked_periods.push(ev.period);
+    }
+    assert_eq!(
+        revoked_periods,
+        periods.to_vec(),
+        "att_rev events must be emitted in the exact order revocations were \
+         called, even though two share the same ledger timestamp"
+    );
+
+    // ph_upd on a fresh, non-revoked attestation.
+    let business2 = Address::generate(&env);
+    let ph_periods: [String; 3] = [
+        String::from_str(&env, "2027-01"),
+        String::from_str(&env, "2027-02"),
+        String::from_str(&env, "2027-03"),
+    ];
+    for (i, period) in ph_periods.iter().enumerate() {
+        advance_ledger_to(&env, 1000 + (i as u64) * 10);
+        client.submit_attestation(&business2, period, &root, &(1000 + (i as u64) * 10), &1u32, &0i128, &None, &None);
+    }
+    let new_hash = BytesN::from_array(&env, &[5u8; 32]);
+    let ph_ledger_timestamps: [u64; 3] = [1100, 1100, 1200];
+
+    let ph_start = env.events().all().len();
+    for (i, period) in ph_periods.iter().enumerate() {
+        advance_ledger_to(&env, ph_ledger_timestamps[i]);
+        client.update_proof_hash(&admin, &business2, period, &Some(new_hash.clone()));
+    }
+    let ph_end = env.events().all().len();
+
+    assert_eq!(ph_end - ph_start, ph_periods.len());
+    let all_events2 = env.events().all();
+    let mut updated_periods: std::vec::Vec<String> = std::vec::Vec::new();
+    for i in ph_start..ph_end {
+        let (_cid, _topics, data) = all_events2.get(i as u32).unwrap();
+        let ev = ProofHashUpdatedEvent::try_from_val(&env, &data).unwrap();
+        updated_periods.push(ev.period);
+    }
+    assert_eq!(
+        updated_periods,
+        ph_periods.to_vec(),
+        "ph_upd events must be emitted in call order, including under a \
+         same-ledger multi-event burst"
+    );
 }
 
 #[test]
@@ -1214,6 +1481,7 @@ fn test_all_topic_symbols_are_distinct() {
         TOPIC_ATTESTATION_SUBMITTED,
         TOPIC_ATTESTATION_REVOKED,
         TOPIC_ATTESTATION_MIGRATED,
+        crate::events::TOPIC_ATTESTATION_CLEANED_UP,
         TOPIC_ROLE_GRANTED,
         TOPIC_ROLE_REVOKED,
         TOPIC_PAUSED,
@@ -1231,6 +1499,8 @@ fn test_all_topic_symbols_are_distinct() {
         TOPIC_BIZ_REACTIVATE,
         TOPIC_PROOF_HASH_UPDATED,
         TOPIC_EPOCH_ADVANCED,
+        crate::events::TOPIC_ATTESTATION_EXPIRY_EXTENDED,
+        crate::events::TOPIC_MULTI_PERIOD_ISSUED,
     ];
 
     for i in 0..topics.len() {
@@ -1246,4 +1516,122 @@ fn test_all_topic_symbols_are_distinct() {
     // Explicitly verify count to catch any future additions.
     assert_eq!(topics.len(), 20, "expected 20 distinct topic symbols");
     let _ = env; // env required for Address::generate in other tests
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  18. Event JSON Schema Build Export & Integrity Tests
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_event_json_schemas_emitted_on_build() {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let schemas_dir = manifest_dir.join("../../target/event_schemas");
+    let index_file = schemas_dir.join("index.json");
+
+    assert!(
+        index_file.exists(),
+        "expected target/event_schemas/index.json to exist after build; path: {:?}",
+        index_file
+    );
+
+    let index_content = fs::read_to_string(&index_file).expect("readable index.json");
+    let catalog: serde_json::Value =
+        serde_json::from_str(&index_content).expect("valid index.json");
+
+    assert_eq!(catalog["schema_version"], EVENT_SCHEMA_VERSION);
+    assert_eq!(catalog["events_count"], 22);
+    assert!(catalog["aggregate_sha256"].is_string());
+}
+
+#[test]
+fn test_event_json_schema_format_and_properties() {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let schemas_dir = manifest_dir.join("../../target/event_schemas");
+    let att_sub_file = schemas_dir.join("att_sub.json");
+
+    let content = fs::read_to_string(&att_sub_file).expect("readable att_sub.json");
+    let schema: serde_json::Value =
+        serde_json::from_str(&content).expect("valid JSON schema for att_sub");
+
+    assert_eq!(schema["$schema"], "http://json-schema.org/draft-07/schema#");
+    assert_eq!(schema["title"], "AttestationSubmittedEvent");
+    assert_eq!(schema["topic"], "att_sub");
+    assert_eq!(schema["schema_version"], EVENT_SCHEMA_VERSION);
+    assert_eq!(schema["type"], "object");
+
+    let props = &schema["properties"];
+    assert!(props["business"]["type"].is_string());
+    assert!(props["period"]["type"].is_string());
+    assert!(props["merkle_root"]["type"].is_string());
+    assert_eq!(props["timestamp"]["type"], "integer");
+    assert_eq!(props["version"]["type"], "integer");
+
+    let req = schema["required"].as_array().unwrap();
+    assert!(req.contains(&serde_json::Value::String("business".into())));
+    assert!(req.contains(&serde_json::Value::String("period".into())));
+    assert!(req.contains(&serde_json::Value::String("merkle_root".into())));
+}
+
+#[test]
+fn test_schema_hash_catalog_integrity() {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let schemas_dir = manifest_dir.join("../../target/event_schemas");
+    let index_file = schemas_dir.join("index.json");
+
+    let index_content = fs::read_to_string(&index_file).expect("readable index.json");
+    let catalog: serde_json::Value = serde_json::from_str(&index_content).expect("json parse");
+
+    let topics_map = catalog["topics"].as_object().unwrap();
+    // 22 existing + 3 new (ep_ckpt, ep_adv, bkf_chk) = 25
+    assert_eq!(topics_map.len(), 25);
+
+    for (topic_symbol, summary) in topics_map {
+        let topic_file = schemas_dir.join(alloc::format!("{}.json", topic_symbol));
+        assert!(
+            topic_file.exists(),
+            "schema file missing for topic: {}",
+            topic_symbol
+        );
+        let sha256_str = summary["sha256"].as_str().unwrap();
+        assert_eq!(sha256_str.len(), 64, "sha256 hash must be 64 hex chars");
+    }
+}
+
+#[test]
+fn test_edge_case_new_event_topic_coverage() {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let schemas_dir = manifest_dir.join("../../target/event_schemas");
+    let index_file = schemas_dir.join("index.json");
+
+    let index_content = fs::read_to_string(&index_file).expect("readable index.json");
+    let catalog: serde_json::Value = serde_json::from_str(&index_content).expect("json parse");
+
+    let topics_map = catalog["topics"].as_object().unwrap();
+
+    let required_topics = [
+        "att_sub", "att_rev", "att_mig", "att_cl", "role_gr", "role_rv", "paused", "unpaus",
+        "fee_cfg", "ff_cfg", "rate_lm", "kr_prop", "kr_conf", "kr_canc", "kr_emer", "biz_reg",
+        "biz_apr", "biz_sus", "biz_rea", "ph_upd", "att_exp", "mul_iss",
+        "ep_ckpt", "ep_adv", "bkf_chk",
+    ];
+
+    for expected in &required_topics {
+        assert!(
+            topics_map.contains_key(*expected),
+            "emitted index.json catalog must contain topic '{}'",
+            expected
+        );
+    }
 }

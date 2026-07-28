@@ -51,6 +51,10 @@ See [docs/offchain-proof-hash.md](docs/offchain-proof-hash.md) for the full spec
 | `remove_authorized_analytics(caller, analytics)`                                                      | Remove an authorized analytics address (admin only).                                                                           |
 | `set_anomaly(updater, business, period, flags, score)`                                                | Store anomaly flags and risk score (authorized updaters only; score 0–100).                                                    |
 | `get_anomaly(business, period)`                                                                       | Returns `Option<(u32, u32)>` (flags, score) for lenders.                                                                       |
+| `move_to_archive(caller, candidates, age_threshold_seconds, limit)`                                   | Admin: move attestations older than `age_threshold_seconds` to archive tier; preserves lightweight pointer. Returns count archived. |
+| `get_archived_attestation(business, period)`                                                          | Returns full `AttestationData` from archive tier only, or `None` if still active.                                               |
+| `get_archive_pointer(business, period)`                                                               | Returns `Option<ArchivePointerRecord>` (merkle_root, archive_index, archived_at) for an archived attestation.                  |
+| `get_archive_index()`                                                                                 | Returns the global archive index (total attestations ever archived).                                                            |
 | Method | Description |
 |--------|-------------|
 | `submit_attestation(business, period, merkle_root, timestamp, version)` | Store attestation. Panics if one already exists for this business and period. |
