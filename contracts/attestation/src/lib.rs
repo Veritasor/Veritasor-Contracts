@@ -61,7 +61,7 @@ pub use dispute::{
 pub use dynamic_fees::{compute_fee, DataKey, FeeConfig};
 pub use events::{
     AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
-    AttestationSubmittedEvent, ProofHashUpdatedEvent,
+    AttestationSubmittedEvent, EpochCheckpointEvent, ProofHashUpdatedEvent,
 };
 pub use fees::{collect_flat_fee, FlatFeeConfig};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
@@ -433,6 +433,13 @@ impl AttestationContract {
             expiry_timestamp,
         );
 
+        // ── Epoch checkpoint ──────────────────────────────────
+        // Update per-epoch accumulators then emit a reproducible checkpoint
+        // so third parties can reconstruct epoch state deterministically.
+        let epoch_subs = dynamic_fees::increment_epoch_submissions(env, period, 1);
+        let epoch_fees = dynamic_fees::accumulate_epoch_fees(env, period, total_fee);
+        events::emit_epoch_checkpoint(env, period, merkle_root, epoch_subs, epoch_fees);
+
         rate_limit::record_submission(env, business);
 
         // Extend TTL after writing
@@ -515,6 +522,17 @@ impl AttestationContract {
                 total_fee,
                 &item.proof_hash,
                 item.expiry_timestamp,
+            );
+
+            // ── Epoch checkpoint per batch item ──────────────
+            let epoch_subs = dynamic_fees::increment_epoch_submissions(env, &item.period, 1);
+            let epoch_fees = dynamic_fees::accumulate_epoch_fees(env, &item.period, total_fee);
+            events::emit_epoch_checkpoint(
+                env,
+                &item.period,
+                &item.merkle_root,
+                epoch_subs,
+                epoch_fees,
             );
 
             rate_limit::record_submission(env, &item.business);
@@ -1717,3 +1735,5 @@ mod ttl_test;
 mod verify_attestation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod verify_attestations_batch_test;
+#[cfg(test)]
+mod epoch_checkpoint_test;
