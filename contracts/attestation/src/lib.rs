@@ -2022,6 +2022,100 @@ impl AttestationContract {
         events::emit_attestation_revoked(&env, &business, &period, &caller, &reason, reason_code);
     }
 
+    /// Atomically revoke an attestation and clean up its storage entries.
+    ///
+    /// Combines the standard revocation flow with active-storage cleanup:
+    ///
+    /// 1. **Authorization** — caller must be the business owner or hold ADMIN
+    ///    role, and the contract must not be paused.
+    /// 2. **Revocation** — if the attestation has not already been revoked, a
+    ///    revocation record is written and an `AttestationRevoked` event is
+    ///    emitted.
+    /// 3. **Cleanup** — the attestation data, extended metadata, and the
+    ///    per-business revocation-index entry are all removed.  After this
+    ///    call, `get_attestation` returns `None`.
+    /// 4. **Events** — both `Revoked` (if not already revoked) and `Cleaned`
+    ///    events are emitted on success.
+    ///
+    /// This method is idempotent with respect to the **already-revoked** edge
+    /// case: if the attestation was independently marked as revoked but its
+    /// storage entries were never purged, the function still performs the
+    /// cleanup seamlessly without panicking or corrupting state.
+    ///
+    /// # Panics
+    ///
+    /// - Caller does not hold ADMIN or business-owner authorisation.
+    /// - Contract is paused.
+    /// - Attestation does not exist for `(business, period)`.
+    pub fn revoke_and_cleanup(
+        env: Env,
+        caller: Address,
+        business: Address,
+        period: String,
+        reason: String,
+        _nonce: u64,
+    ) {
+        // 1. Pause check — cheapest guard first.
+        access_control::require_not_paused(&env);
+        // 2. Caller must authorize.
+        caller.require_auth();
+
+        // 3. Attestation must exist.
+        let key = DataKey::Attestation(business.clone(), period.clone());
+        assert!(
+            env.storage().instance().has(&key),
+            "attestation not found"
+        );
+
+        // 4. Role / ownership check.
+        let caller_is_admin = caller == dynamic_fees::get_admin(&env)
+            || access_control::has_role(&env, &caller, ROLE_ADMIN);
+        assert!(
+            caller_is_admin || caller == business,
+            "caller must be ADMIN or the business owner"
+        );
+
+        // 5. If not already revoked, record the revocation and emit Revoked.
+        if !dispute::is_attestation_revoked(&env, &business, &period) {
+            let revocation: RevocationData =
+                (caller.clone(), env.ledger().timestamp(), reason.clone());
+            dispute::record_revocation(&env, &business, &period, &revocation);
+            let reason_code = events::RevocationReason::from_reason_str(&reason);
+            events::emit_attestation_revoked(
+                &env,
+                &business,
+                &period,
+                &caller,
+                &reason,
+                reason_code,
+            );
+        }
+
+        // 6. Remove attestation data from active storage.
+        env.storage().instance().remove(&key);
+
+        // 7. Remove extended metadata.
+        extended_metadata::remove_metadata(&env, &business, &period);
+
+        // 8. Remove this period from the per-business revocation index.
+        let revoked_periods = dispute::get_revoked_periods(&env, &business);
+        let mut new_periods: Vec<String> = Vec::new(&env);
+        for p in revoked_periods.iter() {
+            if p != period {
+                new_periods.push_back(p);
+            }
+        }
+        dispute::set_revoked_periods(&env, &business, &new_periods);
+
+        // 9. Emit cleaned event.
+        events::emit_attestation_cleaned_up(&env, &business, &period);
+
+        // 10. Bump TTL after storage modifications.
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+    }
+
     /// Return `true` when the attestation has been revoked.
     ///
     /// This is a thin public wrapper around [`dispute::is_attestation_revoked`]
