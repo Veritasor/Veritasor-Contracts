@@ -7,7 +7,7 @@ extern crate std;
 
 use core::cmp::Ordering;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, BytesN, Env, String, Symbol, TryIntoVal, Vec,
+    contract, contractimpl, contracttype, token, Address, BytesN, Env, String, Symbol, TryIntoVal, Vec,
 };
 
 use veritasor_common::replay_protection;
@@ -63,7 +63,7 @@ pub use events::{
     AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
     AttestationSubmittedEvent, ProofHashUpdatedEvent,
 };
-pub use fees::{collect_flat_fee, FlatFeeConfig};
+pub use fees::{collect_flat_fee, CollectorRotationProposal, FlatFeeConfig};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
 pub use rate_limit::RateLimitConfig;
 pub use registry::{BusinessRecord, BusinessStatus};
@@ -235,6 +235,54 @@ impl AttestationContract {
             config.enabled,
             &admin,
         );
+    }
+
+    pub fn propose_collector_rotation(
+        env: Env,
+        caller: Address,
+        new_collector: Address,
+    ) {
+        let current_config = fees::get_flat_fee_config(&env).expect("flat fee not configured");
+        assert!(
+            caller == current_config.collector,
+            "only current collector may propose rotation"
+        );
+
+        let current_balance = token::Client::new(&env, &current_config.token)
+            .balance(&current_config.collector);
+
+        fees::propose_collector_rotation(&env, &caller, &new_collector);
+        events::emit_collector_rotation_proposed(
+            &env,
+            &current_config.collector,
+            &new_collector,
+            &current_config.token,
+            current_balance,
+        );
+    }
+
+    pub fn accept_collector_rotation(env: Env, caller: Address) {
+        let proposal = fees::get_pending_collector_rotation(&env)
+            .expect("no pending collector rotation");
+        assert!(
+            caller == proposal.new_collector,
+            "only proposed new collector may accept rotation"
+        );
+
+        fees::accept_collector_rotation(&env, &caller);
+        events::emit_collector_rotation_accepted(
+            &env,
+            &proposal.old_collector,
+            &proposal.new_collector,
+            &proposal.token,
+            proposal.escrowed_amount,
+        );
+    }
+
+    pub fn get_pending_collector_rotation(
+        env: Env,
+    ) -> Option<CollectorRotationProposal> {
+        fees::get_pending_collector_rotation(&env)
     }
 
     pub fn set_attestor_staking_contract(env: Env, caller: Address, staking_contract: Address) {

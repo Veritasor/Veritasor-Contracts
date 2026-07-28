@@ -165,6 +165,66 @@ fn test_collect_flat_fee_success() {
     assert_eq!(record.3, 500);
 }
 
+#[test]
+fn test_collector_rotation_proposal_and_accept_transfers_escrowed_fees() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    let new_collector = Address::generate(&env);
+    let business = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = token_contract.address().clone();
+
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &0u64);
+
+    client.configure_flat_fee(&token_addr, &collector, &500, &true);
+
+    mint(&env, &token_addr, &business, 1_500);
+    submit(&client, &env, &business, "2026-02", 1);
+    assert_eq!(balance(&env, &token_addr, &collector), 500);
+
+    client.propose_collector_rotation(&collector, &new_collector);
+    assert!(client.get_pending_collector_rotation().is_some());
+    assert_eq!(balance(&env, &token_addr, &collector), 0);
+    assert_eq!(balance(&env, &token_addr, &new_collector), 0);
+
+    submit(&client, &env, &business, "2026-03", 2);
+    assert_eq!(balance(&env, &token_addr, &collector), 500);
+    assert_eq!(balance(&env, &token_addr, &new_collector), 0);
+
+    client.accept_collector_rotation(&new_collector);
+    assert!(client.get_pending_collector_rotation().is_none());
+    assert_eq!(balance(&env, &token_addr, &collector), 500);
+    assert_eq!(balance(&env, &token_addr, &new_collector), 500);
+
+    let business2 = Address::generate(&env);
+    mint(&env, &token_addr, &business2, 1_000);
+    submit(&client, &env, &business2, "2026-04", 3);
+    assert_eq!(balance(&env, &token_addr, &new_collector), 1_000);
+}
+
+#[test]
+#[should_panic(expected = "no pending collector rotation")]
+fn test_accept_collector_rotation_without_proposal() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &0u64);
+
+    client.accept_collector_rotation(&collector);
+}
+
 /// When the flat fee is disabled, no tokens are transferred and record.3 == 0.
 #[test]
 fn test_flat_fee_disabled() {

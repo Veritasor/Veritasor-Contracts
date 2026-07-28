@@ -27,12 +27,15 @@ use crate::access_control::ROLE_ADMIN;
 use crate::events::{
     AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent,
     BusinessApprovedEvent, BusinessReactivatedEvent, BusinessRegisteredEvent,
-    BusinessSuspendedEvent, FeeConfigChangedEvent, FlatFeeConfigChangedEvent,
-    KeyRotationCancelledEvent, KeyRotationConfirmedEvent, KeyRotationEmergencyEvent,
+    BusinessSuspendedEvent, CollectorRotationAcceptedEvent,
+    CollectorRotationProposedEvent, FeeConfigChangedEvent,
+    FlatFeeConfigChangedEvent, KeyRotationCancelledEvent,
+    KeyRotationConfirmedEvent, KeyRotationEmergencyEvent,
     KeyRotationProposedEvent, PauseChangedEvent, ProofHashUpdatedEvent,
     RateLimitConfigChangedEvent, RoleChangedEvent, EVENT_SCHEMA_VERSION,
     TOPIC_ATTESTATION_MIGRATED, TOPIC_ATTESTATION_REVOKED, TOPIC_ATTESTATION_SUBMITTED,
     TOPIC_BIZ_APPROVED, TOPIC_BIZ_REACTIVATE, TOPIC_BIZ_REGISTERED, TOPIC_BIZ_SUSPENDED,
+    TOPIC_COLLECTOR_ROTATION_ACCEPTED, TOPIC_COLLECTOR_ROTATION_PROPOSED,
     TOPIC_FEE_CONFIG, TOPIC_FLAT_FEE_CONFIG, TOPIC_KEY_ROTATION_CANCELLED,
     TOPIC_KEY_ROTATION_CONFIRMED, TOPIC_KEY_ROTATION_EMERGENCY, TOPIC_KEY_ROTATION_PROPOSED,
     TOPIC_PAUSED, TOPIC_PROOF_HASH_UPDATED, TOPIC_RATE_LIMIT, TOPIC_ROLE_GRANTED,
@@ -491,6 +494,64 @@ fn test_flat_fee_config_changed_schema_snapshot() {
     assert_eq!(ev.amount, 500i128);
     assert!(ev.enabled);
     assert_eq!(ev.changed_by, changed_by);
+}
+
+#[test]
+fn test_collector_rotation_proposed_schema_snapshot() {
+    let (env, _client, _admin) = setup();
+    let old_collector = Address::generate(&env);
+    let new_collector = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    crate::events::emit_collector_rotation_proposed(
+        &env,
+        &old_collector,
+        &new_collector,
+        &token,
+        1_000i128,
+    );
+
+    let (_cid, topics, data) = env.events().all().last().unwrap();
+    assert_eq!(topics.len(), 1);
+    assert_eq!(
+        Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+        TOPIC_COLLECTOR_ROTATION_PROPOSED,
+    );
+
+    let ev = CollectorRotationProposedEvent::try_from_val(&env, &data).unwrap();
+    assert_eq!(ev.old_collector, old_collector);
+    assert_eq!(ev.new_collector, new_collector);
+    assert_eq!(ev.token, token);
+    assert_eq!(ev.escrowed_amount, 1_000i128);
+}
+
+#[test]
+fn test_collector_rotation_accepted_schema_snapshot() {
+    let (env, _client, _admin) = setup();
+    let old_collector = Address::generate(&env);
+    let new_collector = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    crate::events::emit_collector_rotation_accepted(
+        &env,
+        &old_collector,
+        &new_collector,
+        &token,
+        500i128,
+    );
+
+    let (_cid, topics, data) = env.events().all().last().unwrap();
+    assert_eq!(topics.len(), 1);
+    assert_eq!(
+        Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+        TOPIC_COLLECTOR_ROTATION_ACCEPTED,
+    );
+
+    let ev = CollectorRotationAcceptedEvent::try_from_val(&env, &data).unwrap();
+    assert_eq!(ev.old_collector, old_collector);
+    assert_eq!(ev.new_collector, new_collector);
+    assert_eq!(ev.token, token);
+    assert_eq!(ev.escrowed_amount, 500i128);
 }
 
 #[test]

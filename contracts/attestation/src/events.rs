@@ -108,6 +108,10 @@ pub const TOPIC_UNPAUSED: Symbol = symbol_short!("unpaus");
 pub const TOPIC_FEE_CONFIG: Symbol = symbol_short!("fee_cfg");
 /// Topic: flat fee configuration updated
 pub const TOPIC_FLAT_FEE_CONFIG: Symbol = symbol_short!("ff_cfg");
+/// Topic: collector rotation proposed
+pub const TOPIC_COLLECTOR_ROTATION_PROPOSED: Symbol = symbol_short!("cr_prop");
+/// Topic: collector rotation accepted
+pub const TOPIC_COLLECTOR_ROTATION_ACCEPTED: Symbol = symbol_short!("cr_acc");
 /// Topic: rate-limit configuration updated
 pub const TOPIC_RATE_LIMIT: Symbol = symbol_short!("rate_lm");
 /// Topic: key rotation proposed (time-locked)
@@ -290,6 +294,34 @@ pub struct FlatFeeConfigChangedEvent {
     pub enabled: bool,
     /// Address that made the configuration change.
     pub changed_by: Address,
+}
+
+/// Normalized payload for `CollectorRotationProposed` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CollectorRotationProposedEvent {
+    /// Current collector address proposing the rotation.
+    pub old_collector: Address,
+    /// Proposed new collector address.
+    pub new_collector: Address,
+    /// Token contract used for the flat fee.
+    pub token: Address,
+    /// Amount of token moved into escrow for the pending proposal.
+    pub escrowed_amount: i128,
+}
+
+/// Normalized payload for `CollectorRotationAccepted` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CollectorRotationAcceptedEvent {
+    /// Previous collector address.
+    pub old_collector: Address,
+    /// New collector address now in effect.
+    pub new_collector: Address,
+    /// Token contract used for the flat fee.
+    pub token: Address,
+    /// Amount of token released from escrow.
+    pub escrowed_amount: i128,
 }
 
 // ── Rate limiting ─────────────────────────────────────────────────
@@ -797,6 +829,42 @@ pub fn emit_flat_fee_config_changed(
         changed_by: changed_by.clone(),
     };
     env.events().publish((TOPIC_FLAT_FEE_CONFIG,), event);
+}
+
+/// Emit a `CollectorRotationProposed` event.
+pub fn emit_collector_rotation_proposed(
+    env: &Env,
+    old_collector: &Address,
+    new_collector: &Address,
+    token: &Address,
+    escrowed_amount: i128,
+) {
+    let event = CollectorRotationProposedEvent {
+        old_collector: old_collector.clone(),
+        new_collector: new_collector.clone(),
+        token: token.clone(),
+        escrowed_amount,
+    };
+    env.events()
+        .publish((TOPIC_COLLECTOR_ROTATION_PROPOSED,), event);
+}
+
+/// Emit a `CollectorRotationAccepted` event.
+pub fn emit_collector_rotation_accepted(
+    env: &Env,
+    old_collector: &Address,
+    new_collector: &Address,
+    token: &Address,
+    escrowed_amount: i128,
+) {
+    let event = CollectorRotationAcceptedEvent {
+        old_collector: old_collector.clone(),
+        new_collector: new_collector.clone(),
+        token: token.clone(),
+        escrowed_amount,
+    };
+    env.events()
+        .publish((TOPIC_COLLECTOR_ROTATION_ACCEPTED,), event);
 }
 
 // ── Rate limiting ─────────────────────────────────────────────────
