@@ -518,7 +518,7 @@ proptest! {
         }
 
         // ── Post-condition: stored ranges must match accepted set ──
-        let stored = get_ranges(&env, &contract_id, &business);
+        let stored = env.as_contract(&contract_id, || get_ranges(&env, &business));
 
         // All stored ranges must be non-revoked (no revocation happens in this test).
         let mut stored_active: StdVec<(u32, u32)> = StdVec::new();
@@ -752,4 +752,128 @@ fn test_multi_period_boundary_inverted_extremes() {
         &business, &1u32, &0u32, &root2, &1000u64, &1u32, &None, &None,
     );
     assert!(r2.is_err(), "[1, 0] inverted must be rejected");
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Issue #503: Revocation semantics for a partially-overlapping range
+//
+//  `revoke_multi_period_attestation(business, merkle_root)` takes only a
+//  `merkle_root` — it has no `start_period`/`end_period` parameters and no
+//  notion of a sub-range. It looks the target range up by its exact root
+//  via `MultiPeriodKey::RootIndex` and flips `revoked = true` on that whole
+//  stored `AttestationRange`. There is no field on `AttestationRange` to
+//  represent a partially-revoked sub-range, and no code path that splits
+//  an entry.
+//
+//  Consequently "submit [10,30], revoke [20,40]" has no direct contract
+//  call: you cannot revoke a range you never submitted, because revocation
+//  is keyed by the root of an existing entry, not by arbitrary period
+//  bounds. These tests pin the actual, current behaviour:
+//
+//    1. Revocation is always whole-entry (never a partial/split state).
+//    2. There is no way to target an unsubmitted sub-range like [20,40]
+//       when the stored entry covers [10,30] — the call panics with
+//       "root not found" because no root was ever indexed for [20,40].
+//    3. The zero-length-range edge case (a single-period entry) is revoked
+//       whole-entry the same way as any other range.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_revocation_is_whole_entry_not_partial() {
+    let (env, contract_id, client) = setup();
+    let business = Address::generate(&env);
+    let root = BytesN::from_array(&env, &period_to_root(202410));
+
+    // Submit a range covering [10, 30].
+    client.submit_multi_period_attestation(
+        &business, &10u32, &30u32, &root, &1000u64, &1u32, &None, &None,
+    );
+
+    // Revoke by the entry's own root (the only supported revocation path).
+    client.revoke_multi_period_attestation(&business, &root);
+
+    let stored = client.get_multi_period_ranges(&business);
+    assert_eq!(stored.len(), 1);
+    let entry = stored.get(0).unwrap();
+
+    // Whole-entry revocation: the full [10,30] range is now revoked, not a
+    // split [20,30] or [10,19]/[31,30] pair — `AttestationRange` has no
+    // fields that could represent such a split.
+    assert!(entry.revoked);
+    assert_eq!(entry.start_period, 10u32);
+    assert_eq!(entry.end_period, 30u32);
+}
+
+#[test]
+#[should_panic(expected = "root not found")]
+fn test_revoke_unsubmitted_overlapping_range_panics() {
+    let (env, contract_id, client) = setup();
+    let business = Address::generate(&env);
+    let root_10_30 = BytesN::from_array(&env, &period_to_root(202411));
+
+    // Submit only [10, 30].
+    client.submit_multi_period_attestation(
+        &business, &10u32, &30u32, &root_10_30, &1000u64, &1u32, &None, &None,
+    );
+
+    // [20, 40] was never submitted, so no root was ever indexed for it.
+    // Revocation is keyed by root, not by period bounds, so there is no
+    // way to express "revoke the [20,40] window" directly — any attempt
+    // to revoke a root that doesn't correspond to a stored entry panics.
+    let unsubmitted_root = BytesN::from_array(&env, &period_to_root(202499));
+    client.revoke_multi_period_attestation(&business, &unsubmitted_root);
+}
+
+#[test]
+fn test_zero_length_range_revocation_is_whole_entry() {
+    let (env, contract_id, client) = setup();
+    let business = Address::generate(&env);
+    let root = BytesN::from_array(&env, &period_to_root(202412));
+
+    // Zero-length / single-period range: start_period == end_period.
+    client.submit_multi_period_attestation(
+        &business, &25u32, &25u32, &root, &1000u64, &1u32, &None, &None,
+    );
+
+    client.revoke_multi_period_attestation(&business, &root);
+
+    let stored = client.get_multi_period_ranges(&business);
+    assert_eq!(stored.len(), 1);
+    let entry = stored.get(0).unwrap();
+
+    // Same whole-entry semantics apply regardless of range width.
+    assert!(entry.revoked);
+    assert_eq!(entry.start_period, 25u32);
+    assert_eq!(entry.end_period, 25u32);
+}
+
+#[test]
+fn test_revoking_one_entry_does_not_affect_overlapping_candidate_window() {
+    let (env, contract_id, client) = setup();
+    let business = Address::generate(&env);
+    let root_a = BytesN::from_array(&env, &period_to_root(202413));
+
+    // Entry covers [10, 30].
+    client.submit_multi_period_attestation(
+        &business, &10u32, &30u32, &root_a, &1000u64, &1u32, &None, &None,
+    );
+    client.revoke_multi_period_attestation(&business, &root_a);
+
+    // Once [10,30] is revoked, the overlap check in
+    // `submit_multi_period_attestation` skips revoked ranges, so a new
+    // entry covering the "would-be [20,40] revocation window" (or any
+    // overlapping window) may now be submitted without panicking. This
+    // confirms revocation clears the whole entry from the overlap set —
+    // not just a sub-portion of it.
+    let root_b = BytesN::from_array(&env, &period_to_root(202414));
+    client.submit_multi_period_attestation(
+        &business, &20u32, &40u32, &root_b, &2000u64, &1u32, &None, &None,
+    );
+
+    let stored = client.get_multi_period_ranges(&business);
+    assert_eq!(stored.len(), 2);
+    assert!(stored.get(0).unwrap().revoked);
+    assert!(!stored.get(1).unwrap().revoked);
+    assert_eq!(stored.get(1).unwrap().start_period, 20u32);
+    assert_eq!(stored.get(1).unwrap().end_period, 40u32);
 }
