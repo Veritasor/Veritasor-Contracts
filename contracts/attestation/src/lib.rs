@@ -8,7 +8,7 @@ extern crate std;
 
 use core::cmp::Ordering;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, BytesN, Env, String, Symbol, Vec,
+    contract, contractimpl, contracttype, Address, BytesN, Env, IntoVal, String, Symbol, Vec,
 };
 
 use veritasor_common::replay_protection;
@@ -122,7 +122,7 @@ pub const MAX_BATCH_SIZE_VERIFY: u32 = 30;
 #[soroban_sdk::contractclient(name = "AttestorStakingClient")]
 pub trait AttestorStakingContractTrait {
     fn is_eligible(env: Env, attestor: Address) -> bool;
-    fn slash(env: Env, attestor: Address, amount: i128, dispute_id: u64) -> u32; // Assuming returning u32 or outcome, but we might not need the return value in our trait if we don't use it, wait, let's just make it return symbol or whatever. Actually, we just need `slash(env: Env, attestor: Address, amount: i128, dispute_id: u64)` and we don't have to capture the return value if it's an enum, but actually we can just not return anything or return `soroban_sdk::Val`. Or we can just omit it if we don't strictly need it.
+    fn slash(env: Env, attestor: Address, amount: i128, dispute_id: u64) -> u32;
 }
 
 #[soroban_sdk::contractclient(name = "AuditLogClient")]
@@ -141,10 +141,11 @@ pub trait AuditLogContractTrait {
 #[contract]
 pub struct AttestationContract;
 
-#[cfg(all(test, feature = "full-tests"))]
-mod active_submission_test;
 #[cfg(test)]
 mod audit_log_integration_test;
+
+#[cfg(all(test, feature = "full-tests"))]
+mod active_submission_test;
 
 #[contractimpl]
 impl AttestationContract {
@@ -268,17 +269,13 @@ impl AttestationContract {
             .get(&DataKey::AttestorStakingContract)
     }
 
-    pub fn set_audit_log_contract(env: Env, caller: Address, audit_log_contract: Address) {
+    pub fn set_audit_log_contract(env: Env, caller: Address, audit_log: Address) {
         access_control::require_admin(&env, &caller);
-        env.storage()
-            .instance()
-            .set(&DataKey::AuditLogContract, &audit_log_contract);
+        env.storage().instance().set(&DataKey::AuditLogContract, &audit_log);
     }
 
     pub fn get_audit_log_contract(env: Env) -> Option<Address> {
-        env.storage()
-            .instance()
-            .get(&DataKey::AuditLogContract)
+        env.storage().instance().get(&DataKey::AuditLogContract)
     }
 
     pub fn grant_role(env: Env, caller: Address, account: Address, role: u32) {
@@ -1708,7 +1705,6 @@ impl AttestationContract {
 
         // Execute the slash
         let staking_client = AttestorStakingClient::new(&env, &staking_addr);
-        // We use env.invoke_contract to avoid needing the exact return type of the enum
         let mut args = soroban_sdk::vec![&env];
         args.push_back(attestor.into_val(&env));
         args.push_back(amount.into_val(&env));
@@ -1724,8 +1720,6 @@ impl AttestationContract {
             // 1 is NONCE_CHANNEL_ADMIN in audit-log
             let nonce = audit_client.get_replay_nonce(&current_contract, &1u32);
             let action = String::from_str(&env, "SlashTriggered");
-            
-            // Construct a simple payload string containing the dispute ID and amount
             let payload = String::from_str(&env, "SlashPayload");
 
             audit_client.append(

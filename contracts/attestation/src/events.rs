@@ -135,7 +135,6 @@ pub const TOPIC_PROPOSAL_CLEANED: Symbol = symbol_short!("prp_cl");
 /// Topic: slash triggered
 pub const TOPIC_SLASH_TRIGGERED: Symbol = symbol_short!("slsh_trg");
 
-
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
 //
