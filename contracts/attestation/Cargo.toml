@@ -20,14 +20,11 @@ hex = "0.4"
 [features]
 default = []
 full-tests = []
+kani = []
 
 [dependencies]
 soroban-sdk = "22.0"
 veritasor-common = { path = "../common" }
-# Kani is only pulled in when the kani toolchain is active (`cargo kani`).
-# It is absent from normal `cargo test` / `cargo build` runs, so it does not
-# affect contract size or test execution time.
-kani = { version = "0.57.0", optional = true }
 
 [dev-dependencies]
 arbitrary = { version = "1.4", features = ["derive"] }
