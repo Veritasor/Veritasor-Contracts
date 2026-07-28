@@ -132,6 +132,9 @@ pub const TOPIC_BIZ_REACTIVATE: Symbol = symbol_short!("biz_rea");
 pub const TOPIC_PROOF_HASH_UPDATED: Symbol = symbol_short!("ph_upd");
 /// Topic: proposal cleaned up after expiry + grace period
 pub const TOPIC_PROPOSAL_CLEANED: Symbol = symbol_short!("prp_cl");
+/// Topic: slash triggered
+pub const TOPIC_SLASH_TRIGGERED: Symbol = symbol_short!("slsh_trg");
+
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -472,6 +475,15 @@ pub struct ProposalCleanedEvent {
     pub cleaned_at: u32,
 }
 
+/// Normalized payload for `SlashTriggered` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct SlashTriggeredEvent {
+    pub attestor: Address,
+    pub amount: i128,
+    pub dispute_id: u64,
+}
+
 // ── Attestation lifecycle ─────────────────────────────────────────
 
 /// Emit an `AttestationSubmitted` event.
@@ -619,6 +631,22 @@ pub fn emit_attestation_cleaned_up(env: &Env, business: &Address, period: &Strin
     };
     env.events()
         .publish((TOPIC_ATTESTATION_CLEANED_UP, business.clone()), event);
+}
+
+/// Emit a `SlashTriggered` event.
+pub fn emit_slash_triggered(
+    env: &Env,
+    attestor: &Address,
+    amount: i128,
+    dispute_id: u64,
+) {
+    let event = SlashTriggeredEvent {
+        attestor: attestor.clone(),
+        amount,
+        dispute_id,
+    };
+    env.events()
+        .publish((TOPIC_SLASH_TRIGGERED, attestor.clone()), event);
 }
 
 /// Normalized payload for `AttestationExpiryExtended` events.

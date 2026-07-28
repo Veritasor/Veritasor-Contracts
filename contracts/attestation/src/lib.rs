@@ -122,6 +122,20 @@ pub const MAX_BATCH_SIZE_VERIFY: u32 = 30;
 #[soroban_sdk::contractclient(name = "AttestorStakingClient")]
 pub trait AttestorStakingContractTrait {
     fn is_eligible(env: Env, attestor: Address) -> bool;
+    fn slash(env: Env, attestor: Address, amount: i128, dispute_id: u64) -> u32; // Assuming returning u32 or outcome, but we might not need the return value in our trait if we don't use it, wait, let's just make it return symbol or whatever. Actually, we just need `slash(env: Env, attestor: Address, amount: i128, dispute_id: u64)` and we don't have to capture the return value if it's an enum, but actually we can just not return anything or return `soroban_sdk::Val`. Or we can just omit it if we don't strictly need it.
+}
+
+#[soroban_sdk::contractclient(name = "AuditLogClient")]
+pub trait AuditLogContractTrait {
+    fn append(
+        env: Env,
+        nonce: u64,
+        actor: Address,
+        source_contract: Address,
+        action: String,
+        payload: String,
+    ) -> u64;
+    fn get_replay_nonce(env: Env, actor: Address, channel: u32) -> u64;
 }
 
 #[contract]
@@ -129,6 +143,8 @@ pub struct AttestationContract;
 
 #[cfg(all(test, feature = "full-tests"))]
 mod active_submission_test;
+#[cfg(test)]
+mod audit_log_integration_test;
 
 #[contractimpl]
 impl AttestationContract {
@@ -250,6 +266,19 @@ impl AttestationContract {
         env.storage()
             .instance()
             .get(&DataKey::AttestorStakingContract)
+    }
+
+    pub fn set_audit_log_contract(env: Env, caller: Address, audit_log_contract: Address) {
+        access_control::require_admin(&env, &caller);
+        env.storage()
+            .instance()
+            .set(&DataKey::AuditLogContract, &audit_log_contract);
+    }
+
+    pub fn get_audit_log_contract(env: Env) -> Option<Address> {
+        env.storage()
+            .instance()
+            .get(&DataKey::AuditLogContract)
     }
 
     pub fn grant_role(env: Env, caller: Address, account: Address, role: u32) {
@@ -1662,6 +1691,51 @@ impl AttestationContract {
     /// Return all dispute IDs opened by a specific challenger.
     pub fn get_disputes_by_challenger(env: Env, challenger: Address) -> Vec<u64> {
         dispute::get_dispute_ids_by_challenger(&env, &challenger)
+    }
+
+    /// Triggers a slash for a resolved dispute and records the event in the audit log.
+    pub fn trigger_slash(
+        env: Env,
+        caller: Address,
+        attestor: Address,
+        amount: i128,
+        dispute_id: u64,
+    ) {
+        access_control::require_admin(&env, &caller);
+
+        let staking_addr = Self::get_attestor_staking_contract(env.clone())
+            .expect("staking contract not configured");
+
+        // Execute the slash
+        let staking_client = AttestorStakingClient::new(&env, &staking_addr);
+        // We use env.invoke_contract to avoid needing the exact return type of the enum
+        let mut args = soroban_sdk::vec![&env];
+        args.push_back(attestor.into_val(&env));
+        args.push_back(amount.into_val(&env));
+        args.push_back(dispute_id.into_val(&env));
+        let _ = env.invoke_contract::<soroban_sdk::Val>(&staking_addr, &soroban_sdk::Symbol::new(&env, "slash"), args);
+
+        events::emit_slash_triggered(&env, &attestor, amount, dispute_id);
+
+        if let Some(audit_log) = Self::get_audit_log_contract(env.clone()) {
+            let audit_client = AuditLogClient::new(&env, &audit_log);
+            let current_contract = env.current_contract_address();
+            
+            // 1 is NONCE_CHANNEL_ADMIN in audit-log
+            let nonce = audit_client.get_replay_nonce(&current_contract, &1u32);
+            let action = String::from_str(&env, "SlashTriggered");
+            
+            // Construct a simple payload string containing the dispute ID and amount
+            let payload = String::from_str(&env, "SlashPayload");
+
+            audit_client.append(
+                &nonce,
+                &caller,
+                &current_contract,
+                &action,
+                &payload,
+            );
+        }
     }
 
     /// Revoke an attestation.

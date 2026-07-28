@@ -86,6 +86,8 @@ pub enum DataKey {
     // ── Attestor staking integration ───────────────────────────
     /// Address of the attestor staking contract used to enforce minimum stake.
     AttestorStakingContract,
+    /// Address of the audit log contract for slash events.
+    AuditLogContract,
 
     // ── Fee system ──────────────────────────────────────────────
     /// Contract administrator address.
