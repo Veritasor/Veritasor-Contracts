@@ -402,7 +402,7 @@ fn test_set_fee_enabled_no_config_emits_no_extra_event() {
 
     // The only event present should be from initialize (role_gr), not fee_cfg.
     for (_cid, topics, _data) in env.events().all().iter() {
-        if topics.len() > 0 {
+        if !topics.is_empty() {
             let sym = soroban_sdk::Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
             assert_ne!(
                 sym,

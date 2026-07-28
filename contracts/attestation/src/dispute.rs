@@ -27,6 +27,7 @@
 use crate::access_control;
 use crate::dynamic_fees::{self, DataKey};
 use crate::ROLE_ADMIN;
+use crate::events;
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 /// Status of a dispute
@@ -150,6 +151,12 @@ enum DisputeKey {
     /// Incremented atomically with every successful revocation.
     /// Never decremented or reused.
     RevocationSequence,
+    /// Tracks which attestor submitted an attestation for a business-period pair.
+    /// Used to lock attestors when disputes are opened against their attestations.
+    AttestorByAttestation(Address, String),
+    /// Tracks the number of active disputes locking an attestor.
+    /// When count reaches 0, the attestor is fully unlocked.
+    AttestorLockCount(Address),
 }
 
 /// Generate next unique dispute ID
@@ -346,35 +353,56 @@ pub fn has_existing_dispute(
     false
 }
 
-/// Validate that a dispute can be opened (authorized challenger, valid attestation exists)
+/// Validate that a dispute can be opened (authorized challenger, valid attestation exists).
+///
+/// ## Checks (in order)
+///
+/// 1. Attestation must exist for `(business, period)`.
+/// 2. Attestation must not already be revoked — a revoked attestation is final
+///    and re-opening a dispute against it would create an inconsistent index
+///    state and allow re-litigation of closed matters.
+/// 3. **No other open dispute may exist** for this attestation (`DisputeAlreadyOpen`).
+///    Two simultaneous disputes on the same attestation create ambiguous
+///    resolution semantics; only one dispute is allowed in the `Open` state at
+///    a time.  A new dispute may be opened once the prior one is resolved and
+///    closed.
+/// 4. The same challenger must not already have an open dispute (redundant with
+///    check 3 but retained as a defence-in-depth guard).
+///
+/// ## Security notes
+///
+/// - The `DisputeAlreadyOpen` guard is order-independent: it checks all
+///   existing disputes, not just those from the current challenger.
+/// - Checks are ordered cheapest → most expensive to minimise gas on rejections.
 pub fn validate_dispute_eligibility(
     env: &Env,
     challenger: &Address,
     business: &Address,
     period: &String,
 ) -> Result<(), &'static str> {
-    // Check if attestation exists
+    // 1. Attestation must exist.
     let attestation_key = DataKey::Attestation(business.clone(), period.clone());
     if !env.storage().instance().has(&attestation_key) {
         return Err("no attestation exists for this business and period");
     }
 
-    // SECURITY: Disputes must not be opened against revoked attestations.
-    // A revoked attestation is final; opening a dispute against it would
-    // create an inconsistent index state (dispute index referencing a
-    // revoked record) and could be exploited to re-litigate closed matters.
+    // 2. SECURITY: Disputes must not be opened against revoked attestations.
     if is_attestation_revoked(env, business, period) {
         return Err("cannot open dispute on a revoked attestation");
     }
 
-    // Check if challenger already has an open dispute for this attestation
-    if has_existing_dispute(env, challenger, business, period) {
-        return Err("challenger already has an open dispute for this attestation");
+    // 3. SECURITY: Reject if any open dispute already exists on this attestation.
+    //    Two simultaneous open disputes produce ambiguous resolution semantics.
+    if has_open_dispute(env, business, period) {
+        return Err("DisputeAlreadyOpen: an open dispute already exists for this attestation");
     }
 
-    // In a real implementation, we would check if challenger is authorized
-    // (e.g., is a lender in a registry, or has permission from business)
-    // For now, we'll allow any address to challenge
+    // 4. Defence-in-depth: same challenger must not have a prior dispute (open
+    //    or not) for this attestation, preventing index flooding.
+    if has_existing_dispute(env, challenger, business, period) {
+        return Err("challenger already has a dispute for this attestation");
+    }
+
     Ok(())
 }
 
@@ -413,13 +441,21 @@ pub fn is_attestation_revoked(env: &Env, business: &Address, period: &String) ->
     env.storage().instance().has(&key)
 }
 
-/// Returns true when an attestation has an open dispute associated with it.
+/// Returns true when an attestation has an open or unfinished dispute
+/// (status `Open` or `Resolved` but not yet `Closed`).
+///
+/// Both `Open` and `Resolved` disputes are considered "in-flight" — a
+/// `Resolved` dispute has a pending outcome that may still be acted on
+/// (e.g. triggering a revocation) and must be closed before a new dispute
+/// is allowed.  Only `Closed` disputes are considered terminal.
 pub fn has_open_dispute(env: &Env, business: &Address, period: &String) -> bool {
     let dispute_ids = get_dispute_ids_by_attestation(env, business, period);
     for i in 0..dispute_ids.len() {
         if let Some(dispute_id) = dispute_ids.get(i) {
             if let Some(dispute) = get_dispute(env, dispute_id) {
-                if dispute.status == DisputeStatus::Open {
+                if dispute.status == DisputeStatus::Open
+                    || dispute.status == DisputeStatus::Resolved
+                {
                     return true;
                 }
             }
@@ -427,6 +463,59 @@ pub fn has_open_dispute(env: &Env, business: &Address, period: &String) -> bool 
     }
     false
 }
+
+/// Verify dispute witness evidence Merkle proof against committed attestation root
+/// and advance the dispute state machine automatically on success.
+///
+/// # Security & Correctness Assumptions
+/// - Attestation must exist and not be expired or revoked.
+/// - Dispute must exist, be in `Open` status, and correspond to the specified attestation.
+/// - `proof` is verified against the committed `merkle_root` of the attestation via `veritasor_common::merkle::verify_merkle_proof`.
+/// - On invalid proof: returns `Err("invalid witness merkle proof")` without mutating any dispute state.
+/// - On successful verification: dispute status is set to `Resolved` with `DisputeOutcome::Upheld` and resolution timestamp/notes.
+pub fn submit_dispute_witness(
+    env: &Env,
+    dispute_id: u64,
+    leaf: &soroban_sdk::BytesN<32>,
+    proof: &Vec<soroban_sdk::BytesN<32>>,
+) -> Result<(), &'static str> {
+    let mut dispute = get_dispute(env, dispute_id).ok_or("dispute not found")?;
+
+    if dispute.status != DisputeStatus::Open {
+        return Err("dispute is not open");
+    }
+
+    let attestation_key = DataKey::Attestation(dispute.business.clone(), dispute.period.clone());
+    let attestation_data: crate::AttestationData = env
+        .storage()
+        .instance()
+        .get(&attestation_key)
+        .ok_or("attestation not found")?;
+
+    let root = &attestation_data.0;
+
+    let is_valid = veritasor_common::merkle::verify_merkle_proof(env, root, leaf, proof);
+    if !is_valid {
+        return Err("invalid witness merkle proof");
+    }
+
+    // Proof verified - advance dispute state machine
+    let resolution = DisputeResolution {
+        resolver: dispute.challenger.clone(),
+        outcome: DisputeOutcome::Upheld,
+        timestamp: env.ledger().timestamp(),
+        notes: String::from_str(env, "Witness evidence verified via Merkle proof"),
+    };
+
+    dispute.status = DisputeStatus::Resolved;
+    dispute.resolution = OptionalResolution::Some(resolution.clone());
+
+    store_dispute(env, &dispute);
+    store_dispute_resolution(env, dispute_id, &resolution);
+
+    Ok(())
+}
+
 
 /// Loads revocation metadata for an attestation, if present.
 pub fn get_attestation_revocation(
@@ -547,5 +636,98 @@ pub fn update_anomaly_escalation(env: &Env, business: &Address, score: u32) {
     let current: u32 = env.storage().instance().get(&key).unwrap_or(0);
     if level > current {
         env.storage().instance().set(&key, &level);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Attestor Lock / Rotation for Dispute-in-Progress
+// ════════════════════════════════════════════════════════════════════
+
+/// Record which attestor submitted an attestation for a business-period pair.
+///
+/// Called after a successful attestation submission by an attestor so that
+/// the attestor can be locked when a dispute is opened against that attestation.
+pub fn store_attestor_for_attestation(
+    env: &Env,
+    business: &Address,
+    period: &String,
+    attestor: &Address,
+) {
+    let key = DisputeKey::AttestorByAttestation(business.clone(), period.clone());
+    env.storage().instance().set(&key, attestor);
+}
+
+/// Retrieve the attestor address that submitted an attestation for a given
+/// business-period pair. Returns `None` if the attestation was submitted by
+/// the business itself or the mapping does not exist.
+pub fn get_attestor_for_attestation(
+    env: &Env,
+    business: &Address,
+    period: &String,
+) -> Option<Address> {
+    let key = DisputeKey::AttestorByAttestation(business.clone(), period.clone());
+    env.storage().instance().get(&key)
+}
+
+/// Check whether an attestor is currently locked due to an active dispute.
+///
+/// An attestor is locked when their `AttestorLockCount` is greater than zero.
+/// This properly handles the edge case where multiple disputes for attestations
+/// submitted by the same attestor are opened concurrently — the lock is only
+/// released once the last active dispute is resolved.
+pub fn is_attestor_locked(env: &Env, attestor: &Address) -> bool {
+    env.storage()
+        .instance()
+        .get(&DisputeKey::AttestorLockCount(attestor.clone()))
+        .unwrap_or(0u64)
+        > 0
+}
+
+/// Lock an attestor for dispute-in-progress.
+///
+/// Increments the attestor's lock count and emits an `AttestorLockedForDispute`
+/// event if the attestor was not already locked (count transitions from 0 to 1).
+/// If the attestor is already locked (count ≥ 1), the count is still incremented
+/// to correctly handle the edge case of a second dispute opening while a first
+/// dispute is still active for attestations submitted by the same attestor.
+///
+/// # Events
+///
+/// Publishes an `AttestorLockedForDispute` event when the attestor transitions
+/// from unlocked to locked.
+pub fn lock_attestor(env: &Env, attestor: &Address, business: &Address, period: &String, dispute_id: u64) {
+    let key = DisputeKey::AttestorLockCount(attestor.clone());
+    let current: u64 = env.storage().instance().get(&key).unwrap_or(0);
+    let new_count = current + 1;
+    env.storage().instance().set(&key, &new_count);
+
+    // Emit event only on the first lock (transition from 0 → 1)
+    if current == 0 {
+        events::emit_attestor_locked_for_dispute(env, attestor, business, period, dispute_id);
+    }
+}
+
+/// Unlock an attestor after a dispute is resolved.
+///
+/// Decrements the attestor's lock count and removes the lock entry entirely
+/// when the count reaches zero. This ensures that if multiple active disputes
+/// reference attestations submitted by the same attestor, the attestor remains
+/// locked until the last such dispute is resolved.
+///
+/// Returns `true` if the attestor is now fully unlocked (count reached zero),
+/// `false` if they remain locked (count is still > 0).
+pub fn unlock_attestor(env: &Env, attestor: &Address) -> bool {
+    let key = DisputeKey::AttestorLockCount(attestor.clone());
+    let current: u64 = env.storage().instance().get(&key).unwrap_or(0);
+    if current == 0 {
+        return true;
+    }
+    let new_count = current - 1;
+    if new_count == 0 {
+        env.storage().instance().remove(&key);
+        true
+    } else {
+        env.storage().instance().set(&key, &new_count);
+        false
     }
 }

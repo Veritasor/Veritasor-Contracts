@@ -10,7 +10,6 @@ use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, BytesN, Env, String as SorobanString, Symbol, Vec};
 use std::any::Any;
 use std::boxed::Box;
-use std::format;
 use std::panic::catch_unwind;
 use std::string::String as StdString;
 
@@ -79,7 +78,7 @@ fn test_submit_attestation_rejects_unregistered_business() {
 
 #[test]
 fn test_submit_attestation_rejects_pending_business() {
-    let (env, client, admin) = setup();
+    let (env, client, _admin) = setup();
     let business = Address::generate(&env);
     register_pending_business(&env, &business);
     let period = SorobanString::from_str(&env, "2026-01");

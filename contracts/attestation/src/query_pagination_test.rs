@@ -517,7 +517,7 @@ fn limit_one_roundtrip_collects_all_in_order() {
             &1,
             &cursor,
         );
-        if page.len() == 0 {
+        if page.is_empty() {
             break;
         }
         collected.push_back(page.get(0).unwrap().0);

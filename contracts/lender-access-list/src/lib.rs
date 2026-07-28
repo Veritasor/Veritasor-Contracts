@@ -195,11 +195,16 @@ pub const TOPIC_ADM_XFER: Symbol = symbol_short!("adm_xfer");
 //    4. Field order is stable; new optional fields go at the END only.
 // ════════════════════════════════════════════════════════════════════
 
+#[allow(dead_code)]
 const TOPIC_LENDER_REMOVED: Symbol = symbol_short!("lnd_rem");
+#[allow(dead_code)]
 const TOPIC_GOV_GRANTED: Symbol = symbol_short!("gov_add");
+#[allow(dead_code)]
 const TOPIC_GOV_REVOKED: Symbol = symbol_short!("gov_del");
 /// Delegated admin events.
+#[allow(dead_code)]
 const TOPIC_DELEGATED_ADMIN_GRANTED: Symbol = symbol_short!("dlg_ad_gr");
+#[allow(dead_code)]
 const TOPIC_DELEGATED_ADMIN_REVOKED: Symbol = symbol_short!("dlg_ad_rv");
 
 /// Payload for `lnd_set` events (update of an existing lender record).

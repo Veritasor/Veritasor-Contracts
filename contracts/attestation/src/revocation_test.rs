@@ -400,7 +400,7 @@ fn test_revocation_when_paused() {
         1,
     );
 
-    test.pause(test.admin.clone(), 0u64);
+    test.pause(test.admin.clone());
 
     test.revoke_attestation(
         test.admin.clone(),
@@ -1233,8 +1233,6 @@ fn test_closed_dispute_no_reopen_after_revoke() {
 //   8. Revocation of a non-existent attestation is rejected cleanly.
 
 use super::*;
-use soroban_sdk::{Address, BytesN, Env, String};
-
 /// Minimal test harness: registered contract + mock auths + initialized admin.
 fn setup_index_env() -> (Env, AttestationContractClient<'static>, Address) {
     let env = Env::default();

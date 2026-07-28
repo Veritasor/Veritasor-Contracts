@@ -5,7 +5,7 @@ use crate::{
     BusinessConfigContractClient, ComplianceConfig, ConfigKey, CustomFeeConfig, ExpiryConfig,
     IntegrationRequirements, BUSINESS_CONFIG_SCHEMA_VERSION,
 };
-use soroban_sdk::{testutils::Address as _, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{testutils::Address as _, Address, Env, Symbol, Vec};
 
 fn create_test_env() -> (Env, Address, BusinessConfigContractClient<'static>) {
     let env = Env::default();
