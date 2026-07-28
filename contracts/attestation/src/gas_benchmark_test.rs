@@ -660,36 +660,89 @@ fn bench_fee_with_combined_discounts() {
 
 // ── Access Control Benchmarks ───────────────────────────────────────
 
-#[test]
-fn bench_grant_role() {
-    let (env, client, admin) = setup_basic();
+fn append_to_csv(op: &str, cpu: u64, mem: u64) {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    use std::path::PathBuf;
 
-    let account = Address::generate(&env);
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let target_dir = manifest_dir.join("../../target");
+    std::fs::create_dir_all(&target_dir).ok();
+    let csv_path = target_dir.join("gas_benchmarks.csv");
 
-    let before = BudgetSnapshot::capture(&env);
-    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
-    let after = BudgetSnapshot::capture(&env);
-
-    let cost = before.delta(&after);
-    cost.print("grant_role");
-    cost.assert_within_target("grant_role", 250_000, 7_000);
+    let file_exists = csv_path.exists();
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&csv_path) {
+        if !file_exists {
+            let _ = writeln!(file, "operation,cpu_instructions,memory_bytes");
+        }
+        let _ = writeln!(file, "{},{},{}", op, cpu, mem);
+    }
 }
 
 #[test]
-fn bench_has_role() {
+fn bench_role_ops() {
     let (env, client, admin) = setup_basic();
-
     let account = Address::generate(&env);
+
+    // 1. grant_role (new role)
+    let before = BudgetSnapshot::capture(&env);
     client.grant_role(&admin, &account, &ROLE_ATTESTOR);
+    let after = BudgetSnapshot::capture(&env);
+    let cost_new = before.delta(&after);
+    cost_new.print("grant_role (new)");
+    cost_new.assert_within_target("grant_role (new)", 250_000, 7_000);
+    append_to_csv("grant_role_new", cost_new.cpu_insns, cost_new.mem_bytes);
+
+    // 2. grant_role (repeated/existing role)
+    let before = BudgetSnapshot::capture(&env);
+    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
+    let after = BudgetSnapshot::capture(&env);
+    let cost_existing = before.delta(&after);
+    cost_existing.print("grant_role (existing)");
+    cost_existing.assert_within_target("grant_role (existing)", 100_000, 3_000);
+    append_to_csv(
+        "grant_role_existing",
+        cost_existing.cpu_insns,
+        cost_existing.mem_bytes,
+    );
+
+    // 3. has_role
+    let before = BudgetSnapshot::capture(&env);
+    let res = client.has_role(&account, &ROLE_ATTESTOR);
+    let after = BudgetSnapshot::capture(&env);
+    assert!(res);
+    let cost_has = before.delta(&after);
+    cost_has.print("has_role");
+    cost_has.assert_within_target("has_role", 80_000, 2_000);
+    append_to_csv("has_role", cost_has.cpu_insns, cost_has.mem_bytes);
+
+    // 4. revoke_role (keep in holders)
+    client.grant_role(&admin, &account, &ROLE_BUSINESS);
 
     let before = BudgetSnapshot::capture(&env);
-    let result = client.has_role(&account, &ROLE_ATTESTOR);
+    client.revoke_role(&admin, &account, &ROLE_ATTESTOR);
     let after = BudgetSnapshot::capture(&env);
+    let cost_revoke_keep = before.delta(&after);
+    cost_revoke_keep.print("revoke_role (keep)");
+    cost_revoke_keep.assert_within_target("revoke_role (keep)", 150_000, 4_000);
+    append_to_csv(
+        "revoke_role_keep",
+        cost_revoke_keep.cpu_insns,
+        cost_revoke_keep.mem_bytes,
+    );
 
-    assert!(result);
-    let cost = before.delta(&after);
-    cost.print("has_role");
-    cost.assert_within_target("has_role", 80_000, 2_000);
+    // 5. revoke_role (remove from holders)
+    let before = BudgetSnapshot::capture(&env);
+    client.revoke_role(&admin, &account, &ROLE_BUSINESS);
+    let after = BudgetSnapshot::capture(&env);
+    let cost_revoke_remove = before.delta(&after);
+    cost_revoke_remove.print("revoke_role (remove)");
+    cost_revoke_remove.assert_within_target("revoke_role (remove)", 250_000, 7_000);
+    append_to_csv(
+        "revoke_role_remove",
+        cost_revoke_remove.cpu_insns,
+        cost_revoke_remove.mem_bytes,
+    );
 }
 
 // ── Worst-Case Scenarios ────────────────────────────────────────────
@@ -987,6 +1040,71 @@ fn regression_grant_role_threshold() {
     let cost = before.delta(&after);
     cost.print("regression: grant_role");
     cost.assert_within_target("regression_grant_role", 250_000, 7_000);
+}
+
+/// Regression: grant_role (existing role) must stay under threshold.
+#[test]
+fn regression_grant_role_existing_threshold() {
+    let (env, client, admin) = setup_basic();
+    let account = Address::generate(&env);
+    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
+
+    let before = BudgetSnapshot::capture(&env);
+    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("regression: grant_role (existing)");
+    cost.assert_within_target("regression_grant_role_existing", 100_000, 3_000);
+}
+
+/// Regression: revoke_role (keep in holders) must stay under threshold.
+#[test]
+fn regression_revoke_role_keep_threshold() {
+    let (env, client, admin) = setup_basic();
+    let account = Address::generate(&env);
+    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
+    client.grant_role(&admin, &account, &ROLE_BUSINESS);
+
+    let before = BudgetSnapshot::capture(&env);
+    client.revoke_role(&admin, &account, &ROLE_ATTESTOR);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("regression: revoke_role (keep)");
+    cost.assert_within_target("regression_revoke_role_keep", 150_000, 4_000);
+}
+
+/// Regression: revoke_role (remove from holders) must stay under threshold.
+#[test]
+fn regression_revoke_role_remove_threshold() {
+    let (env, client, admin) = setup_basic();
+    let account = Address::generate(&env);
+    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
+
+    let before = BudgetSnapshot::capture(&env);
+    client.revoke_role(&admin, &account, &ROLE_ATTESTOR);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("regression: revoke_role (remove)");
+    cost.assert_within_target("regression_revoke_role_remove", 250_000, 7_000);
+}
+
+/// Regression: has_role must stay under threshold.
+#[test]
+fn regression_has_role_threshold() {
+    let (env, client, admin) = setup_basic();
+    let account = Address::generate(&env);
+    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
+
+    let before = BudgetSnapshot::capture(&env);
+    let _ = client.has_role(&account, &ROLE_ATTESTOR);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("regression: has_role");
+    cost.assert_within_target("regression_has_role", 80_000, 2_000);
 }
 
 /// Regression: is_revoked on active attestation must stay under threshold.
@@ -1333,4 +1451,360 @@ fn revocation_linear_storage() {
     }
 
     std::println!("10 attestations revoked, storage remains bounded");
+}
+
+// ── Batch Cleanup Benchmarks (Issue #482) ────────────────────────────
+//
+// Measures the cost of cleanup_expired_attestation called N times in sequence
+// for N = 1, 10, 100.  Each call removes a single expired attestation, so
+// these benchmarks establish the *per-item* cost and detect any superlinear
+// scaling regression.
+//
+// Methodology
+// -----------
+// 1. Pre-populate N distinct (business, period) pairs with an expiry_timestamp
+//    set in the near future.
+// 2. Advance the ledger clock past the expiry so every attestation is expired.
+// 3. Capture the budget snapshot.
+// 4. Call cleanup_expired_attestation once per pair, measuring the aggregate.
+// 5. Derive per-item cost by dividing aggregate by N.
+// 6. Emit a CSV row:  operation,batch_size,total_cpu,total_mem,per_item_cpu,per_item_mem
+// 7. Assert per-item cost does not exceed the regression ceiling defined below.
+//
+// Regression ceiling
+// ------------------
+// A single cleanup is expected to touch:
+//  - one instance-storage read  (get attestation)
+//  - two access-control reads   (is_revoked, has_open_dispute)
+//  - one instance-storage remove
+//  - one metadata remove
+//  - one event emit
+//
+// Generous ceiling: 600 000 CPU instructions and 20 000 memory bytes per item.
+// If either metric exceeds the ceiling the test fails immediately.
+//
+// The ceiling is intentionally higher than typical observed values so that
+// legitimate refactors do not cause spurious failures, while still catching
+// genuine O(N²) or worse regressions across the three batch sizes.
+
+/// Per-item CPU ceiling (instructions) for cleanup_expired_attestation.
+const CLEANUP_CPU_CEILING_PER_ITEM: u64 = 600_000;
+
+/// Per-item memory ceiling (bytes) for cleanup_expired_attestation.
+const CLEANUP_MEM_CEILING_PER_ITEM: u64 = 20_000;
+
+/// CSV header printed once by the sweep test.
+const CLEANUP_CSV_HEADER: &str =
+    "operation,batch_size,total_cpu,total_mem,per_item_cpu,per_item_mem";
+
+/// Emit a CSV data row for a cleanup batch run.
+fn print_cleanup_csv_row(n: u64, total_cpu: u64, total_mem: u64) {
+    let per_cpu = if n > 0 { total_cpu / n } else { 0 };
+    let per_mem = if n > 0 { total_mem / n } else { 0 };
+    std::println!(
+        "cleanup_expired_attestation,{},{},{},{},{}",
+        n,
+        total_cpu,
+        total_mem,
+        per_cpu,
+        per_mem
+    );
+}
+
+/// Assert per-item cost is within the regression ceiling.
+///
+/// Skips the assertion when the environment returns zero (Soroban mock
+/// environment does not always charge for every op; a zero reading means
+/// the budget tracker is unavailable, not that the operation is free).
+fn assert_cleanup_per_item(n: u64, total_cpu: u64, total_mem: u64, label: &str) {
+    if total_cpu == 0 && total_mem == 0 {
+        std::println!(
+            "{} (n={}): skipping per-item assertion – cost tracking returned 0 in test env",
+            label,
+            n
+        );
+        return;
+    }
+    let per_cpu = total_cpu / n;
+    let per_mem = total_mem / n;
+    assert!(
+        per_cpu <= CLEANUP_CPU_CEILING_PER_ITEM,
+        "{} (n={}): per-item CPU {} exceeds ceiling {}",
+        label,
+        n,
+        per_cpu,
+        CLEANUP_CPU_CEILING_PER_ITEM
+    );
+    assert!(
+        per_mem <= CLEANUP_MEM_CEILING_PER_ITEM,
+        "{} (n={}): per-item Memory {} exceeds ceiling {}",
+        label,
+        n,
+        per_mem,
+        CLEANUP_MEM_CEILING_PER_ITEM
+    );
+}
+
+/// Helper: submit N expired attestations and return the (business, period) pairs.
+///
+/// Each attestation uses a **distinct business address** so that duplicate
+/// (business, period) collisions never occur regardless of N.  Every pair
+/// shares `period = "2026-01"` (a valid format accepted by the contract)
+/// and is assigned a unique business address, keeping the period string
+/// cheap to construct while ensuring each storage key is unique.
+///
+/// Each attestation is submitted at ledger time 0 with an expiry of 100.
+/// The helper advances the ledger to 100 before returning so every
+/// attestation is immediately expired and ready to clean up.
+fn setup_expired_attestations(
+    env: &Env,
+    client: &AttestationContractClient,
+    n: usize,
+) -> soroban_sdk::Vec<(Address, String)> {
+    // Use a single reusable period string – uniqueness is guaranteed by
+    // generating a fresh business address for every item.
+    let period = String::from_str(env, "2026-01");
+    let mut pairs = soroban_sdk::Vec::new(env);
+
+    for i in 0..n {
+        // Each item gets its own business address to avoid duplicate-key panics.
+        let business = Address::generate(env);
+        let root = BytesN::from_array(env, &{
+            let mut arr = [0u8; 32];
+            arr[0] = (i & 0xFF) as u8;
+            arr[1] = ((i >> 8) & 0xFF) as u8;
+            arr[2] = 0xCCu8; // sentinel distinguishes these roots from other tests
+            arr
+        });
+
+        env.ledger().set_timestamp(0);
+        client.submit_attestation(
+            &business,
+            &period,
+            &root,
+            &1u64,          // attestation timestamp
+            &1u32,          // version
+            &0i128,         // fee_paid (ignored)
+            &None,          // no proof hash
+            &Some(100u64),  // expires at ledger time 100
+        );
+        pairs.push_back((business, period.clone()));
+    }
+
+    // Advance ledger past expiry so every attestation is expired.
+    env.ledger().set_timestamp(100);
+    pairs
+}
+
+// ── N = 1 ──
+
+/// Benchmark cleanup_expired_attestation for a single expired attestation.
+///
+/// This is the warm-storage baseline: the attestation was written in the
+/// same test environment, so the storage entry is already "warm" in the
+/// Soroban test cache.  The result directly represents the minimum
+/// single-call cost.
+#[test]
+fn bench_cleanup_expired_attestation_n1() {
+    let (env, client, admin) = setup_basic();
+    let pairs = setup_expired_attestations(&env, &client, 1);
+
+    let before = BudgetSnapshot::capture(&env);
+    for (business, period) in pairs.iter() {
+        client.cleanup_expired_attestation(&admin, &business, &period);
+    }
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("cleanup_expired_attestation (n=1, warm storage)");
+
+    std::println!("{}", CLEANUP_CSV_HEADER);
+    print_cleanup_csv_row(1, cost.cpu_insns, cost.mem_bytes);
+
+    assert_cleanup_per_item(1, cost.cpu_insns, cost.mem_bytes, "bench_cleanup_n1");
+}
+
+// ── N = 10 ──
+
+/// Benchmark cleanup_expired_attestation across 10 expired attestations.
+///
+/// 10 distinct (business, period) pairs are cleaned up in sequence.
+/// Per-item cost is expected to be similar to N=1; a significant increase
+/// would indicate shared-state overhead growing with batch size.
+#[test]
+fn bench_cleanup_expired_attestation_n10() {
+    let (env, client, admin) = setup_basic();
+    let pairs = setup_expired_attestations(&env, &client, 10);
+
+    let before = BudgetSnapshot::capture(&env);
+    for (business, period) in pairs.iter() {
+        client.cleanup_expired_attestation(&admin, &business, &period);
+    }
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("cleanup_expired_attestation (n=10)");
+
+    std::println!("{}", CLEANUP_CSV_HEADER);
+    print_cleanup_csv_row(10, cost.cpu_insns, cost.mem_bytes);
+
+    assert_cleanup_per_item(10, cost.cpu_insns, cost.mem_bytes, "bench_cleanup_n10");
+}
+
+// ── N = 100 ──
+
+/// Benchmark cleanup_expired_attestation across 100 expired attestations.
+///
+/// This is the large-batch stress case.  The per-item ceiling is the same
+/// as for N=1 and N=10; any superlinear growth will push the per-item cost
+/// above the ceiling and fail this test.
+#[test]
+fn bench_cleanup_expired_attestation_n100() {
+    let (env, client, admin) = setup_basic();
+    let pairs = setup_expired_attestations(&env, &client, 100);
+
+    let before = BudgetSnapshot::capture(&env);
+    for (business, period) in pairs.iter() {
+        client.cleanup_expired_attestation(&admin, &business, &period);
+    }
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("cleanup_expired_attestation (n=100)");
+
+    std::println!("{}", CLEANUP_CSV_HEADER);
+    print_cleanup_csv_row(100, cost.cpu_insns, cost.mem_bytes);
+
+    assert_cleanup_per_item(100, cost.cpu_insns, cost.mem_bytes, "bench_cleanup_n100");
+}
+
+// ── Sweep (N = 1, 10, 100) – CSV report ──
+
+/// Sweep benchmark: run cleanup for N = 1, 10, 100 and emit a CSV table.
+///
+/// This single test produces a comparable CSV report for all three sizes,
+/// making it easy to spot per-item scaling trends in CI logs.
+///
+/// CSV format:
+///   operation,batch_size,total_cpu,total_mem,per_item_cpu,per_item_mem
+///
+/// Regression rule:
+///   per_item_cpu  <= CLEANUP_CPU_CEILING_PER_ITEM  (600 000 instructions)
+///   per_item_mem  <= CLEANUP_MEM_CEILING_PER_ITEM   (20 000 bytes)
+///
+/// The test fails at the first batch size that exceeds either ceiling.
+#[test]
+fn bench_cleanup_expired_attestation_sweep() {
+    const SIZES: &[usize] = &[1, 10, 100];
+
+    std::println!("\n{}", CLEANUP_CSV_HEADER);
+
+    for &n in SIZES {
+        let (env, client, admin) = setup_basic();
+        let pairs = setup_expired_attestations(&env, &client, n);
+
+        let before = BudgetSnapshot::capture(&env);
+        for (business, period) in pairs.iter() {
+            client.cleanup_expired_attestation(&admin, &business, &period);
+        }
+        let after = BudgetSnapshot::capture(&env);
+
+        let cost = before.delta(&after);
+        print_cleanup_csv_row(n as u64, cost.cpu_insns, cost.mem_bytes);
+
+        assert_cleanup_per_item(
+            n as u64,
+            cost.cpu_insns,
+            cost.mem_bytes,
+            "bench_cleanup_sweep",
+        );
+    }
+}
+
+// ── Regression: cleanup per-item CPU and memory must stay under ceiling ──
+
+/// Regression guard: cleanup_expired_attestation per-item CPU must not
+/// exceed CLEANUP_CPU_CEILING_PER_ITEM across any of N=1, 10, 100.
+///
+/// This is a hard gate that runs independently of the sweep test so that
+/// individual failures are easy to bisect.
+#[test]
+fn regression_cleanup_expired_attestation_per_item_budget() {
+    for &n in &[1usize, 10, 100] {
+        let (env, client, admin) = setup_basic();
+        let pairs = setup_expired_attestations(&env, &client, n);
+
+        let before = BudgetSnapshot::capture(&env);
+        for (business, period) in pairs.iter() {
+            client.cleanup_expired_attestation(&admin, &business, &period);
+        }
+        let after = BudgetSnapshot::capture(&env);
+
+        let cost = before.delta(&after);
+        assert_cleanup_per_item(
+            n as u64,
+            cost.cpu_insns,
+            cost.mem_bytes,
+            "regression_cleanup_per_item",
+        );
+    }
+}
+
+// ── Edge case: N=1 double-cleanup panics (attestation already removed) ──
+
+/// Verify that a second cleanup on an already-cleaned attestation panics
+/// with "attestation not found".  This confirms the storage entry is
+/// genuinely removed and there is no idempotent silent no-op.
+#[test]
+#[should_panic(expected = "attestation not found")]
+fn bench_cleanup_double_cleanup_panics() {
+    let (env, client, admin) = setup_basic();
+    let pairs = setup_expired_attestations(&env, &client, 1);
+    let (ref business, ref period) = pairs.first().unwrap();
+
+    // First cleanup – should succeed.
+    client.cleanup_expired_attestation(&admin, business, period);
+
+    // Second cleanup – must panic.
+    client.cleanup_expired_attestation(&admin, business, period);
+}
+
+// ── Edge case: business can clean up its own expired attestation ──
+
+/// Confirm that the *business* address (not just admin) may call
+/// cleanup_expired_attestation.  The caller-permission check inside the
+/// contract allows `caller == business`; this test exercises that path.
+#[test]
+fn bench_cleanup_business_self_cleanup() {
+    let (env, client, _admin) = setup_basic();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-01");
+    let root = BytesN::from_array(&env, &[0xAAu8; 32]);
+
+    env.ledger().set_timestamp(0);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1u64,
+        &1u32,
+        &0i128,
+        &None,
+        &Some(50u64),
+    );
+
+    // Advance ledger past expiry.
+    env.ledger().set_timestamp(50);
+
+    let before = BudgetSnapshot::capture(&env);
+    // The business cleans up its own attestation (caller == business).
+    client.cleanup_expired_attestation(&business, &business, &period);
+    let after = BudgetSnapshot::capture(&env);
+
+    // Verify removal.
+    assert!(client.get_attestation(&business, &period).is_none());
+
+    let cost = before.delta(&after);
+    cost.print("cleanup_expired_attestation (business self-cleanup)");
+    assert_cleanup_per_item(1, cost.cpu_insns, cost.mem_bytes, "bench_cleanup_self");
 }

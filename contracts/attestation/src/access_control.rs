@@ -32,6 +32,7 @@
 //! - Admin must always exist (at least one address holds ADMIN role)
 
 use soroban_sdk::{contracttype, Address, Env, Vec};
+use crate::dispute;
 
 /// Role identifiers as bit flags for efficient storage
 /// SECURITY: Only the first 4 bits are valid (0b1111 = 0xF)
@@ -242,16 +243,21 @@ pub fn require_admin(env: &Env, caller: &Address) {
     );
 }
 
-/// Require that the caller has the ATTESTOR role.
-/// Panics if the caller is not an attestor.
+/// Require that the caller has the ATTESTOR role and is not locked.
+/// Panics if the caller is not an attestor or is locked due to an active dispute.
 ///
 /// # Security
 /// - Authentication precedes authorization check
-pub fn require_attestor(env: &Env, caller: &Address) {
+/// - Lock status prevents attestors from submitting during active disputes
+pub fn require_attestor_not_locked(env: &Env, caller: &Address) {
     caller.require_auth();
     assert!(
         has_role(env, caller, ROLE_ATTESTOR),
         "caller does not have ATTESTOR role"
+    );
+    assert!(
+        !dispute::is_attestor_locked(env, caller),
+        "attestor is locked due to an active dispute"
     );
 }
 
