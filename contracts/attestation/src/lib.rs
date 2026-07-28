@@ -124,6 +124,20 @@ pub trait AttestorStakingContractTrait {
     fn is_eligible(env: Env, attestor: Address) -> bool;
 }
 
+#[soroban_sdk::contractclient(name = "AuditLogClient")]
+pub trait AuditLogContractTrait {
+    fn append(
+        env: Env,
+        nonce: u64,
+        actor: Address,
+        source_contract: Address,
+        action: String,
+        payload: String,
+    ) -> u64; // Note: We use u64 here because cross-contract calls that fail will trap anyway, or we could return Result, but Soroban SDK handles errors by trapping if we don't use the Try trait variant. Wait, we'll just use the regular signature that returns u64 or panics.
+    
+    fn get_replay_nonce(env: Env, actor: Address, channel: u32) -> u64;
+}
+
 #[contract]
 pub struct AttestationContract;
 
@@ -140,6 +154,17 @@ impl AttestationContract {
         replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
         dynamic_fees::set_admin(&env, &admin);
         access_control::grant_role(&env, &admin, ROLE_ADMIN, &admin);
+    }
+
+    pub fn set_audit_log_contract(env: Env, caller: Address, audit_log: Address) {
+        access_control::require_admin(&env, &caller);
+        env.storage()
+            .instance()
+            .set(&DataKey::AuditLogContract, &audit_log);
+    }
+
+    pub fn get_audit_log_contract(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::AuditLogContract)
     }
 
     pub fn configure_fees(
@@ -1612,7 +1637,7 @@ impl AttestationContract {
         dispute::validate_dispute_resolution(&env, dispute_id, &resolver).expect("invalid");
         let resolution = dispute::DisputeResolution {
             resolver,
-            outcome,
+            outcome: outcome.clone(),
             timestamp: env.ledger().timestamp(),
             notes,
         };
@@ -1626,6 +1651,10 @@ impl AttestationContract {
                 dispute::get_attestor_for_attestation(&env, &d.business, &d.period)
             {
                 dispute::unlock_attestor(&env, &attestor);
+            }
+
+            if outcome == DisputeOutcome::Upheld {
+                Self::handle_slash(&env, dispute_id, &d.business, &d.period);
             }
         }
     }
@@ -1652,6 +1681,10 @@ impl AttestationContract {
         proof: Vec<BytesN<32>>,
     ) {
         dispute::submit_dispute_witness(&env, dispute_id, &leaf, &proof).expect("witness verification failed");
+        
+        if let Some(d) = dispute::get_dispute(&env, dispute_id) {
+            Self::handle_slash(&env, dispute_id, &d.business, &d.period);
+        }
     }
 
     /// Return all dispute IDs associated with a specific attestation.
@@ -1820,6 +1853,28 @@ impl AttestationContract {
 
     // ── Internal Helpers ──────────────────────────────────────────────
 
+    fn handle_slash(env: &Env, dispute_id: u64, business: &Address, period: &String) {
+        if let Some(attestor) = dispute::get_attestor_for_attestation(env, business, period) {
+            let attestation_key = DataKey::Attestation(business.clone(), period.clone());
+            let proof_hash = if let Some(data) = env.storage().instance().get::<_, crate::AttestationData>(&attestation_key) {
+                data.4
+            } else {
+                None
+            };
+            
+            events::emit_slash_triggered(env, dispute_id, business, period, &attestor, proof_hash);
+
+            if let Some(audit_log) = Self::get_audit_log_contract(env.clone()) {
+                let client = AuditLogClient::new(env, &audit_log);
+                let my_addr = env.current_contract_address();
+                let nonce = client.get_replay_nonce(&my_addr, &1u32);
+                let action = String::from_str(env, "SlashTriggered");
+                let payload = String::from_str(env, "");
+                client.append(&nonce, &attestor, &my_addr, &action, &payload);
+            }
+        }
+    }
+
     /// Apply an approved multisig action. Called only from `execute_proposal` after
     /// threshold and expiry checks in `multisig::mark_executed`.
     fn dispatch_multisig_action(env: &Env, executor: &Address, action: &ProposalAction) {
@@ -1950,6 +2005,8 @@ impl AttestationContract {
 // (some modules need updates on this branch before they compile).
 #[cfg(test)]
 mod attestor_lock_test;
+#[cfg(test)]
+mod audit_log_integration_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod access_control_test;
 #[cfg(all(test, feature = "full-tests"))]

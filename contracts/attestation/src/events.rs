@@ -98,10 +98,14 @@ pub const TOPIC_ATTESTATION_REVOKED: Symbol = symbol_short!("att_rev");
 pub const TOPIC_ATTESTATION_MIGRATED: Symbol = symbol_short!("att_mig");
 /// Topic: attestation cleaned up after expiry
 pub const TOPIC_ATTESTATION_CLEANED_UP: Symbol = symbol_short!("att_cl");
+/// Topic: slash triggered for an attestation
+pub const TOPIC_SLASH_TRIGGERED: Symbol = symbol_short!("slash_tr");
 /// Topic: role granted to an address
 pub const TOPIC_ROLE_GRANTED: Symbol = symbol_short!("role_gr");
 /// Topic: role revoked from an address
 pub const TOPIC_ROLE_REVOKED: Symbol = symbol_short!("role_rv");
+pub const TOPIC_PAUSE_SCHEDULED: Symbol = symbol_short!("ps_sch");
+pub const TOPIC_PAUSE_SCHEDULED_CANCELLED: Symbol = symbol_short!("ps_can");
 /// Topic: contract paused
 pub const TOPIC_PAUSED: Symbol = symbol_short!("paused");
 /// Topic: contract unpaused
@@ -233,6 +237,18 @@ pub struct AttestationCleanedUpEvent {
     pub period: String,
     /// Ledger timestamp when cleanup occurred.
     pub cleanup_timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct SlashTriggeredEvent {
+    pub v: u32,
+    pub dispute_id: u64,
+    pub business: Address,
+    pub period: String,
+    pub attestor: Address,
+    pub timestamp: u64,
+    pub proof_hash: Option<BytesN<32>>,
 }
 
 // ── Access control ────────────────────────────────────────────────
@@ -619,6 +635,55 @@ pub fn emit_attestation_cleaned_up(env: &Env, business: &Address, period: &Strin
     };
     env.events()
         .publish((TOPIC_ATTESTATION_CLEANED_UP, business.clone()), event);
+}
+
+pub fn emit_slash_triggered(
+    env: &Env,
+    dispute_id: u64,
+    business: &Address,
+    period: &String,
+    attestor: &Address,
+    proof_hash: Option<BytesN<32>>,
+) {
+    let payload = SlashTriggeredEvent {
+        v: EVENT_SCHEMA_VERSION,
+        dispute_id,
+        business: business.clone(),
+        period: period.clone(),
+        attestor: attestor.clone(),
+        timestamp: env.ledger().timestamp(),
+        proof_hash,
+    };
+    env.events()
+        .publish((TOPIC_SLASH_TRIGGERED, business.clone()), payload);
+}
+
+pub fn emit_attestor_locked_for_dispute(
+    env: &Env,
+    attestor: &Address,
+    business: &Address,
+    period: &String,
+    dispute_id: u64,
+) {
+    // Note: mock implementation to satisfy the compiler
+    env.events().publish(
+        (soroban_sdk::symbol_short!("lck_dis"), attestor.clone(), business.clone()),
+        (period.clone(), dispute_id)
+    );
+}
+
+pub fn emit_epoch_checkpoint(
+    env: &Env,
+    period: &String,
+    merkle_root: &soroban_sdk::BytesN<32>,
+    epoch_subs: u32,
+    epoch_fees: i128,
+) {
+    // mock implementation
+}
+
+pub fn emit_owner_recovery_phrase_acknowledged(env: &Env, owner: Address) {
+    env.events().publish((soroban_sdk::symbol_short!("own_rec"), owner.clone()), ());
 }
 
 /// Normalized payload for `AttestationExpiryExtended` events.
