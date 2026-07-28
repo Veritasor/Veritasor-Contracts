@@ -599,7 +599,7 @@ fn validate_implementation_returns_true_for_valid_address() {
 
 #[test]
 fn validate_implementation_rejects_same_as_current() {
-    let (env, client, _admin, initial_impl) = setup();
+    let (_env, client, _admin, initial_impl) = setup();
 
     // Cannot upgrade to the same implementation
     assert!(!client.validate_implementation(&initial_impl));
@@ -701,7 +701,7 @@ fn prevent_circular_admin_wiring() {
 #[test]
 fn admin_transfer_does_not_affect_current_validation() {
     // Changing admin should not change which impl addresses are rejected.
-    let (env, client, _old_admin, initial_impl) = setup();
+    let (env, client, _old_admin, _initial_impl) = setup();
     let new_impl = Address::generate(&env);
 
     let before = client.validate_implementation(&new_impl);
@@ -721,7 +721,7 @@ fn admin_transfer_does_not_affect_current_validation() {
 #[test]
 fn query_functions_are_read_only() {
     // All query functions should not modify state.
-    let (env, client, admin, initial_impl) = setup();
+    let (env, client, _admin, _initial_impl) = setup();
 
     // Take snapshots of state
     let admin_before = client.get_admin();

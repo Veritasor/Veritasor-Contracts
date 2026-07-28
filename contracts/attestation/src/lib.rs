@@ -1,4 +1,5 @@
 #![no_std]
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
 // Tests rely on `std` (e.g. `std::format!`, `std::vec!`); pull it in only when
 // building the test harness so the contract crate remains `no_std`.
@@ -7,7 +8,7 @@ extern crate std;
 
 use core::cmp::Ordering;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, BytesN, Env, String, Symbol, TryIntoVal, Vec,
+    contract, contractimpl, contracttype, Address, BytesN, Env, String, Symbol, Vec,
 };
 
 use veritasor_common::replay_protection;
@@ -58,10 +59,11 @@ pub use access_control::{ROLE_ADMIN, ROLE_ATTESTOR, ROLE_BUSINESS, ROLE_OPERATOR
 pub use dispute::{
     Dispute, DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType, OptionalResolution,
 };
-pub use dynamic_fees::{compute_fee, DataKey, FeeConfig};
+pub use dynamic_fees::{compute_fee, ArchivePointerRecord, DataKey, FeeConfig};
 pub use events::{
     AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
-    AttestationSubmittedEvent, ProofHashUpdatedEvent,
+    AttestationSubmittedEvent, PauseScheduledEvent, PauseScheduledCancelledEvent,
+    ProofHashUpdatedEvent,
 };
 pub use fees::{collect_flat_fee, FlatFeeConfig};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
@@ -314,7 +316,7 @@ impl AttestationContract {
         version: u32,
         expiry_timestamp: Option<u64>,
     ) {
-        access_control::require_attestor(&env, &attestor);
+        access_control::require_attestor_not_locked(&env, &attestor);
 
         let staking_addr = Self::get_attestor_staking_contract(env.clone())
             .expect("staking contract not configured");
@@ -335,6 +337,8 @@ impl AttestationContract {
             &None,
             expiry_timestamp,
         );
+
+        dispute::store_attestor_for_attestation(&env, &business, &period, &attestor);
     }
 
     pub fn submit_attestations_batch(env: Env, items: Vec<BatchAttestationItem>) {
@@ -366,7 +370,7 @@ impl AttestationContract {
     }
 
     pub fn submit_batch_as_attestor(env: Env, attestor: Address, items: Vec<BatchAttestationItem>) {
-        access_control::require_attestor(&env, &attestor);
+        access_control::require_attestor_not_locked(&env, &attestor);
 
         let staking_addr = Self::get_attestor_staking_contract(env.clone())
             .expect("staking contract not configured");
@@ -377,6 +381,10 @@ impl AttestationContract {
         }
 
         Self::execute_batch_submission(&env, Some(&attestor), &items, true);
+
+        for item in items.iter() {
+            dispute::store_attestor_for_attestation(&env, &item.business, &item.period, &attestor);
+        }
     }
 
     fn execute_submission(
@@ -397,6 +405,9 @@ impl AttestationContract {
         }
 
         rate_limit::check_rate_limit(env, business);
+
+        // Handle fee bucket rollover and advance epoch if necessary.
+        dynamic_fees::handle_epoch_rollover(env);
 
         let key = DataKey::Attestation(business.clone(), period.clone());
         if env.storage().instance().has(&key) {
@@ -432,6 +443,13 @@ impl AttestationContract {
             proof_hash,
             expiry_timestamp,
         );
+
+        // ── Epoch checkpoint ──────────────────────────────────
+        // Update per-epoch accumulators then emit a reproducible checkpoint
+        // so third parties can reconstruct epoch state deterministically.
+        let epoch_subs = dynamic_fees::increment_epoch_submissions(env, period, 1);
+        let epoch_fees = dynamic_fees::accumulate_epoch_fees(env, period, total_fee);
+        events::emit_epoch_checkpoint(env, period, merkle_root, epoch_subs, epoch_fees);
 
         rate_limit::record_submission(env, business);
 
@@ -487,6 +505,8 @@ impl AttestationContract {
 
         for item in items.iter() {
             let fee_payer = payer.unwrap_or(&item.business);
+            // Handle fee bucket rollover per item (consistent with single submission path).
+            dynamic_fees::handle_epoch_rollover(env);
             let dynamic_fee = dynamic_fees::collect_fee_from(env, fee_payer, &item.business);
             let flat_fee = fees::collect_flat_fee(env, fee_payer);
             let total_fee = dynamic_fee + flat_fee;
@@ -517,6 +537,17 @@ impl AttestationContract {
                 item.expiry_timestamp,
             );
 
+            // ── Epoch checkpoint per batch item ──────────────
+            let epoch_subs = dynamic_fees::increment_epoch_submissions(env, &item.period, 1);
+            let epoch_fees = dynamic_fees::accumulate_epoch_fees(env, &item.period, total_fee);
+            events::emit_epoch_checkpoint(
+                env,
+                &item.period,
+                &item.merkle_root,
+                epoch_subs,
+                epoch_fees,
+            );
+
             rate_limit::record_submission(env, &item.business);
         }
 
@@ -526,8 +557,145 @@ impl AttestationContract {
     }
 
     pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
-        let key = DataKey::Attestation(business, period);
-        env.storage().instance().get(&key)
+        let key = DataKey::Attestation(business.clone(), period.clone());
+        // Primary read: active tier.
+        if let Some(data) = env.storage().instance().get::<_, AttestationData>(&key) {
+            return Some(data);
+        }
+        // Read-through: fall back to archive tier transparently.
+        dynamic_fees::get_archived_attestation(&env, &business, &period)
+    }
+
+    // ── Archival tier movement ────────────────────────────────────────
+
+    /// Move attestations older than `age_threshold_seconds` from active storage
+    /// to the archival tier, preserving a lightweight pointer for read-through.
+    ///
+    /// # Parameters
+    /// - `caller`                – must be the contract admin.
+    /// - `candidates`            – list of `(business, period)` pairs to evaluate.
+    ///   Only pairs that are in active storage *and* old enough are moved.
+    /// - `age_threshold_seconds` – minimum age (in seconds) an attestation must
+    ///   have before it is eligible for archival. **Must be > 0.**
+    /// - `limit`                 – maximum number of attestations to archive in
+    ///   this single call (cap to avoid exceeding Soroban CPU budget).
+    ///
+    /// # What happens for each eligible attestation
+    /// 1. Full `AttestationData` is written under `DataKey::ArchivedAttestation`.
+    /// 2. A lightweight `ArchivePointerRecord` (commitment root + sequential
+    ///    archive index + `archived_at` timestamp) is written under
+    ///    `DataKey::ArchivePointer`.
+    /// 3. The original `DataKey::Attestation` entry is removed.
+    ///
+    /// # Returns
+    /// The number of attestations actually archived in this call.
+    ///
+    /// # Panics
+    /// - `age_threshold_seconds == 0` (zero threshold is rejected to prevent
+    ///   accidental mass-archival of all attestations).
+    /// - Caller is not the admin.
+    /// - Contract is paused.
+    pub fn move_to_archive(
+        env: Env,
+        caller: Address,
+        candidates: Vec<(Address, String)>,
+        age_threshold_seconds: u64,
+        limit: u32,
+    ) -> u32 {
+        // Security: admin-only.
+        access_control::require_admin(&env, &caller);
+        // Safety: reject zero threshold to avoid wiping all attestations.
+        assert!(
+            age_threshold_seconds > 0,
+            "age_threshold_seconds must be greater than zero"
+        );
+        // Safety: reject zero limit.
+        assert!(limit > 0, "limit must be greater than zero");
+
+        let now = env.ledger().timestamp();
+        let mut archived_count: u32 = 0;
+
+        for pair in candidates.iter() {
+            if archived_count >= limit {
+                break;
+            }
+            let (business, period) = pair;
+            let key = DataKey::Attestation(business.clone(), period.clone());
+
+            // Only act on attestations that are still in active storage.
+            let data: AttestationData = match env.storage().instance().get(&key) {
+                Some(d) => d,
+                None => continue,
+            };
+
+            // Age check: attestation timestamp is field .1 (index 1).
+            let attestation_ts: u64 = data.1;
+            // Guard against clock skew / malformed timestamps.
+            let age = if now >= attestation_ts {
+                now - attestation_ts
+            } else {
+                0
+            };
+            if age < age_threshold_seconds {
+                continue;
+            }
+
+            // 1. Persist full data in archive tier.
+            dynamic_fees::set_archived_attestation(&env, &business, &period, &data);
+
+            // 2. Assign a sequential archive index and write pointer.
+            let archive_index = dynamic_fees::next_archive_index(&env);
+            let pointer = ArchivePointerRecord {
+                merkle_root: data.0.clone(),
+                archive_index,
+                archived_at: now,
+            };
+            dynamic_fees::set_archive_pointer(&env, &business, &period, &pointer);
+
+            // 3. Remove the original active-tier entry to free rent.
+            env.storage().instance().remove(&key);
+
+            archived_count += 1;
+        }
+
+        // Bump TTL after potential storage modifications.
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+
+        archived_count
+    }
+
+    /// Return the full archived attestation data for a (business, period) pair,
+    /// if it has been moved to the archive tier.
+    ///
+    /// Returns `None` when the attestation is still in the active tier or does
+    /// not exist at all. For a transparent read (active *or* archived), use
+    /// [`get_attestation`] instead.
+    pub fn get_archived_attestation(
+        env: Env,
+        business: Address,
+        period: String,
+    ) -> Option<AttestationData> {
+        dynamic_fees::get_archived_attestation(&env, &business, &period)
+    }
+
+    /// Return the lightweight archive pointer for a (business, period) pair.
+    ///
+    /// The pointer contains the commitment root (Merkle root), the sequential
+    /// archive index, and the timestamp when the attestation was archived.
+    /// Returns `None` if the attestation has not been archived.
+    pub fn get_archive_pointer(
+        env: Env,
+        business: Address,
+        period: String,
+    ) -> Option<ArchivePointerRecord> {
+        dynamic_fees::get_archive_pointer(&env, &business, &period)
+    }
+
+    /// Return the current global archive index (number of attestations archived so far).
+    pub fn get_archive_index(env: Env) -> u64 {
+        dynamic_fees::get_archive_index(&env)
     }
 
     pub fn is_expired(env: Env, business: Address, period: String) -> bool {
@@ -741,6 +909,7 @@ impl AttestationContract {
     }
 
     pub fn pause(env: Env, caller: Address, nonce: u64) {
+        access_control::check_and_apply_pending_pause(&env);
         access_control::require_admin(&env, &caller);
         replay_protection::verify_and_increment_nonce(&env, &caller, NONCE_CHANNEL_ADMIN, nonce);
         access_control::set_paused(&env, true);
@@ -748,6 +917,7 @@ impl AttestationContract {
     }
 
     pub fn unpause(env: Env, caller: Address, nonce: u64) {
+        access_control::check_and_apply_pending_pause(&env);
         access_control::require_admin(&env, &caller);
         replay_protection::verify_and_increment_nonce(&env, &caller, NONCE_CHANNEL_ADMIN, nonce);
         access_control::set_paused(&env, false);
@@ -756,6 +926,55 @@ impl AttestationContract {
 
     pub fn is_paused(env: Env) -> bool {
         access_control::is_paused(&env)
+    }
+
+    /// Schedule a time-locked pause with a mandatory 1-hour notice window.
+    ///
+    /// The pause will auto-apply on the next state-changing call after `effective_at`.
+    /// The caller must hold the ADMIN role.
+    ///
+    /// # Panics
+    /// - Caller does not have ADMIN role
+    /// - `effective_at` is less than 1 hour from the current ledger timestamp
+    /// - A pending pause is already scheduled (cancel it first)
+    pub fn schedule_pause(env: Env, caller: Address, effective_at: u64, nonce: u64) {
+        access_control::check_and_apply_pending_pause(&env);
+        access_control::require_admin(&env, &caller);
+        replay_protection::verify_and_increment_nonce(&env, &caller, NONCE_CHANNEL_ADMIN, nonce);
+        assert!(
+            effective_at >= env.ledger().timestamp() + 3600,
+            "notice window must be at least 1 hour"
+        );
+        assert!(
+            access_control::get_pending_pause_effective_at(&env).is_none(),
+            "pending pause already scheduled"
+        );
+        access_control::set_pending_pause_effective_at(&env, effective_at);
+        events::emit_pause_scheduled(&env, &caller, effective_at);
+    }
+
+    /// Cancel a previously scheduled time-locked pause.
+    ///
+    /// The caller must hold the ADMIN role.
+    ///
+    /// # Panics
+    /// - Caller does not have ADMIN role
+    /// - No pending pause exists
+    pub fn cancel_scheduled_pause(env: Env, caller: Address, nonce: u64) {
+        access_control::check_and_apply_pending_pause(&env);
+        access_control::require_admin(&env, &caller);
+        replay_protection::verify_and_increment_nonce(&env, &caller, NONCE_CHANNEL_ADMIN, nonce);
+        assert!(
+            access_control::get_pending_pause_effective_at(&env).is_some(),
+            "no pending pause to cancel"
+        );
+        access_control::clear_pending_pause(&env);
+        events::emit_pause_scheduled_cancelled(&env, &caller);
+    }
+
+    /// Returns the effective-at timestamp of a pending scheduled pause, if any.
+    pub fn get_pending_pause_effective_at(env: Env) -> Option<u64> {
+        access_control::get_pending_pause_effective_at(&env)
     }
 
     // ── Multisig governance ─────────────────────────────────────────
@@ -844,6 +1063,19 @@ impl AttestationContract {
         multisig::is_owner(&env, &address)
     }
 
+    pub fn cleanup_expired_proposals(env: Env, limit: u32) -> u32 {
+        multisig::cleanup_expired_proposals(&env, limit)
+    }
+
+    pub fn set_proposal_expiry_grace(env: Env, caller: Address, grace: u32) {
+        access_control::require_admin(&env, &caller);
+        multisig::set_proposal_expiry_grace(&env, grace);
+    }
+
+    pub fn get_proposal_expiry_grace(env: Env) -> u32 {
+        multisig::get_proposal_expiry_grace(&env)
+    }
+
     /// Admin-gated method to manually bump the instance TTL
     pub fn bump_ttl(env: Env, caller: Address) {
         access_control::require_admin(&env, &caller);
@@ -902,7 +1134,7 @@ impl AttestationContract {
 
         // Populate reverse index: merkle_root -> range position for O(1) revocation lookup
         let index_key = MultiPeriodKey::RootIndex(business.clone(), merkle_root.clone());
-        let range_index = (ranges.len() - 1);
+        let range_index = ranges.len() - 1;
         env.storage().instance().set(&index_key, &range_index);
 
         events::emit_multi_period_issued(&env, &business, start_period, end_period, &merkle_root);
@@ -1166,6 +1398,35 @@ impl AttestationContract {
         fees::get_effective_flat_fee_config(&env)
     }
 
+    /// Returns the current epoch number.
+    pub fn get_current_epoch(env: Env) -> u64 {
+        fees::get_current_epoch(&env)
+    }
+
+    /// Admin: Advance to the next epoch and persist snapshot for the new epoch.
+    pub fn advance_epoch(env: Env) -> u64 {
+        dynamic_fees::require_admin(&env);
+        fees::advance_epoch(&env)
+    }
+
+    /// Admin: Set current epoch number and persist snapshot for that epoch.
+    pub fn set_current_epoch(env: Env, epoch: u64) {
+        dynamic_fees::require_admin(&env);
+        fees::set_current_epoch(&env, epoch);
+    }
+
+    /// Returns the effective flat fee config snapshot for a historical epoch.
+    pub fn get_fee_config_at_epoch(env: Env, epoch: u64) -> Option<FlatFeeConfig> {
+        fees::get_fee_config_at_epoch(&env, epoch)
+    }
+
+    /// Returns the historical fee quote at a specific epoch.
+    /// Solves fee-drift for auditors by returning the fee that applied at that epoch.
+    /// Returns 0 if fees were disabled/unconfigured or if epoch is uninitialized/pruned.
+    pub fn get_fee_quote_at_epoch(env: Env, epoch: u64) -> i128 {
+        fees::get_fee_quote_at_epoch(&env, epoch)
+    }
+
     pub fn get_fee_quote(env: Env, business: Address) -> i128 {
         let dynamic = dynamic_fees::calculate_fee(&env, &business);
         let flat = fees::calculate_flat_fee(&env);
@@ -1206,6 +1467,15 @@ impl AttestationContract {
 
     pub fn get_admin(env: Env) -> Address {
         dynamic_fees::get_admin(&env)
+    }
+
+    /// Returns the current fee-bucket epoch counter.
+    ///
+    /// The counter starts at 0 (uninitialized) and advances to 1 on the first
+    /// attestation submission. It increments once per elapsed `FEE_BUCKET_WINDOW_SECONDS`
+    /// window. The value is monotonically non-decreasing.
+    pub fn get_epoch(env: Env) -> u64 {
+        dynamic_fees::get_epoch(&env)
     }
 
     pub fn get_submission_window_count(env: Env, business: Address) -> u32 {
@@ -1323,6 +1593,11 @@ impl AttestationContract {
         dispute::store_dispute(&env, &d);
         dispute::add_dispute_to_attestation_index(&env, &business, &period, id);
         dispute::add_dispute_to_challenger_index(&env, &d.challenger, id);
+
+        if let Some(attestor) = dispute::get_attestor_for_attestation(&env, &business, &period) {
+            dispute::lock_attestor(&env, &attestor, &business, &period, id);
+        }
+
         id
     }
 
@@ -1346,6 +1621,12 @@ impl AttestationContract {
             d.status = DisputeStatus::Resolved;
             d.resolution = OptionalResolution::Some(resolution);
             dispute::store_dispute(&env, &d);
+
+            if let Some(attestor) =
+                dispute::get_attestor_for_attestation(&env, &d.business, &d.period)
+            {
+                dispute::unlock_attestor(&env, &attestor);
+            }
         }
     }
 
@@ -1358,6 +1639,19 @@ impl AttestationContract {
 
     pub fn get_dispute(env: Env, dispute_id: u64) -> Option<Dispute> {
         dispute::get_dispute(&env, dispute_id)
+    }
+
+    /// Verify witness evidence Merkle proof against the disputed attestation's committed root.
+    ///
+    /// If valid, automatically resolves the dispute as `Upheld` and advances dispute status.
+    /// Rejects invalid proofs without modifying state.
+    pub fn submit_dispute_witness(
+        env: Env,
+        dispute_id: u64,
+        leaf: BytesN<32>,
+        proof: Vec<BytesN<32>>,
+    ) {
+        dispute::submit_dispute_witness(&env, dispute_id, &leaf, &proof).expect("witness verification failed");
     }
 
     /// Return all dispute IDs associated with a specific attestation.
@@ -1531,10 +1825,12 @@ impl AttestationContract {
     fn dispatch_multisig_action(env: &Env, executor: &Address, action: &ProposalAction) {
         match action {
             ProposalAction::Pause => {
+                access_control::check_and_apply_pending_pause(env);
                 access_control::set_paused(env, true);
                 events::emit_paused(env, executor);
             }
             ProposalAction::Unpause => {
+                access_control::check_and_apply_pending_pause(env);
                 access_control::set_paused(env, false);
                 events::emit_unpaused(env, executor);
             }
@@ -1577,6 +1873,7 @@ impl AttestationContract {
     }
 
     /// REQUIREMENT: Rejects empty or malformed strings to avoid permanent unvalidated storage poisoning.
+    #[allow(dead_code)]
     fn validate_period(period: &String) {
         if period.is_empty() {
             panic!("period string must not be empty");
@@ -1651,6 +1948,8 @@ impl AttestationContract {
 // ── Test Modules ──
 // Issue #369 tests always run. Enable `full-tests` for the legacy attestation suite
 // (some modules need updates on this branch before they compile).
+#[cfg(test)]
+mod attestor_lock_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod access_control_test;
 #[cfg(all(test, feature = "full-tests"))]
@@ -1667,6 +1966,8 @@ mod dao_override_test;
 mod dispute_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod dynamic_fees_test;
+#[cfg(all(test, feature = "full-tests"))]
+mod epoch_counter_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod events_test;
 #[cfg(all(test, feature = "full-tests"))]
@@ -1685,13 +1986,13 @@ mod fees_test;
 mod gas_benchmark_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod key_rotation_test;
-#[cfg(all(test, feature = "full-tests"))]
+#[cfg(test)]
 mod multi_period_test;
 #[cfg(test)]
 mod multisig_e2e_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod multisig_test;
-#[cfg(all(test, feature = "full-tests"))]
+#[cfg(test)]
 mod pause_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod proof_hash_test;
@@ -1706,7 +2007,11 @@ mod rate_limit_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod registry_test;
 #[cfg(all(test, feature = "full-tests"))]
+mod replay_nonce_test;
+#[cfg(all(test, feature = "full-tests"))]
 mod revocation_test;
+#[cfg(test)]
+mod schema_export_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod test;
 #[cfg(all(test, feature = "full-tests"))]
@@ -1717,3 +2022,5 @@ mod ttl_test;
 mod verify_attestation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod verify_attestations_batch_test;
+#[cfg(test)]
+mod archival_tier_test;

@@ -39,6 +39,7 @@
 //! | `BusinessApproved`          | `biz_apr`      | `business`        |
 //! | `BusinessSuspended`         | `biz_sus`      | `business`        |
 //! | `BusinessReactivated`       | `biz_rea`      | `business`        |
+//! | `EpochCheckpoint`           | `ep_ckpt`      | *(none)*          |
 //!
 //! ## Indexer Compatibility Contract
 //!
@@ -68,6 +69,7 @@
 //! - No private keys, raw signatures, or personal data are included in any
 //!   event payload.
 
+use crate::multisig::ProposalAction;
 use soroban_sdk::{contracttype, symbol_short, Address, BytesN, Env, String, Symbol};
 
 // ════════════════════════════════════════════════════════════════════
@@ -128,6 +130,8 @@ pub const TOPIC_BIZ_SUSPENDED: Symbol = symbol_short!("biz_sus");
 pub const TOPIC_BIZ_REACTIVATE: Symbol = symbol_short!("biz_rea");
 /// Topic: proof hash updated
 pub const TOPIC_PROOF_HASH_UPDATED: Symbol = symbol_short!("ph_upd");
+/// Topic: proposal cleaned up after expiry + grace period
+pub const TOPIC_PROPOSAL_CLEANED: Symbol = symbol_short!("prp_cl");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -256,6 +260,24 @@ pub struct RoleChangedEvent {
 pub struct PauseChangedEvent {
     /// Address that triggered the pause state change.
     pub changed_by: Address,
+}
+
+/// Normalized payload for `PauseScheduled` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PauseScheduledEvent {
+    /// Address that scheduled the pause.
+    pub caller: Address,
+    /// Timestamp at which the pause becomes effective.
+    pub effective_at: u64,
+}
+
+/// Normalized payload for `PauseScheduledCancelled` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PauseScheduledCancelledEvent {
+    /// Address that cancelled the scheduled pause.
+    pub caller: Address,
 }
 
 // ── Fee configuration ─────────────────────────────────────────────
@@ -435,13 +457,20 @@ pub struct ProofHashUpdatedEvent {
     pub updated_by: Address,
 }
 
-// ════════════════════════════════════════════════════════════════════
-//  Event Emission Functions
-//
-//  Naming: emit_<snake_case_event_name>
-//  Topic:  always (TOPIC_CONSTANT, …secondary_key?) – never raw strings
-//  Data:   always a typed struct – never a raw tuple
-// ════════════════════════════════════════════════════════════════════
+/// Normalized payload for `ProposalCleaned` events.
+///
+/// Emitted when an expired proposal is removed from storage after the
+/// admin-configurable grace period has elapsed.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ProposalCleanedEvent {
+    /// Unique identifier of the cleaned proposal.
+    pub proposal_id: u64,
+    /// The action that the proposal carried.
+    pub action: ProposalAction,
+    /// Ledger sequence number when the cleanup occurred
+    pub cleaned_at: u32,
+}
 
 // ── Attestation lifecycle ─────────────────────────────────────────
 
@@ -759,6 +788,42 @@ pub fn emit_unpaused(env: &Env, changed_by: &Address) {
     env.events().publish((TOPIC_UNPAUSED,), event);
 }
 
+/// Emit a `PauseScheduled` event.
+///
+/// # Arguments
+///
+/// * `env`          – Soroban execution environment.
+/// * `caller`       – Address that scheduled the pause.
+/// * `effective_at` – Timestamp when the pause becomes effective.
+///
+/// # Events
+///
+/// Publishes `(p_sch,)` → `PauseScheduledEvent`.
+pub fn emit_pause_scheduled(env: &Env, caller: &Address, effective_at: u64) {
+    let event = PauseScheduledEvent {
+        caller: caller.clone(),
+        effective_at,
+    };
+    env.events().publish((TOPIC_PAUSE_SCHEDULED,), event);
+}
+
+/// Emit a `PauseScheduledCancelled` event.
+///
+/// # Arguments
+///
+/// * `env`    – Soroban execution environment.
+/// * `caller` – Address that cancelled the scheduled pause.
+///
+/// # Events
+///
+/// Publishes `(p_canc,)` → `PauseScheduledCancelledEvent`.
+pub fn emit_pause_scheduled_cancelled(env: &Env, caller: &Address) {
+    let event = PauseScheduledCancelledEvent {
+        caller: caller.clone(),
+    };
+    env.events().publish((TOPIC_PAUSE_SCHEDULED_CANCELLED,), event);
+}
+
 // ── Fee configuration ─────────────────────────────────────────────
 
 /// Emit a `FeeConfigChanged` event.
@@ -1062,4 +1127,28 @@ pub fn emit_proof_hash_updated(
     };
     env.events()
         .publish((TOPIC_PROOF_HASH_UPDATED, business.clone()), event);
+}
+
+/// Emit a `ProposalCleaned` event.
+///
+/// Call this after an expired proposal and its associated storage entries
+/// have been removed.
+///
+/// # Arguments
+///
+/// * `env`          – Soroban execution environment.
+/// * `proposal_id`  – Unique identifier of the cleaned proposal.
+/// * `action`       – The action that the proposal carried.
+/// * `cleaned_at`   – Ledger sequence number when cleanup occurred.
+///
+/// # Events
+///
+/// Publishes `(prp_cl,)` → `ProposalCleanedEvent`.
+pub fn emit_proposal_cleaned(env: &Env, proposal_id: u64, action: &ProposalAction, cleaned_at: u32) {
+    let event = ProposalCleanedEvent {
+        proposal_id,
+        action: action.clone(),
+        cleaned_at,
+    };
+    env.events().publish((TOPIC_PROPOSAL_CLEANED,), event);
 }

@@ -195,7 +195,6 @@ fn test_submit_attestation_when_paused() {
         &1_700_000_000u64,
         &1u32,
         &0i128,
-        &0i128,
         &None,
         &None,
     );
@@ -463,4 +462,75 @@ fn test_business_role_limits() {
         client.grant_role(&business, &target, &ROLE_ATTESTOR);
     }));
     assert!(result.is_err(), "business cannot grant roles");
+}
+
+
+#[test]
+fn test_fuzz_grant_revoke_role_random_bitmaps() {
+    let e = soroban_sdk::Env::default();
+    let contract = AttestationContract::new(&e);
+
+    let valid_roles = [
+        0b0000,
+        0b0001,
+        0b0010,
+        0b0100,
+        0b1000,
+        0b0011,
+        0b0101,
+        0b1001,
+        0b0110,
+        0b1010,
+        0b1100,
+        0b0111,
+        0b1011,
+        0b1101,
+        0b1110,
+        0b1111,
+    ];
+    let invalid_bitmaps = [
+        0b10000u32,
+        0b100000u32,
+        0xFFFFu32,
+        0xDEADu32,
+        0xFFFFFFFFu32,
+    ];
+
+    let user1 = soroban_sdk::Address::generate(&e);
+
+    for &roles in valid_roles.iter() {
+        contract.set_roles(&user1, &0u32);
+        contract.grant_role(&user1, &roles);
+        assert_eq!(contract.get_roles(&user1), roles, "grant_role failed for bitmap {}", roles);
+    }
+
+    contract.set_roles(&user1, &0u32);
+    contract.grant_role(&user1, &0b0101u32);
+    contract.grant_role(&user1, &0b0101u32);
+    assert_eq!(contract.get_roles(&user1), 0b0101u32);
+
+    contract.set_roles(&user1, &0b1111u32);
+    contract.revoke_role(&user1, &0b0001u32);
+    assert_eq!(contract.get_roles(&user1), 0b1110u32);
+    contract.revoke_role(&user1, &0b0010u32);
+    assert_eq!(contract.get_roles(&user1), 0b1100u32);
+    contract.revoke_role(&user1, &0b0100u32);
+    assert_eq!(contract.get_roles(&user1), 0b1000u32);
+    contract.revoke_role(&user1, &0b1000u32);
+    assert_eq!(contract.get_roles(&user1), 0u32);
+
+    contract.revoke_role(&user1, &0b0010u32);
+    assert_eq!(contract.get_roles(&user1), 0u32);
+
+    for &invalid in invalid_bitmaps.iter() {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            contract.grant_role(&user1, &invalid);
+        }));
+        assert!(result.is_err(), "grant_role should panic for invalid bitmap: {}", invalid);
+    }
+
+    assert!(contract.is_valid_role_bitmap(0b0000u32));
+    assert!(contract.is_valid_role_bitmap(0b1111u32));
+    assert!(!contract.is_valid_role_bitmap(0b10000u32));
+    assert!(!contract.is_valid_role_bitmap(0xFFFFFFFFu32));
 }

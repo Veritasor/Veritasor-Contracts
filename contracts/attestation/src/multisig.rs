@@ -5,8 +5,13 @@
 
 use soroban_sdk::{contracttype, Address, Env, Vec};
 
+use crate::events;
+
 /// Default proposal expiry, expressed in ledger sequences after creation.
 pub const DEFAULT_PROPOSAL_EXPIRY: u32 = 100_000;
+
+/// Default grace period after proposal expiry before auto-cleanup (ledger sequences)
+pub const DEFAULT_PROPOSAL_EXPIRY_GRACE: u32 = 10_000;
 
 // ════════════════════════════════════════════════════════════════════
 //  Storage Types
@@ -28,6 +33,8 @@ pub enum MultisigKey {
     NextProposalId,
     /// Expiry ledger for a proposal
     ProposalExpiry(u64),
+    /// Admin-configurable grace period in ledger sequences after expiry
+    ProposalExpiryGrace,
 }
 
 /// Types of actions that can be proposed
@@ -276,10 +283,12 @@ pub fn require_owner(env: &Env, caller: &Address) {
 
 /// Add an address to the owner set (used when executing `AddOwner` proposals).
 pub fn add_owner(env: &Env, owner: &Address) {
+    owner.require_auth();
     let mut owners = get_owners(env);
     assert!(!owners.contains(owner), "already an owner");
     owners.push_back(owner.clone());
     set_owners(env, &owners);
+    crate::events::emit_owner_recovery_phrase_acknowledged(env, owner);
 }
 
 /// Remove an address from the owner set (used when executing `RemoveOwner` proposals).
@@ -301,4 +310,49 @@ pub fn remove_owner(env: &Env, owner: &Address) {
         "cannot remove owner: would drop below threshold"
     );
     set_owners(env, &next);
+}
+
+pub fn get_next_proposal_id(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&MultisigKey::NextProposalId)
+        .unwrap_or(0)
+}
+
+pub fn set_proposal_expiry_grace(env: &Env, grace: u32) {
+    env.storage()
+        .instance()
+        .set(&MultisigKey::ProposalExpiryGrace, &grace);
+}
+
+pub fn get_proposal_expiry_grace(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&MultisigKey::ProposalExpiryGrace)
+        .unwrap_or(DEFAULT_PROPOSAL_EXPIRY_GRACE)
+}
+
+pub fn cleanup_expired_proposals(env: &Env, limit: u32) -> u32 {
+    let grace = get_proposal_expiry_grace(env);
+    let next_id = get_next_proposal_id(env);
+    let current_seq = env.ledger().sequence();
+    let mut cleaned = 0;
+    let max = if limit < next_id { limit } else { next_id };
+    for id in 0..max {
+        let expiry_key = MultisigKey::ProposalExpiry(id);
+        if let Some(expiry) = env.storage().instance().get::<_, u32>(&expiry_key) {
+            if current_seq > expiry + grace {
+                if let Some(proposal) = env.storage().instance().get::<_, Proposal>(&MultisigKey::Proposal(id)) {
+                    let action = proposal.action.clone();
+                    let cleaned_at = env.ledger().sequence();
+                    env.storage().instance().remove(&MultisigKey::Proposal(id));
+                    env.storage().instance().remove(&MultisigKey::Approvals(id));
+                    env.storage().instance().remove(&expiry_key);
+                    events::emit_proposal_cleaned(env, id, &action, cleaned_at);
+                    cleaned += 1;
+                }
+            }
+        }
+    }
+    cleaned
 }

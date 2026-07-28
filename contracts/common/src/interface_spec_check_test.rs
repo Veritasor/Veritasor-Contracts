@@ -1,9 +1,8 @@
 use soroban_sdk::{Env, String};
 
 use crate::interface_spec_check::{
-    get_event_count, get_expected_events, get_expected_methods, get_expected_structs,
-    get_method_count, get_struct_count, is_event_documented, is_method_documented,
-    is_struct_documented, verify_interface_consistency, VerificationResult,
+    get_event_count, get_method_count, get_struct_count, is_method_documented,
+    verify_interface_consistency, VerificationResult,
 };
 
 #[test]
@@ -147,11 +146,9 @@ fn test_cross_crate_security_isolation() {
 
 mod governance_gating_tests {
     use crate::governance_gating::{
-        self, get_direct_voting_power, get_emergency_config, get_governance_config,
-        get_last_role_assignment, get_role_escalation_config, get_role_escalation_power,
-        get_voting_power, has_governance_power, has_role_escalation_power,
-        is_emergency_override_admin, is_emergency_paused, record_role_assignment, EmergencyConfig,
-        GovernanceConfig, GovernanceKey, RoleEscalationConfig,
+        self, get_direct_voting_power, get_governance_config, get_role_escalation_config,
+        get_role_escalation_power, get_voting_power, has_governance_power,
+        has_role_escalation_power, GovernanceConfig, GovernanceKey, RoleEscalationConfig,
     };
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{contract, contractimpl};
