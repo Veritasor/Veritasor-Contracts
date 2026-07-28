@@ -75,7 +75,10 @@ Based on Soroban's resource limits and operation complexity:
 | `migrate_attestation` | < 400,000 | < 10,000 | Update existing entry |
 | `get_attestation` | < 100,000 | < 3,000 | Simple read |
 | `get_fee_quote` | < 150,000 | < 5,000 | Fee calculation |
-| `grant_role` | < 250,000 | < 7,000 | Access control update |
+| `grant_role` (new role) | < 250,000 | < 7,000 | Access control update, adds to holders |
+| `grant_role` (existing role) | < 100,000 | < 3,000 | Access control update, already in holders |
+| `revoke_role` (keep in holders) | < 150,000 | < 4,000 | Role revoked, address retains other roles |
+| `revoke_role` (remove from holders) | < 250,000 | < 7,000 | Role revoked, address removed from holders |
 | `has_role` | < 80,000 | < 2,000 | Access control check |
 
 ### Regression Threshold

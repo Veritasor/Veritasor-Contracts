@@ -404,6 +404,9 @@ impl AttestationContract {
 
         rate_limit::check_rate_limit(env, business);
 
+        // Handle fee bucket rollover and advance epoch if necessary.
+        dynamic_fees::handle_epoch_rollover(env);
+
         let key = DataKey::Attestation(business.clone(), period.clone());
         if env.storage().instance().has(&key) {
             panic!("attestation already exists for this business and period");
@@ -493,6 +496,8 @@ impl AttestationContract {
 
         for item in items.iter() {
             let fee_payer = payer.unwrap_or(&item.business);
+            // Handle fee bucket rollover per item (consistent with single submission path).
+            dynamic_fees::handle_epoch_rollover(env);
             let dynamic_fee = dynamic_fees::collect_fee_from(env, fee_payer, &item.business);
             let flat_fee = fees::collect_flat_fee(env, fee_payer);
             let total_fee = dynamic_fee + flat_fee;
@@ -1214,6 +1219,15 @@ impl AttestationContract {
         dynamic_fees::get_admin(&env)
     }
 
+    /// Returns the current fee-bucket epoch counter.
+    ///
+    /// The counter starts at 0 (uninitialized) and advances to 1 on the first
+    /// attestation submission. It increments once per elapsed `FEE_BUCKET_WINDOW_SECONDS`
+    /// window. The value is monotonically non-decreasing.
+    pub fn get_epoch(env: Env) -> u64 {
+        dynamic_fees::get_epoch(&env)
+    }
+
     pub fn get_submission_window_count(env: Env, business: Address) -> u32 {
         rate_limit::get_submission_count(&env, &business)
     }
@@ -1687,6 +1701,8 @@ mod dispute_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod dynamic_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
+mod epoch_counter_test;
+#[cfg(all(test, feature = "full-tests"))]
 mod events_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod expiry_test;
@@ -1725,7 +1741,11 @@ mod rate_limit_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod registry_test;
 #[cfg(all(test, feature = "full-tests"))]
+mod replay_nonce_test;
+#[cfg(all(test, feature = "full-tests"))]
 mod revocation_test;
+#[cfg(test)]
+mod schema_export_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod test;
 #[cfg(all(test, feature = "full-tests"))]
