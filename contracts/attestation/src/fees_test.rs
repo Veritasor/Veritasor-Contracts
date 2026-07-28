@@ -913,3 +913,206 @@ fn test_sac_integration_collector_equal_to_business_records_fee() {
         .unwrap();
     assert_eq!(record.3, 500);
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  Historical Fee Config Snapshots & Epoch Reconstruction Tests
+// ════════════════════════════════════════════════════════════════════
+
+/// Querying fee quote for an epoch before contract initialization or prior to config setup
+/// returns 0 without crashing.
+#[test]
+fn test_fee_quote_before_initialization_returns_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+
+    // Uninitialized / no config set: querying epoch 0 or any historical epoch returns 0.
+    assert_eq!(client.get_fee_quote_at_epoch(&0), 0);
+    assert_eq!(client.get_fee_quote_at_epoch(&10), 0);
+    assert_eq!(client.get_fee_config_at_epoch(&0), None);
+
+    client.initialize(&admin, &0u64);
+    assert_eq!(client.get_current_epoch(), 0);
+    assert_eq!(client.get_fee_quote_at_epoch(&0), 0);
+}
+
+/// Updating flat fee configuration persists snapshot for current epoch.
+#[test]
+fn test_epoch_snapshot_persisted_on_config_change() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin);
+    let token_addr = token_contract.address().clone();
+
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &0u64);
+
+    // Configure flat fee at epoch 0.
+    client.configure_flat_fee(&token_addr, &collector, &500, &true);
+
+    assert_eq!(client.get_fee_quote_at_epoch(&0), 500);
+    let snapshot0 = client.get_fee_config_at_epoch(&0).unwrap();
+    assert_eq!(snapshot0.amount, 500);
+    assert!(snapshot0.enabled);
+
+    // Update config in current epoch 0 to 1_200.
+    client.configure_flat_fee(&token_addr, &collector, &1_200, &true);
+    assert_eq!(client.get_fee_quote_at_epoch(&0), 1_200);
+}
+
+/// Advancing epoch snapshots configuration and preserves historical fee quote for auditors.
+#[test]
+fn test_epoch_advance_preserves_historical_snapshots() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin);
+    let token_addr = token_contract.address().clone();
+
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &0u64);
+
+    // Epoch 0: Fee = 500
+    client.configure_flat_fee(&token_addr, &collector, &500, &true);
+
+    // Advance to Epoch 1: Fee updated to 1,000
+    let epoch1 = client.advance_epoch();
+    assert_eq!(epoch1, 1);
+    assert_eq!(client.get_current_epoch(), 1);
+    client.configure_flat_fee(&token_addr, &collector, &1_000, &true);
+
+    // Advance to Epoch 2: Fee updated to 1,500
+    let epoch2 = client.advance_epoch();
+    assert_eq!(epoch2, 2);
+    client.configure_flat_fee(&token_addr, &collector, &1_500, &true);
+
+    // Verify historical quotes are preserved without fee drift
+    assert_eq!(client.get_fee_quote_at_epoch(&0), 500);
+    assert_eq!(client.get_fee_quote_at_epoch(&1), 1_000);
+    assert_eq!(client.get_fee_quote_at_epoch(&2), 1_500);
+
+    // Query unconfigured epoch 3 returns 0
+    assert_eq!(client.get_fee_quote_at_epoch(&3), 0);
+}
+
+/// Setting current epoch explicitly updates current epoch and snapshots config.
+#[test]
+fn test_set_current_epoch_and_get_current_epoch() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin);
+    let token_addr = token_contract.address().clone();
+
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &0u64);
+
+    client.configure_flat_fee(&token_addr, &collector, &777, &true);
+
+    client.set_current_epoch(&10);
+    assert_eq!(client.get_current_epoch(), 10);
+    assert_eq!(client.get_fee_quote_at_epoch(&10), 777);
+}
+
+/// Disabling and enabling fees across epochs accurately reflects in get_fee_quote_at_epoch.
+#[test]
+fn test_epoch_snapshot_toggling_enabled_disabled() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin);
+    let token_addr = token_contract.address().clone();
+
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &0u64);
+
+    // Epoch 0: Enabled (600)
+    client.configure_flat_fee(&token_addr, &collector, &600, &true);
+
+    // Epoch 1: Disabled
+    client.advance_epoch();
+    client.configure_flat_fee(&token_addr, &collector, &600, &false);
+
+    // Epoch 2: Enabled (900)
+    client.advance_epoch();
+    client.configure_flat_fee(&token_addr, &collector, &900, &true);
+
+    assert_eq!(client.get_fee_quote_at_epoch(&0), 600);
+    assert_eq!(client.get_fee_quote_at_epoch(&1), 0);
+    assert_eq!(client.get_fee_quote_at_epoch(&2), 900);
+
+    let snapshot1 = client.get_fee_config_at_epoch(&1).unwrap();
+    assert!(!snapshot1.enabled);
+}
+
+/// Snapshots beyond MAX_EPOCH_HISTORY retention limit are pruned to cap storage growth.
+#[test]
+fn test_epoch_snapshot_pruning_max_epoch_history() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin);
+    let token_addr = token_contract.address().clone();
+
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &0u64);
+
+    client.configure_flat_fee(&token_addr, &collector, &100, &true);
+
+    // Record snapshots for MAX_EPOCH_HISTORY + 10 epochs (epochs 0 to 109).
+    let max_history = fees::MAX_EPOCH_HISTORY;
+    let total_epochs = max_history + 10;
+
+    for epoch in 1..total_epochs {
+        client.set_current_epoch(&epoch);
+    }
+
+    assert_eq!(client.get_current_epoch(), total_epochs - 1);
+
+    // First 10 epochs (0..10) should be pruned
+    for old_epoch in 0..10 {
+        assert_eq!(
+            client.get_fee_config_at_epoch(&old_epoch),
+            None,
+            "old epoch should be pruned"
+        );
+        assert_eq!(
+            client.get_fee_quote_at_epoch(&old_epoch),
+            0,
+            "pruned epoch returns 0 quote"
+        );
+    }
+
+    // Recent epochs within retention limit (10..110) should exist
+    for active_epoch in 10..total_epochs {
+        assert!(
+            client.get_fee_config_at_epoch(&active_epoch).is_some(),
+            "active epoch within retention limit should exist"
+        );
+        assert_eq!(client.get_fee_quote_at_epoch(&active_epoch), 100);
+    }
+}

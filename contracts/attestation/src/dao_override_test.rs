@@ -119,6 +119,7 @@ fn setup_contract<'a>(
     client
 }
 
+#[allow(dead_code)]
 fn mint(env: &Env, token_addr: &Address, to: &Address, amount: i128) {
     StellarAssetClient::new(env, token_addr).mint(to, &amount);
 }

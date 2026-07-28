@@ -25,6 +25,7 @@
 //!   snapshots for a business contribute 0 to revenue/anomaly sums (for the chosen API).
 //! * Revoked attestations are not re-checked here; snapshot contract is the source of truth.
 
+use core::cmp::Ordering;
 use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, String, Vec};
 
 #[cfg(test)]
@@ -376,11 +377,15 @@ impl AggregatedAttestationsContract {
 
             for i in 0..roots_vec.len() {
                 let record = roots_vec.get(i).unwrap();
-                if record.version > max_version {
-                    max_version = record.version;
-                    last_record_opt = Some(record);
-                } else if record.version == max_version {
-                    last_record_opt = Some(record);
+                match record.version.cmp(&max_version) {
+                    Ordering::Greater => {
+                        max_version = record.version;
+                        last_record_opt = Some(record);
+                    }
+                    Ordering::Equal => {
+                        last_record_opt = Some(record);
+                    }
+                    Ordering::Less => {}
                 }
             }
 
