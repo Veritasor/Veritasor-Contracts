@@ -149,6 +149,8 @@ pub const TOPIC_REVOCATION_PROPOSED: Symbol = symbol_short!("rv_prop");
 pub const TOPIC_REVOCATION_CANCELLED: Symbol = symbol_short!("rv_canc");
 /// Topic: revocation committed (grace window elapsed, revocation finalised)
 pub const TOPIC_REVOCATION_COMMITTED: Symbol = symbol_short!("rv_cmmt");
+/// Topic: relayer gas reported for delegated submission
+pub const TOPIC_RELAYER_GAS_REPORTED: Symbol = symbol_short!("rl_gas");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -681,6 +683,32 @@ pub struct SlashTriggeredEvent {
     pub dispute_id: u64,
 }
 
+/// Normalized payload for `RelayerGasReported` events.
+///
+/// Emitted when a delegated submission (attestor or batch attestor) reports
+/// the gas consumed to the relayer's accumulator.
+///
+/// This provides a clean billing surface for relayer operators to track
+/// their infrastructure costs.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RelayerGasReportedEvent {
+    /// Relayer address that submitted the attestation on behalf of a business.
+    pub relayer: Address,
+    /// Business on whose behalf the submission was made.
+    pub business: Address,
+    /// Period identifier of the submitted attestation.
+    pub period: String,
+    /// CPU instructions consumed by the delegated submission.
+    pub cpu_instructions: u64,
+    /// Memory bytes consumed by the delegated submission.
+    pub memory_bytes: u64,
+    /// Total accumulated CPU instructions for this relayer.
+    pub total_cpu_instructions: u64,
+    /// Total accumulated memory bytes for this relayer.
+    pub total_memory_bytes: u64,
+}
+
 // ── Attestation lifecycle ─────────────────────────────────────────
 
 /// Emit an `AttestationSubmitted` event.
@@ -847,6 +875,48 @@ pub fn emit_slash_triggered(
     };
     env.events()
         .publish((TOPIC_SLASH_TRIGGERED, attestor.clone()), event);
+}
+
+/// Emit a `RelayerGasReported` event.
+///
+/// Call this after a delegated submission (attestor or batch attestor) to
+/// attribute the gas cost to the relayer's accumulator.
+///
+/// # Arguments
+///
+/// * `env`                 – Soroban execution environment.
+/// * `relayer`             – Relayer address that submitted the attestation.
+/// * `business`            – Business on whose behalf the submission was made.
+/// * `period`              – Period identifier of the submitted attestation.
+/// * `cpu_instructions`    – CPU instructions consumed by this submission.
+/// * `memory_bytes`        – Memory bytes consumed by this submission.
+/// * `total_cpu_instructions` – Total accumulated CPU instructions for this relayer.
+/// * `total_memory_bytes`     – Total accumulated memory bytes for this relayer.
+///
+/// # Events
+///
+/// Publishes `(rl_gas, relayer)` → `RelayerGasReportedEvent`.
+pub fn emit_relayer_gas_reported(
+    env: &Env,
+    relayer: &Address,
+    business: &Address,
+    period: &String,
+    cpu_instructions: u64,
+    memory_bytes: u64,
+    total_cpu_instructions: u64,
+    total_memory_bytes: u64,
+) {
+    let event = RelayerGasReportedEvent {
+        relayer: relayer.clone(),
+        business: business.clone(),
+        period: period.clone(),
+        cpu_instructions,
+        memory_bytes,
+        total_cpu_instructions,
+        total_memory_bytes,
+    };
+    env.events()
+        .publish((TOPIC_RELAYER_GAS_REPORTED, relayer.clone()), event);
 }
 
 /// Normalized payload for `AttestationExpiryExtended` events.

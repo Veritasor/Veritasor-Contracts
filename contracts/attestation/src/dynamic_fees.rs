@@ -125,6 +125,11 @@ pub enum DataKey {
     SubmissionTimestamps(Address),
     IsPaused,
 
+    // ── Relayer gas metering ───────────────────────────────────
+    /// Per-relayer gas accumulation counter (CPU instructions).
+    /// Keyed by relayer address.
+    RelayerGasAccumulator(Address),
+
     // ── Time-locked revocation (grace-window appeal path) ──────
     /// Pending revocation proposal keyed by (business, period).
     ///
@@ -617,4 +622,27 @@ pub fn get_archive_pointer(
     env.storage()
         .instance()
         .get(&DataKey::ArchivePointer(business.clone(), period.clone()))
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Relayer Gas Metering
+// ════════════════════════════════════════════════════════════════════
+
+/// Get the accumulated gas (CPU instructions) for a relayer.
+/// Returns 0 if the relayer has no prior activity.
+pub fn get_relayer_gas(env: &Env, relayer: &Address) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::RelayerGasAccumulator(relayer.clone()))
+        .unwrap_or(0)
+}
+
+/// Add gas (CPU instructions) to a relayer's accumulator.
+/// This is called after a delegated submission to attribute the gas cost to the relayer.
+pub fn add_relayer_gas(env: &Env, relayer: &Address, gas: u64) {
+    let current = get_relayer_gas(env, relayer);
+    let new_total = current.saturating_add(gas);
+    env.storage()
+        .instance()
+        .set(&DataKey::RelayerGasAccumulator(relayer.clone()), &new_total);
 }
