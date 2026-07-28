@@ -48,7 +48,8 @@
 //! - ADMIN role cannot be granted to zero address
 //! - Role bitmaps must only use defined bits (0b1111 = 0xF)
 //! - Nonce sequences must be monotonically increasing per account
-//! - Admin must always exist (at least one address holds ADMIN role)
+//! - At least `MIN_ADMIN_COUNT` addresses always hold ADMIN role.
+//! - Admin removals are separated by `ADMIN_REMOVAL_COOLDOWN_SECS`.
 
 use soroban_sdk::{contracttype, Address, Env, Vec};
 use crate::dispute;
@@ -80,6 +81,14 @@ pub const MAX_ADMIN_WEIGHT: u32 = 1_000;
 /// in quorum with equal unit weight, matching the previous count-based model.
 pub const DEFAULT_ADMIN_WEIGHT: u32 = 1;
 
+/// Minimum number of admins that must remain after an admin-role removal.
+/// A value of one prevents the contract from becoming permanently unmanaged.
+pub const MIN_ADMIN_COUNT: u32 = 1;
+
+/// Minimum elapsed ledger time between successful admin-role removals.
+/// One day limits the blast radius of an erroneous batch removal.
+pub const ADMIN_REMOVAL_COOLDOWN_SECS: u64 = 24 * 60 * 60;
+
 /// Storage keys for access control
 #[contracttype]
 #[derive(Clone)]
@@ -100,6 +109,8 @@ pub enum AccessControlKey {
     /// Key: admin `Address` → Value: `u32` weight (1 ≤ weight ≤ MAX_ADMIN_WEIGHT).
     /// Missing entries default to `DEFAULT_ADMIN_WEIGHT` (= 1).
     AdminWeight(Address),
+    /// Timestamp of the most recent successful admin-role removal.
+    LastAdminRemovedAt,
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -201,12 +212,58 @@ pub fn revoke_role(env: &Env, account: &Address, role: u32, changed_by: &Address
     }
 
     let current = get_roles(env, account);
+    let removes_admin = (role & ROLE_ADMIN) != 0 && (current & ROLE_ADMIN) != 0;
+
+    if removes_admin {
+        require_admin_removal_allowed(env);
+    }
+
     set_roles(env, account, current & !role);
+
+    if removes_admin {
+        env.storage().instance().set(
+            &AccessControlKey::LastAdminRemovedAt,
+            &env.ledger().timestamp(),
+        );
+    }
 
     // Emit event for audit trail
     crate::events::emit_role_revoked(env, account, role, changed_by);
 }
 
+/// Return the number of addresses that currently hold `ROLE_ADMIN`.
+pub fn admin_count(env: &Env) -> u32 {
+    let holders = get_role_holders(env);
+    let mut count = 0;
+    for i in 0..holders.len() {
+        if has_role(env, &holders.get(i).unwrap(), ROLE_ADMIN) {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// Validate the minimum-count and cooldown protections before removing an admin.
+/// This shared guard also covers removals executed by governance proposals.
+fn require_admin_removal_allowed(env: &Env) {
+    assert!(
+        admin_count(env) > MIN_ADMIN_COUNT,
+        "admin removal would violate MIN_ADMIN_COUNT"
+    );
+
+    if let Some(last_removed_at) = env
+        .storage()
+        .instance()
+        .get::<_, u64>(&AccessControlKey::LastAdminRemovedAt)
+    {
+        let now = env.ledger().timestamp();
+        assert!(
+            now >= last_removed_at
+                && now - last_removed_at >= ADMIN_REMOVAL_COOLDOWN_SECS,
+            "admin removal cooldown not elapsed"
+        );
+    }
+}
 /// Grant a role by admin.
 pub fn grant_role_by_admin(env: &Env, admin: &Address, account: &Address, role: u32) {
     require_admin(env, admin);
@@ -264,12 +321,39 @@ pub fn swap_admin(env: &Env, old_admin: &Address, new_admin: &Address, swapped_b
         assert!(admin_count >= 2, "swap would leave no admin remaining");
     }
 
-    revoke_role(env, old_admin, ROLE_ADMIN, swapped_by);
+    // A swap preserves the admin count, so it is not subject to the removal cooldown.
+    let current = get_roles(env, old_admin);
+    set_roles(env, old_admin, current & !ROLE_ADMIN);
+    crate::events::emit_role_revoked(env, old_admin, ROLE_ADMIN, swapped_by);
     grant_role(env, new_admin, ROLE_ADMIN, swapped_by);
 
     crate::events::emit_admin_swapped(env, old_admin, new_admin, swapped_by);
 }
 
+/// Swap an admin after an authenticated key-rotation flow has verified the
+/// replacement identity. This is crate-visible only so contract entry points
+/// cannot bypass normal admin authorization.
+pub(crate) fn swap_admin_after_verified_rotation(
+    env: &Env,
+    old_admin: &Address,
+    new_admin: &Address,
+    swapped_by: &Address,
+) {
+    assert!(
+        has_role(env, old_admin, ROLE_ADMIN),
+        "old_admin does not have ADMIN role"
+    );
+
+    if !has_role(env, new_admin, ROLE_ADMIN) {
+        assert!(admin_count(env) >= 2, "swap would leave no admin remaining");
+    }
+
+    let current = get_roles(env, old_admin);
+    set_roles(env, old_admin, current & !ROLE_ADMIN);
+    crate::events::emit_role_revoked(env, old_admin, ROLE_ADMIN, swapped_by);
+    grant_role(env, new_admin, ROLE_ADMIN, swapped_by);
+    crate::events::emit_admin_swapped(env, old_admin, new_admin, swapped_by);
+}
 /// Get all addresses that hold any role.
 pub fn get_role_holders(env: &Env) -> Vec<Address> {
     env.storage()
