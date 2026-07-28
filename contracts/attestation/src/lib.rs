@@ -66,7 +66,7 @@ pub use events::{
     ProofHashUpdatedEvent,
 };
 pub use fees::{collect_flat_fee, FlatFeeConfig};
-pub use multisig::{Proposal, ProposalAction, ProposalStatus};
+pub use multisig::{Proposal, ProposalAction, ProposalStatus, VoteWeightSnapshot};
 pub use rate_limit::RateLimitConfig;
 pub use registry::{BusinessRecord, BusinessStatus};
 
@@ -129,6 +129,13 @@ pub struct AttestationContract;
 
 #[cfg(all(test, feature = "full-tests"))]
 mod active_submission_test;
+
+/// Vote-weight snapshot tests (issue #512). Always compiled into the test
+/// harness so the flash-vote defence is covered regardless of which
+/// feature gate is enabled (the regression it closes is impossible to
+/// reproduce without these tests).
+#[cfg(test)]
+mod vote_weight_snapshot_test;
 
 #[contractimpl]
 impl AttestationContract {
@@ -1039,8 +1046,37 @@ impl AttestationContract {
         multisig::get_proposal(&env, proposal_id)
     }
 
+    /// Return the immutable vote-weight snapshot captured at the moment
+    /// `proposal_id` was created (issue #512).
+    ///
+    /// The snapshot records the owner set, threshold, and total vote weight
+    /// that govern the proposal's approval tally. Subsequent `AddOwner`,
+    /// `RemoveOwner`, or `ChangeThreshold` actions do not modify this
+    /// snapshot, so callers can deterministically reconstruct the exact
+    /// approval rules in force at creation.
+    ///
+    /// Returns `None` if the proposal ID has no snapshot stored — this
+    /// would only occur for legacy proposals created before this feature
+    /// was live, or for IDs that do not correspond to any proposal.
+    ///
+    /// # Authorization
+    /// Read-only; no auth required.
+    pub fn get_proposal_snapshot(env: Env, proposal_id: u64) -> Option<VoteWeightSnapshot> {
+        multisig::get_vote_weight_snapshot(&env, proposal_id)
+    }
+
     pub fn get_approval_count(env: Env, proposal_id: u64) -> u32 {
         multisig::get_approval_count(&env, proposal_id)
+    }
+
+    /// Return the raw list of addresses that have approved the proposal.
+    ///
+    /// Unlike [`get_approval_count`] (which is snapshot-aware when a
+    /// snapshot exists), this view returns the **stored** approvals vector
+    /// verbatim — useful for off-chain forensic tooling that needs to
+    /// reconstruct exactly who signed.
+    pub fn get_proposal_approvals(env: Env, proposal_id: u64) -> Vec<Address> {
+        multisig::get_approvals(&env, proposal_id)
     }
 
     pub fn is_proposal_approved(env: Env, proposal_id: u64) -> bool {

@@ -132,6 +132,12 @@ pub const TOPIC_BIZ_REACTIVATE: Symbol = symbol_short!("biz_rea");
 pub const TOPIC_PROOF_HASH_UPDATED: Symbol = symbol_short!("ph_upd");
 /// Topic: proposal cleaned up after expiry + grace period
 pub const TOPIC_PROPOSAL_CLEANED: Symbol = symbol_short!("prp_cl");
+/// Topic: vote-weight snapshot captured at proposal creation (issue #512).
+///
+/// Used by off-chain indexers and audit tools to reconstruct the exact
+/// owner set / threshold / total weight that governed a proposal's
+/// approval tally. The snapshot is immutable after creation.
+pub const TOPIC_VOTE_WEIGHT_SNAPSHOT_CREATED: Symbol = symbol_short!("vw_snap");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -470,6 +476,38 @@ pub struct ProposalCleanedEvent {
     pub action: ProposalAction,
     /// Ledger sequence number when the cleanup occurred
     pub cleaned_at: u32,
+}
+
+/// Normalized payload for `VoteWeightSnapshotCreated` events (issue #512).
+///
+/// Emitted exactly once per proposal at the moment the proposal is
+/// created. Carries enough information for an off-chain indexer to
+/// reconstruct the immutable vote-weight snapshot that governs the
+/// proposal's approval tally, without needing an additional storage
+/// read.
+///
+/// # Storage contract
+///
+/// `owners_count` and `threshold` are duplicated here for indexer
+/// convenience but the snapshot itself lives on-chain at
+/// [`MultisigKey::VoteWeightSnapshot(proposal_id)`] in
+/// `contracts/attestation/src/multisig.rs`.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VoteWeightSnapshotCreatedEvent {
+    /// Identifier of the proposal whose snapshot was captured.
+    pub proposal_id: u64,
+    /// Number of owners in the snapshot (== total weight under the
+    /// current 1-owner-1-vote semantics).
+    pub owners_count: u32,
+    /// Approval threshold captured at creation time.
+    pub threshold: u32,
+    /// Ledger sequence at which the snapshot was captured (= proposal
+    /// creation ledger).
+    pub created_at: u32,
+    /// Stable numeric tag for the proposal's `ProposalAction` variant.
+    /// See `multisig::action_tag` for the mapping.
+    pub action_tag: u32,
 }
 
 // ── Attestation lifecycle ─────────────────────────────────────────
@@ -1151,4 +1189,44 @@ pub fn emit_proposal_cleaned(env: &Env, proposal_id: u64, action: &ProposalActio
         cleaned_at,
     };
     env.events().publish((TOPIC_PROPOSAL_CLEANED,), event);
+}
+
+/// Emit a `VoteWeightSnapshotCreated` event (issue #512).
+///
+/// Call this at proposal creation time, immediately after the snapshot has
+/// been persisted to instance storage. The event is the indexer-facing
+/// record of the snapshot and is the only way off-chain observers learn
+/// the exact owner set / threshold that govern the proposal's tally.
+///
+/// # Arguments
+///
+/// * `env`            – Soroban execution environment.
+/// * `proposal_id`    – Identifier of the proposal whose snapshot was captured.
+/// * `owners_count`   – Number of owners in the snapshot (= total weight
+///                      under the current 1-owner-1-vote semantics).
+/// * `threshold`      – Approval threshold captured at creation time.
+/// * `created_at`     – Ledger sequence when the snapshot was captured.
+/// * `action_tag`     – Stable numeric tag for the proposal's
+///                      `ProposalAction` variant.
+///
+/// # Events
+///
+/// Publishes `(vw_snap,)` → `VoteWeightSnapshotCreatedEvent`.
+pub fn emit_vote_weight_snapshot_created(
+    env: &Env,
+    proposal_id: u64,
+    owners_count: u32,
+    threshold: u32,
+    created_at: u32,
+    action_tag: u32,
+) {
+    let event = VoteWeightSnapshotCreatedEvent {
+        proposal_id,
+        owners_count,
+        threshold,
+        created_at,
+        action_tag,
+    };
+    env.events()
+        .publish((TOPIC_VOTE_WEIGHT_SNAPSHOT_CREATED,), event);
 }
