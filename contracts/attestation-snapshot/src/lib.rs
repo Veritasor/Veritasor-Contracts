@@ -44,7 +44,9 @@
 //!   stale authorisations from being replayed.
 //! - Only the admin who called `restore_dry_run` can call `restore_commit`.
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec,
+};
 
 /// Maximum UTF-8 byte length for period/epoch identifiers.
 pub const MAX_PERIOD_BYTES: u32 = 128;
@@ -328,7 +330,10 @@ impl AttestationSnapshotContract {
                 attestation_import::AttestationContractClient::new(&env, &attestation_contract);
             let has_attestation = att_client.get_attestation(&business, &period).is_some();
             let revoked = att_client.get_revocation_info(&business, &period).is_some();
-            assert!(has_attestation, "attestation must exist for this business and period");
+            assert!(
+                has_attestation,
+                "attestation must exist for this business and period"
+            );
             assert!(!revoked, "attestation must not be revoked");
         }
 
@@ -340,9 +345,10 @@ impl AttestationSnapshotContract {
             recorded_at: env.ledger().timestamp(),
         };
 
-        env.storage()
-            .instance()
-            .set(&DataKey::Snapshot(business.clone(), period.clone()), &record);
+        env.storage().instance().set(
+            &DataKey::Snapshot(business.clone(), period.clone()),
+            &record,
+        );
         Self::index_period_for_business(&env, &business, &period);
         Self::index_business_for_epoch(&env, &period, &business);
         Self::index_epoch_globally(&env, &period);
@@ -352,7 +358,10 @@ impl AttestationSnapshotContract {
     pub fn finalize_epoch(env: Env, caller: Address, epoch: String) {
         Self::require_admin(&env, &caller);
         Self::assert_period_within_limit(&epoch);
-        assert!(!Self::has_epoch_finalization(&env, &epoch), "epoch already finalized");
+        assert!(
+            !Self::has_epoch_finalization(&env, &epoch),
+            "epoch already finalized"
+        );
 
         let businesses = Self::read_epoch_businesses(&env, &epoch);
         let snapshot_count = businesses.len();
@@ -462,18 +471,17 @@ impl AttestationSnapshotContract {
     /// - Only admin may call this.
     /// - The pending token expires after `RESTORE_COMMIT_WINDOW_LEDGERS` ledgers.
     /// - A second dry-run overwrites any previous pending token.
-    pub fn restore_dry_run(
-        env: Env,
-        caller: Address,
-        entries: Vec<RestoreEntry>,
-    ) -> RestoreReport {
+    pub fn restore_dry_run(env: Env, caller: Address, entries: Vec<RestoreEntry>) -> RestoreReport {
         Self::require_admin(&env, &caller);
 
         let now_ts = env.ledger().timestamp();
         let now_seq = env.ledger().sequence();
         let batch_len = entries.len();
 
-        assert!(batch_len <= MAX_RESTORE_BATCH, "restore batch exceeds MAX_RESTORE_BATCH");
+        assert!(
+            batch_len <= MAX_RESTORE_BATCH,
+            "restore batch exceeds MAX_RESTORE_BATCH"
+        );
 
         let mut violations: Vec<EntryViolation> = Vec::new(&env);
 
@@ -542,7 +550,8 @@ impl AttestationSnapshotContract {
                         for k in 0..biz_last_ts.len() {
                             let kp = biz_last_ts.get(k).unwrap();
                             if kp.0 == entry.business {
-                                updated.push_back((entry.business.clone(), entry.record.recorded_at));
+                                updated
+                                    .push_back((entry.business.clone(), entry.record.recorded_at));
                             } else {
                                 updated.push_back(kp);
                             }
@@ -560,7 +569,11 @@ impl AttestationSnapshotContract {
 
         let entries_valid = batch_len.saturating_sub(violations.len());
         let ready = violations.is_empty();
-        let deadline = if ready { now_seq + RESTORE_COMMIT_WINDOW_LEDGERS } else { 0 };
+        let deadline = if ready {
+            now_seq + RESTORE_COMMIT_WINDOW_LEDGERS
+        } else {
+            0
+        };
 
         if ready {
             // Compute a batch fingerprint: SHA-256 of the concatenated
@@ -709,9 +722,15 @@ impl AttestationSnapshotContract {
         env.storage().instance().get(&DataKey::AttestationContract)
     }
 
-    pub fn get_max_period_bytes(_env: Env) -> u32 { MAX_PERIOD_BYTES }
-    pub fn get_max_business_periods(_env: Env) -> u32 { MAX_BUSINESS_PERIODS }
-    pub fn get_max_epoch_businesses(_env: Env) -> u32 { MAX_EPOCH_BUSINESSES }
+    pub fn get_max_period_bytes(_env: Env) -> u32 {
+        MAX_PERIOD_BYTES
+    }
+    pub fn get_max_business_periods(_env: Env) -> u32 {
+        MAX_BUSINESS_PERIODS
+    }
+    pub fn get_max_epoch_businesses(_env: Env) -> u32 {
+        MAX_EPOCH_BUSINESSES
+    }
 
     // ── Snapshot commitment ───────────────────────────────────────────
 
@@ -789,7 +808,8 @@ impl AttestationSnapshotContract {
                 for k in 0..periods.len() {
                     let period = periods.get(k).unwrap();
                     let snap_key = DataKey::Snapshot(business.clone(), period.clone());
-                    if let Some(record) = env.storage().instance().get::<_, SnapshotRecord>(&snap_key)
+                    if let Some(record) =
+                        env.storage().instance().get::<_, SnapshotRecord>(&snap_key)
                     {
                         records.push_back(record);
                     }
@@ -825,7 +845,10 @@ impl AttestationSnapshotContract {
             .instance()
             .get(&DataKey::Writer(caller.clone()))
             .unwrap_or(false);
-        assert!(*caller == admin || is_writer, "caller must be admin or writer");
+        assert!(
+            *caller == admin || is_writer,
+            "caller must be admin or writer"
+        );
     }
 
     fn has_epoch_finalization(env: &Env, epoch: &String) -> bool {
@@ -853,7 +876,10 @@ impl AttestationSnapshotContract {
                 return;
             }
         }
-        assert!(periods.len() < MAX_BUSINESS_PERIODS, "business period index limit reached");
+        assert!(
+            periods.len() < MAX_BUSINESS_PERIODS,
+            "business period index limit reached"
+        );
         periods.push_back(period.clone());
         env.storage().instance().set(&key, &periods);
     }
@@ -870,7 +896,10 @@ impl AttestationSnapshotContract {
                 return;
             }
         }
-        assert!(businesses.len() < MAX_EPOCH_BUSINESSES, "epoch business index limit reached");
+        assert!(
+            businesses.len() < MAX_EPOCH_BUSINESSES,
+            "epoch business index limit reached"
+        );
         businesses.push_back(business.clone());
         env.storage().instance().set(&key, &businesses);
     }

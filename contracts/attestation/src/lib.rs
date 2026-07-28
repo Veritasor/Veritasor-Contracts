@@ -8,7 +8,8 @@ extern crate std;
 
 use core::cmp::Ordering;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, token, Address, BytesN, Env, String, Symbol, TryIntoVal, Vec,
+    contract, contractimpl, contracttype, token, Address, BytesN, Env, String, Symbol, TryIntoVal,
+    Vec,
 };
 
 use veritasor_common::replay_protection;
@@ -63,8 +64,8 @@ pub use dynamic_fees::{compute_fee, DataKey, FeeConfig};
 pub use dynamic_fees::{RevokeProposal, DEFAULT_REVOKE_GRACE_SECONDS};
 pub use events::{
     AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
-    AttestationSubmittedEvent, ProofHashUpdatedEvent,
-    RevocationCancelledEvent, RevocationCommittedEvent, RevocationProposedEvent,
+    AttestationSubmittedEvent, ProofHashUpdatedEvent, RevocationCancelledEvent,
+    RevocationCommittedEvent, RevocationProposedEvent,
 };
 pub use fees::{collect_flat_fee, CollectorRotationProposal, FlatFeeConfig};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
@@ -254,8 +255,8 @@ impl AttestationContract {
     pub fn commit_fee_config(env: Env, caller: Address, nonce: u64) {
         let admin = dynamic_fees::require_admin(&env);
         replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
-        let pending = dynamic_fees::get_pending_fee_config(&env)
-            .expect("no pending fee config to commit");
+        let pending =
+            dynamic_fees::get_pending_fee_config(&env).expect("no pending fee config to commit");
         assert!(
             env.ledger().timestamp() >= pending.effective_at,
             "timelock not yet expired"
@@ -364,19 +365,15 @@ impl AttestationContract {
         );
     }
 
-    pub fn propose_collector_rotation(
-        env: Env,
-        caller: Address,
-        new_collector: Address,
-    ) {
+    pub fn propose_collector_rotation(env: Env, caller: Address, new_collector: Address) {
         let current_config = fees::get_flat_fee_config(&env).expect("flat fee not configured");
         assert!(
             caller == current_config.collector,
             "only current collector may propose rotation"
         );
 
-        let current_balance = token::Client::new(&env, &current_config.token)
-            .balance(&current_config.collector);
+        let current_balance =
+            token::Client::new(&env, &current_config.token).balance(&current_config.collector);
 
         fees::propose_collector_rotation(&env, &caller, &new_collector);
         events::emit_collector_rotation_proposed(
@@ -389,8 +386,8 @@ impl AttestationContract {
     }
 
     pub fn accept_collector_rotation(env: Env, caller: Address) {
-        let proposal = fees::get_pending_collector_rotation(&env)
-            .expect("no pending collector rotation");
+        let proposal =
+            fees::get_pending_collector_rotation(&env).expect("no pending collector rotation");
         assert!(
             caller == proposal.new_collector,
             "only proposed new collector may accept rotation"
@@ -406,9 +403,7 @@ impl AttestationContract {
         );
     }
 
-    pub fn get_pending_collector_rotation(
-        env: Env,
-    ) -> Option<CollectorRotationProposal> {
+    pub fn get_pending_collector_rotation(env: Env) -> Option<CollectorRotationProposal> {
         fees::get_pending_collector_rotation(&env)
     }
 
@@ -427,7 +422,9 @@ impl AttestationContract {
 
     pub fn set_audit_log_contract(env: Env, caller: Address, audit_log: Address) {
         access_control::require_admin(&env, &caller);
-        env.storage().instance().set(&DataKey::AuditLogContract, &audit_log);
+        env.storage()
+            .instance()
+            .set(&DataKey::AuditLogContract, &audit_log);
     }
 
     pub fn get_audit_log_contract(env: Env) -> Option<Address> {
@@ -1932,7 +1929,8 @@ impl AttestationContract {
         leaf: BytesN<32>,
         proof: Vec<BytesN<32>>,
     ) {
-        dispute::submit_dispute_witness(&env, dispute_id, &leaf, &proof).expect("witness verification failed");
+        dispute::submit_dispute_witness(&env, dispute_id, &leaf, &proof)
+            .expect("witness verification failed");
     }
 
     /// Return all dispute IDs associated with a specific attestation.
@@ -1964,26 +1962,24 @@ impl AttestationContract {
         args.push_back(attestor.into_val(&env));
         args.push_back(amount.into_val(&env));
         args.push_back(dispute_id.into_val(&env));
-        let _ = env.invoke_contract::<soroban_sdk::Val>(&staking_addr, &soroban_sdk::Symbol::new(&env, "slash"), args);
+        let _ = env.invoke_contract::<soroban_sdk::Val>(
+            &staking_addr,
+            &soroban_sdk::Symbol::new(&env, "slash"),
+            args,
+        );
 
         events::emit_slash_triggered(&env, &attestor, amount, dispute_id);
 
         if let Some(audit_log) = Self::get_audit_log_contract(env.clone()) {
             let audit_client = AuditLogClient::new(&env, &audit_log);
             let current_contract = env.current_contract_address();
-            
+
             // 1 is NONCE_CHANNEL_ADMIN in audit-log
             let nonce = audit_client.get_replay_nonce(&current_contract, &1u32);
             let action = String::from_str(&env, "SlashTriggered");
             let payload = String::from_str(&env, "SlashPayload");
 
-            audit_client.append(
-                &nonce,
-                &caller,
-                &current_contract,
-                &action,
-                &payload,
-            );
+            audit_client.append(&nonce, &caller, &current_contract, &action, &payload);
         }
     }
 
@@ -2058,7 +2054,11 @@ impl AttestationContract {
     }
 
     /// Return the pending revocation proposal for (business, period), if any.
-    pub fn get_revoke_proposal(env: Env, business: Address, period: String) -> Option<RevokeProposal> {
+    pub fn get_revoke_proposal(
+        env: Env,
+        business: Address,
+        period: String,
+    ) -> Option<RevokeProposal> {
         dynamic_fees::get_revoke_proposal(&env, &business, &period)
     }
 
@@ -2174,10 +2174,7 @@ impl AttestationContract {
         let grace_seconds = dynamic_fees::get_revoke_grace_seconds(&env);
         let now = env.ledger().timestamp();
         let earliest_commit = proposal.proposed_at.saturating_add(grace_seconds);
-        assert!(
-            now >= earliest_commit,
-            "grace window has not elapsed"
-        );
+        assert!(now >= earliest_commit, "grace window has not elapsed");
 
         // Guard against the edge case where an emergency revoke happened while
         // the proposal was pending.
@@ -2231,12 +2228,7 @@ impl AttestationContract {
     /// - No pending proposal for (business, period)
     /// - The grace window has already elapsed (commit window is open)
     /// - Caller is neither the business owner nor an admin
-    pub fn cancel_revoke_proposal(
-        env: Env,
-        caller: Address,
-        business: Address,
-        period: String,
-    ) {
+    pub fn cancel_revoke_proposal(env: Env, caller: Address, business: Address, period: String) {
         access_control::require_not_paused(&env);
         caller.require_auth();
 
@@ -2517,12 +2509,12 @@ impl AttestationContract {
 // ── Test Modules ──
 // Issue #369 tests always run. Enable `full-tests` for the legacy attestation suite
 // (some modules need updates on this branch before they compile).
-#[cfg(test)]
-mod attestor_lock_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod access_control_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod anomaly_test;
+#[cfg(test)]
+mod attestor_lock_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod attestor_staking_integration_test;
 #[cfg(test)]
@@ -2565,8 +2557,6 @@ mod multisig_e2e_test;
 mod multisig_test;
 #[cfg(test)]
 mod pause_test;
-#[cfg(test)]
-mod timelock_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod proof_hash_test;
 #[cfg(all(test, feature = "full-tests"))]
@@ -2583,17 +2573,19 @@ mod registry_test;
 mod replay_nonce_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod revocation_test;
+#[cfg(all(test, feature = "full-tests"))]
+mod revoke_reason_test;
 #[cfg(test)]
 mod schema_export_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod test;
 #[cfg(all(test, feature = "full-tests"))]
 mod tier_bounds_test;
+#[cfg(test)]
+mod timelock_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod ttl_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod verify_attestation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod verify_attestations_batch_test;
-#[cfg(all(test, feature = "full-tests"))]
-mod revoke_reason_test;

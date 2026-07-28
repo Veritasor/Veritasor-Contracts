@@ -901,32 +901,32 @@ fn tied_votes_are_not_approved_even_when_quorum_is_met() {
     assert!(!client.is_proposal_approved(&id));
 }
 
-
 #[test]
 fn test_dao_pause_attestation() {
     let e = soroban_sdk::Env::default();
-    
+
     let contract_id = e.register_contract(None, ProtocolDaoContract);
     let dao = ProtocolDaoContractClient::new(&e, &contract_id);
-    
-    let token = soroban_sdk::testutils::create_token_contract(&e, &soroban_sdk::Address::generate(&e));
-    
+
+    let token =
+        soroban_sdk::testutils::create_token_contract(&e, &soroban_sdk::Address::generate(&e));
+
     let gov_token_admin = soroban_sdk::Address::generate(&e);
     let proposer = soroban_sdk::Address::generate(&e);
     let voter1 = soroban_sdk::Address::generate(&e);
     let voter2 = soroban_sdk::Address::generate(&e);
     let executor = soroban_sdk::Address::generate(&e);
-    
+
     token.mint(&proposer, &1000i128);
     token.mint(&voter1, &1000i128);
     token.mint(&voter2, &1000i128);
-    
+
     dao.initialize(&gov_token_admin, &token.address, &2u32, &100u32);
-    
+
     e.mock_all_auths();
-    
+
     let proposal_id = dao.create_pause_proposal();
-    
+
     dao.vote_for(&proposal_id);
     dao.vote_for(&proposal_id);
 }

@@ -26,8 +26,8 @@
 //! - Disputes cannot be opened against already-revoked attestations.
 use crate::access_control;
 use crate::dynamic_fees::{self, DataKey};
-use crate::ROLE_ADMIN;
 use crate::events;
+use crate::ROLE_ADMIN;
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 /// Status of a dispute
@@ -525,7 +525,6 @@ pub fn submit_dispute_witness(
     Ok(())
 }
 
-
 /// Loads revocation metadata for an attestation, if present.
 pub fn get_attestation_revocation(
     env: &Env,
@@ -704,7 +703,13 @@ pub fn is_attestor_locked(env: &Env, attestor: &Address) -> bool {
 ///
 /// Publishes an `AttestorLockedForDispute` event when the attestor transitions
 /// from unlocked to locked.
-pub fn lock_attestor(env: &Env, attestor: &Address, business: &Address, period: &String, dispute_id: u64) {
+pub fn lock_attestor(
+    env: &Env,
+    attestor: &Address,
+    business: &Address,
+    period: &String,
+    dispute_id: u64,
+) {
     let key = DisputeKey::AttestorLockCount(attestor.clone());
     let current: u64 = env.storage().instance().get(&key).unwrap_or(0);
     let new_count = current + 1;

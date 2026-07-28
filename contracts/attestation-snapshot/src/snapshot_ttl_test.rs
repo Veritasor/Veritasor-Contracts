@@ -60,10 +60,7 @@ fn record(
 }
 
 /// Extract all `PointerTtlBumpedEvent` payloads from the event log for `contract_id`.
-fn bump_events(
-    env: &Env,
-    contract_id: &Address,
-) -> std::vec::Vec<PointerTtlBumpedEvent> {
+fn bump_events(env: &Env, contract_id: &Address) -> std::vec::Vec<PointerTtlBumpedEvent> {
     env.events()
         .all()
         .iter()
@@ -108,7 +105,10 @@ fn bump_nonexistent_pointer_returns_false() {
     assert!(!result, "expected false for non-existent pointer");
 
     let evts = bump_events(&env, &client.address);
-    assert!(evts.is_empty(), "no event should be emitted for absent pointer");
+    assert!(
+        evts.is_empty(),
+        "no event should be emitted for absent pointer"
+    );
 }
 
 /// Non-admin, non-writer callers must be rejected.
@@ -182,7 +182,10 @@ fn bump_wrong_period_returns_false() {
 
     // Attempt bump for a different period on the same business.
     let result = client.bump_snapshot_pointer_ttl(&admin, &business, &p(&env, "2026-09"));
-    assert!(!result, "different period = no snapshot = should return false");
+    assert!(
+        !result,
+        "different period = no snapshot = should return false"
+    );
 }
 
 /// Bumping after epoch finalization still works (finalization does not seal TTL operations).
@@ -195,7 +198,10 @@ fn bump_after_epoch_finalization_succeeds() {
 
     // Finalized epochs must still allow TTL maintenance.
     let result = client.bump_snapshot_pointer_ttl(&admin, &business, &p(&env, "2026-10"));
-    assert!(result, "TTL bump must succeed even after epoch is finalized");
+    assert!(
+        result,
+        "TTL bump must succeed even after epoch is finalized"
+    );
 
     let evts = bump_events(&env, &client.address);
     assert_eq!(evts.len(), 1);

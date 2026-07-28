@@ -69,7 +69,6 @@ pub const FEE_BUCKET_WINDOW_SECONDS: u64 = 86400; // 24 * 60 * 60
 /// Users must have at least this window to observe and react to pending fee changes.
 pub const FEE_TIMELOCK_SECONDS: u64 = 86400; // 24 hours
 
-
 // ════════════════════════════════════════════════════════════════════
 //  Storage types
 // ════════════════════════════════════════════════════════════════════
@@ -304,9 +303,7 @@ pub fn set_pending_fee_config(env: &Env, pending: &PendingFeeConfig) {
 
 /// Remove any pending fee configuration.
 pub fn clear_pending_fee_config(env: &Env) {
-    env.storage()
-        .instance()
-        .remove(&DataKey::PendingFeeConfig);
+    env.storage().instance().remove(&DataKey::PendingFeeConfig);
 }
 
 /// If a pending fee config's timelock has expired, apply it to the live config
@@ -567,9 +564,7 @@ pub fn get_archive_index(env: &Env) -> u64 {
 /// Increment the global archive index and return the *new* value.
 pub fn next_archive_index(env: &Env) -> u64 {
     let next = get_archive_index(env) + 1;
-    env.storage()
-        .instance()
-        .set(&DataKey::ArchiveIndex, &next);
+    env.storage().instance().set(&DataKey::ArchiveIndex, &next);
     next
 }
 
@@ -580,9 +575,10 @@ pub fn set_archived_attestation(
     period: &soroban_sdk::String,
     data: &crate::AttestationData,
 ) {
-    env.storage()
-        .instance()
-        .set(&DataKey::ArchivedAttestation(business.clone(), period.clone()), data);
+    env.storage().instance().set(
+        &DataKey::ArchivedAttestation(business.clone(), period.clone()),
+        data,
+    );
 }
 
 /// Read a full attestation from the archive tier.
@@ -591,9 +587,10 @@ pub fn get_archived_attestation(
     business: &Address,
     period: &soroban_sdk::String,
 ) -> Option<crate::AttestationData> {
-    env.storage()
-        .instance()
-        .get(&DataKey::ArchivedAttestation(business.clone(), period.clone()))
+    env.storage().instance().get(&DataKey::ArchivedAttestation(
+        business.clone(),
+        period.clone(),
+    ))
 }
 
 /// Write the lightweight archive pointer for a (business, period).
@@ -603,9 +600,10 @@ pub fn set_archive_pointer(
     period: &soroban_sdk::String,
     pointer: &ArchivePointerRecord,
 ) {
-    env.storage()
-        .instance()
-        .set(&DataKey::ArchivePointer(business.clone(), period.clone()), pointer);
+    env.storage().instance().set(
+        &DataKey::ArchivePointer(business.clone(), period.clone()),
+        pointer,
+    );
 }
 
 /// Read the lightweight archive pointer for a (business, period).

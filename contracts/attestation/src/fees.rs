@@ -124,11 +124,7 @@ pub fn get_pending_collector_rotation(env: &Env) -> Option<CollectorRotationProp
 /// The current collector must authorize this call. If the collector already held
 /// a balance of the configured flat fee token, that balance is transferred into
 /// the contract and held until the proposed new collector accepts.
-pub fn propose_collector_rotation(
-    env: &Env,
-    caller: &Address,
-    new_collector: &Address,
-) {
+pub fn propose_collector_rotation(env: &Env, caller: &Address, new_collector: &Address) {
     caller.require_auth();
     let config = get_flat_fee_config(env).expect("flat fee not configured");
     assert!(
@@ -147,7 +143,11 @@ pub fn propose_collector_rotation(
     let client = token::Client::new(env, &config.token);
     let escrowed_amount = client.balance(&config.collector);
     if escrowed_amount > 0 {
-        client.transfer(&config.collector, &env.current_contract_address(), &escrowed_amount);
+        client.transfer(
+            &config.collector,
+            &env.current_contract_address(),
+            &escrowed_amount,
+        );
     }
     let proposal = CollectorRotationProposal {
         old_collector: config.collector.clone(),
@@ -161,8 +161,7 @@ pub fn propose_collector_rotation(
 /// Accept a pending collector rotation and release escrowed funds to the new collector.
 pub fn accept_collector_rotation(env: &Env, caller: &Address) {
     caller.require_auth();
-    let proposal = get_collector_rotation_proposal(env)
-        .expect("no pending collector rotation");
+    let proposal = get_collector_rotation_proposal(env).expect("no pending collector rotation");
     assert!(
         caller == &proposal.new_collector,
         "only proposed new collector may accept rotation"

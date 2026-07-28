@@ -1938,11 +1938,11 @@ fn setup_expired_attestations(
             &business,
             &period,
             &root,
-            &1u64,          // attestation timestamp
-            &1u32,          // version
-            &0i128,         // fee_paid (ignored)
-            &None,          // no proof hash
-            &Some(100u64),  // expires at ledger time 100
+            &1u64,         // attestation timestamp
+            &1u32,         // version
+            &0i128,        // fee_paid (ignored)
+            &None,         // no proof hash
+            &Some(100u64), // expires at ledger time 100
         );
         pairs.push_back((business, period.clone()));
     }

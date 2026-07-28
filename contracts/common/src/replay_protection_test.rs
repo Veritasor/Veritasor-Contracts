@@ -2191,8 +2191,9 @@ fn concurrent_batches_nonce_isolation() {
     );
 
     // State integrity: CHANNEL_BUSINESS must still be 1 after the failed replay.
-    let business_nonce_after_replay =
-        env.as_contract(&contract_id, || get_nonce(&env, &business_a, CHANNEL_BUSINESS));
+    let business_nonce_after_replay = env.as_contract(&contract_id, || {
+        get_nonce(&env, &business_a, CHANNEL_BUSINESS)
+    });
     assert_eq!(
         business_nonce_after_replay, 1,
         "CHANNEL_BUSINESS must remain 1 after a failed replay attempt"

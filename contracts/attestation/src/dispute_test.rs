@@ -657,4 +657,3 @@ fn test_submit_dispute_witness_dispute_not_open_rejected() {
     let res = client.try_submit_dispute_witness(&dispute_id, &leaf, &proof);
     assert!(res.is_err());
 }
-

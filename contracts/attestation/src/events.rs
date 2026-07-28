@@ -834,12 +834,7 @@ pub fn emit_attestation_cleaned_up(env: &Env, business: &Address, period: &Strin
 }
 
 /// Emit a `SlashTriggered` event.
-pub fn emit_slash_triggered(
-    env: &Env,
-    attestor: &Address,
-    amount: i128,
-    dispute_id: u64,
-) {
+pub fn emit_slash_triggered(env: &Env, attestor: &Address, amount: i128, dispute_id: u64) {
     let event = SlashTriggeredEvent {
         attestor: attestor.clone(),
         amount,
@@ -1079,7 +1074,8 @@ pub fn emit_pause_scheduled_cancelled(env: &Env, caller: &Address) {
     let event = PauseScheduledCancelledEvent {
         caller: caller.clone(),
     };
-    env.events().publish((TOPIC_PAUSE_SCHEDULED_CANCELLED,), event);
+    env.events()
+        .publish((TOPIC_PAUSE_SCHEDULED_CANCELLED,), event);
 }
 
 // ── Fee configuration ─────────────────────────────────────────────
