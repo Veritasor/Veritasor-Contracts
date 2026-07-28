@@ -44,7 +44,10 @@
 //!   stale authorisations from being replayed.
 //! - Only the admin who called `restore_dry_run` can call `restore_commit`.
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
+    xdr::ToXdr, BytesN, Env, String, Symbol, Vec,
+};
 
 /// Maximum UTF-8 byte length for period/epoch identifiers.
 pub const MAX_PERIOD_BYTES: u32 = 128;
@@ -54,6 +57,12 @@ pub const MAX_BUSINESS_PERIODS: u32 = 512;
 
 /// Maximum indexed businesses per epoch.
 pub const MAX_EPOCH_BUSINESSES: u32 = 512;
+
+/// Maximum number of records accepted in a restore batch.
+pub const MAX_RESTORE_BATCH: u32 = 512;
+
+/// Ledgers after dry-run during which its restore token remains valid.
+pub const RESTORE_COMMIT_WINDOW_LEDGERS: u32 = 600;
 
 // ════════════════════════════════════════════════════════════════════
 //  TTL constants
@@ -149,6 +158,17 @@ pub enum DataKey {
     Writer(Address),
     /// Pending restore token for a given admin (set by dry-run, consumed by commit).
     PendingRestore(Address),
+    /// Fingerprint of the most recently committed restore batch.
+    LastRestoreId,
+}
+
+/// Typed restore errors exposed to callers and automation.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum SnapshotError {
+    /// The restore batch fingerprint matches the last successfully applied batch.
+    AlreadyRestored = 1,
 }
 
 /// A single snapshot record for (business, period).
@@ -604,6 +624,8 @@ impl AttestationSnapshotContract {
     ///   and commit.
     /// - Token expiry prevents indefinitely-pending authorisations.
     /// - Token is deleted before writes begin (re-entrancy guard).
+    /// - The last committed batch fingerprint rejects sequential replay, even
+    ///   when the caller performs a new dry-run first.
     pub fn restore_commit(env: Env, caller: Address, entries: Vec<RestoreEntry>) {
         Self::require_admin(&env, &caller);
 
@@ -629,6 +651,15 @@ impl AttestationSnapshotContract {
             "snapshot_bytes hash mismatch; batch was altered since dry-run"
         );
 
+        if env
+            .storage()
+            .instance()
+            .get::<_, BytesN<32>>(&DataKey::LastRestoreId)
+            == Some(incoming_hash.clone())
+        {
+            panic_with_error!(&env, SnapshotError::AlreadyRestored);
+        }
+
         for i in 0..entries.len() {
             let entry = entries.get(i).unwrap();
 
@@ -644,6 +675,12 @@ impl AttestationSnapshotContract {
             Self::index_period_for_business(&env, &entry.business, &entry.period);
             Self::index_business_for_epoch(&env, &entry.period, &entry.business);
         }
+
+        // Soroban invocations are atomic: this marker and all restored records
+        // commit together, or neither does.
+        env.storage()
+            .instance()
+            .set(&DataKey::LastRestoreId, &incoming_hash);
     }
 
     /// Return the pending restore token for an admin, if any.
@@ -653,6 +690,11 @@ impl AttestationSnapshotContract {
         env.storage()
             .instance()
             .get(&DataKey::PendingRestore(admin))
+    }
+
+    /// Return the fingerprint of the most recently committed restore batch.
+    pub fn get_last_restore_id(env: Env) -> Option<BytesN<32>> {
+        env.storage().instance().get(&DataKey::LastRestoreId)
     }
 
     // ── Read-only queries ────────────────────────────────────────────
@@ -896,7 +938,15 @@ impl AttestationSnapshotContract {
         epochs.push_back(epoch.clone());
         env.storage().instance().set(&key, &epochs);
     }
-}
 
+    /// Compute a deterministic identifier that binds every restore field.
+    ///
+    /// Contract-value serialization is length-delimited and avoids ambiguous
+    /// concatenation. Changing a business, period, metric, count, or timestamp
+    /// therefore produces a different restore identifier.
+    fn compute_batch_hash(env: &Env, entries: &Vec<RestoreEntry>) -> BytesN<32> {
+        env.crypto().sha256(&entries.clone().to_xdr(env)).into()
+    }
+}
 #[cfg(test)]
 mod snapshot_ttl_test;
