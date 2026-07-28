@@ -149,6 +149,12 @@ pub const TOPIC_REVOCATION_PROPOSED: Symbol = symbol_short!("rv_prop");
 pub const TOPIC_REVOCATION_CANCELLED: Symbol = symbol_short!("rv_canc");
 /// Topic: revocation committed (grace window elapsed, revocation finalised)
 pub const TOPIC_REVOCATION_COMMITTED: Symbol = symbol_short!("rv_cmmt");
+/// Topic: epoch checkpoint emitted after each submission (per-period)
+pub const TOPIC_EPOCH_CHECKPOINT: Symbol = symbol_short!("ep_ckpt");
+/// Topic: epoch advanced on fee-bucket window rollover
+pub const TOPIC_EPOCH_ADVANCED: Symbol = symbol_short!("ep_adv");
+/// Topic: backfill checkpoint emitted every N submissions (global counter)
+pub const TOPIC_BACKFILL_CHECKPOINT: Symbol = symbol_short!("bkf_chk");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -1652,4 +1658,149 @@ pub fn emit_revocation_committed(
     };
     env.events()
         .publish((TOPIC_REVOCATION_COMMITTED, business.clone()), event);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Epoch & Backfill Checkpoints
+// ════════════════════════════════════════════════════════════════════
+
+/// Normalized payload for `EpochCheckpoint` events.
+///
+/// Emitted after every attestation submission to provide a per-period
+/// checkpoint that includes a running count of submissions in the current
+/// epoch, total fees collected, and the latest Merkle root (state root).
+///
+/// | Event Catalog | Topic | Secondary topic |
+/// |---|---|--|
+/// | EpochCheckpoint | `ep_ckpt` | *(none)* |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EpochCheckpointEvent {
+    /// Period identifier (e.g., `"2026-02"`).
+    pub period: String,
+    /// Merkle root of the current submission (state root for the checkpoint).
+    pub state_root: BytesN<32>,
+    /// Running submission count for this period within the current epoch.
+    pub submissions_count: u64,
+    /// Total fees collected for this period within the current epoch.
+    pub fees_collected: i128,
+    /// Ledger timestamp at checkpoint emission.
+    pub checkpoint_timestamp: u64,
+}
+
+/// Normalized payload for `EpochAdvanced` events.
+///
+/// Emitted when the fee-bucket window rolls over, incrementing the
+/// monotonic epoch counter. One event is emitted per elapsed window.
+///
+/// | Event Catalog | Topic | Secondary topic |
+/// |---|---|--|
+/// | EpochAdvanced | `ep_adv` | *(none)* |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EpochAdvancedEvent {
+    /// New epoch value after the rollover.
+    pub epoch: u64,
+    /// Ledger timestamp at which the rollover was detected.
+    pub at_ts: u64,
+}
+
+/// Normalized payload for `BackfillCheckpoint` events.
+///
+/// Emitted every `BACKFILL_CHECKPOINT_INTERVAL` (global) submissions to
+/// provide a resumable checkpoint for off-chain indexers.  The
+/// `state_commitment` is a deterministic SHA-256 hash of the current
+/// submission count and the latest Merkle root, allowing indexers to
+/// verify integrity when resuming from this checkpoint.
+///
+/// | Event Catalog | Topic | Secondary topic |
+/// |---|---|--|
+/// | BackfillCheckpoint | `bkf_chk` | *(none)* |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct BackfillCheckpointEvent {
+    /// Global running submission count at this checkpoint.
+    pub submission_count: u64,
+    /// Deterministic commitment: SHA-256( submission_count ‖ latest_merkle_root ).
+    pub state_commitment: BytesN<32>,
+}
+
+/// Emit an `EpochCheckpoint` event.
+///
+/// Called after each attestation submission to record a per-period
+/// checkpoint. The `checkpoint_timestamp` is populated from the ledger
+/// at emission time.
+///
+/// # Arguments
+///
+/// * `env`               – Soroban execution environment.
+/// * `period`            – Period identifier.
+/// * `state_root`        – Merkle root included in the checkpoint.
+/// * `submissions_count` – Running submission count for this period.
+/// * `fees_collected`    – Total fees accumulated for this period.
+///
+/// # Events
+///
+/// Publishes `(ep_ckpt,)` → `EpochCheckpointEvent`.
+pub fn emit_epoch_checkpoint(
+    env: &Env,
+    period: &String,
+    state_root: &BytesN<32>,
+    submissions_count: u64,
+    fees_collected: i128,
+) {
+    let event = EpochCheckpointEvent {
+        period: period.clone(),
+        state_root: state_root.clone(),
+        submissions_count,
+        fees_collected,
+        checkpoint_timestamp: env.ledger().timestamp(),
+    };
+    env.events().publish((TOPIC_EPOCH_CHECKPOINT,), event);
+}
+
+/// Emit an `EpochAdvanced` event.
+///
+/// Called when the fee-bucket window rolls over and the epoch counter
+/// increments. Each elapsed window produces one event.
+///
+/// # Arguments
+///
+/// * `env`   – Soroban execution environment.
+/// * `epoch` – New epoch value.
+/// * `at_ts` – Ledger timestamp at emission.
+///
+/// # Events
+///
+/// Publishes `(ep_adv,)` → `EpochAdvancedEvent`.
+pub fn emit_epoch_advanced(env: &Env, epoch: u64, at_ts: u64) {
+    let event = EpochAdvancedEvent { epoch, at_ts };
+    env.events().publish((TOPIC_EPOCH_ADVANCED,), event);
+}
+
+/// Emit a `BackfillCheckpoint` event.
+///
+/// Called when the global submission counter reaches a multiple of
+/// `BACKFILL_CHECKPOINT_INTERVAL`.  Indexers can use these events to
+/// resume processing without a full replay.
+///
+/// # Arguments
+///
+/// * `env`               – Soroban execution environment.
+/// * `submission_count`  – Global running submission count.
+/// * `state_commitment`  – Deterministic SHA-256 commitment.
+///
+/// # Events
+///
+/// Publishes `(bkf_chk,)` → `BackfillCheckpointEvent`.
+pub fn emit_backfill_checkpoint(
+    env: &Env,
+    submission_count: u64,
+    state_commitment: &BytesN<32>,
+) {
+    let event = BackfillCheckpointEvent {
+        submission_count,
+        state_commitment: state_commitment.clone(),
+    };
+    env.events().publish((TOPIC_BACKFILL_CHECKPOINT,), event);
 }

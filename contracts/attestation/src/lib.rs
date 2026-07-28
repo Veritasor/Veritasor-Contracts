@@ -63,7 +63,7 @@ pub use dynamic_fees::{compute_fee, DataKey, FeeConfig};
 pub use dynamic_fees::{RevokeProposal, DEFAULT_REVOKE_GRACE_SECONDS};
 pub use events::{
     AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
-    AttestationSubmittedEvent, ProofHashUpdatedEvent,
+    AttestationSubmittedEvent, BackfillCheckpointEvent, ProofHashUpdatedEvent,
     RevocationCancelledEvent, RevocationCommittedEvent, RevocationProposedEvent,
 };
 pub use fees::{collect_flat_fee, CollectorRotationProposal, FlatFeeConfig};
@@ -120,6 +120,31 @@ pub const MAX_BATCH_SIZE: u32 = 25;
 /// and practical use cases.
 pub const MAX_BATCH_SIZE_VERIFY: u32 = 30;
 
+/// Interval (in global submissions) at which a `BackfillCheckpoint` event is
+/// emitted. Indexers can use these events to resume processing without a full
+/// replay. A value of `1` emits a checkpoint on every submission.
+pub const BACKFILL_CHECKPOINT_INTERVAL: u64 = 100;
+
+/// Deterministic SHA-256 commitment for a backfill checkpoint.
+///
+/// Computes `SHA-256( submission_count (8 LE bytes) ‖ merkle_root (32 bytes) )`.
+/// Indexers can verify the commitment by replaying submissions up to the
+/// checkpoint count and recomputing the same hash.
+fn compute_backfill_commitment(
+    env: &Env,
+    submission_count: u64,
+    merkle_root: &BytesN<32>,
+) -> BytesN<32> {
+    let count_bytes = submission_count.to_le_bytes();
+    let mut raw = [0u8; 40];
+    raw[..8].copy_from_slice(&count_bytes);
+    for i in 0u32..32 {
+        raw[8 + i as usize] = merkle_root.get(i).unwrap_or(0);
+    }
+    let buf = soroban_sdk::Bytes::from_array(env, &raw);
+    env.crypto().sha256(&buf).into()
+}
+
 #[soroban_sdk::contractclient(name = "AttestorStakingClient")]
 pub trait AttestorStakingContractTrait {
     fn is_eligible(env: Env, attestor: Address) -> bool;
@@ -147,6 +172,9 @@ mod audit_log_integration_test;
 
 #[cfg(all(test, feature = "full-tests"))]
 mod active_submission_test;
+
+#[cfg(test)]
+mod backfill_checkpoint_test;
 
 /// Vote-weight snapshot tests (issue #512). Always compiled into the test
 /// harness so the flash-vote defence is covered regardless of which
@@ -674,6 +702,15 @@ impl AttestationContract {
         let epoch_fees = dynamic_fees::accumulate_epoch_fees(env, period, total_fee);
         events::emit_epoch_checkpoint(env, period, merkle_root, epoch_subs, epoch_fees);
 
+        // ── Backfill checkpoint ───────────────────────────────
+        // Emit a global checkpoint every N submissions so indexers
+        // can resume from intermediate points without a full replay.
+        let global_count = dynamic_fees::increment_backfill_count(env);
+        if global_count % BACKFILL_CHECKPOINT_INTERVAL == 0 {
+            let commitment = compute_backfill_commitment(env, global_count, merkle_root);
+            events::emit_backfill_checkpoint(env, global_count, &commitment);
+        }
+
         rate_limit::record_submission(env, business);
 
         // Extend TTL after writing
@@ -770,6 +807,14 @@ impl AttestationContract {
                 epoch_subs,
                 epoch_fees,
             );
+
+            // ── Backfill checkpoint per batch item ───────────
+            let global_count = dynamic_fees::increment_backfill_count(env);
+            if global_count % BACKFILL_CHECKPOINT_INTERVAL == 0 {
+                let commitment =
+                    compute_backfill_commitment(env, global_count, &item.merkle_root);
+                events::emit_backfill_checkpoint(env, global_count, &commitment);
+            }
 
             rate_limit::record_submission(env, &item.business);
         }
