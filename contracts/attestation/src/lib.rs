@@ -2529,6 +2529,8 @@ mod batch_auth_dedup_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod batch_submission_test;
 #[cfg(all(test, feature = "full-tests"))]
+mod business_count_role_parity_test;
+#[cfg(all(test, feature = "full-tests"))]
 mod dao_override_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod dispute_test;
@@ -2550,6 +2552,8 @@ mod fee_admin_auth_test;
 mod fee_reconciliation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod fees_test;
+#[cfg(test)]
+mod fuzz_create_proposal_test;
 #[cfg(test)]
 mod fuzz_volume_brackets_test;
 #[cfg(test)]
