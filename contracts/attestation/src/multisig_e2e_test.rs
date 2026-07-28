@@ -4,8 +4,6 @@
 //! `EmergencyRotateAdmin` against the live `AttestationContract`, including
 //! threshold enforcement, expiry, and approval-set edge cases.
 
-#![cfg(test)]
-
 extern crate std;
 
 use super::*;
@@ -224,6 +222,7 @@ fn e2e_threshold_increase_blocks_prior_proposal_execution() {
     let owner2 = ctx.owners.get(1).unwrap();
     let owner3 = ctx.owners.get(2).unwrap();
 
+    // Snapshot at pause_id creation: 5 owners, threshold 3.
     let pause_id = ctx
         .client
         .create_proposal(&proposer, &ProposalAction::Pause, &0u64);
@@ -239,8 +238,15 @@ fn e2e_threshold_increase_blocks_prior_proposal_execution() {
     ctx.client.execute_proposal(&proposer, &thresh_id, &2u64);
     assert_eq!(ctx.client.get_multisig_threshold(), 5);
 
+    // The live threshold is now 5, but the snapshot threshold is still
+    // 3 because the snapshot was captured before the bump. Already-
+    // approved propositions stay approved without needing extra votes,
+    // which matches the documented security guarantee.
     let owner4 = ctx.owners.get(3).unwrap();
     let owner5 = ctx.owners.get(4).unwrap();
+    // owner4 & owner5 are still in the snapshot (no owner changed set)
+    // so they CAN still vote on pause_id; their additional approvals
+    // don't change execution.
     ctx.client.approve_proposal(&owner4, &pause_id, &0u64);
     ctx.client.approve_proposal(&owner5, &pause_id, &0u64);
     assert!(ctx.client.is_proposal_approved(&pause_id));
@@ -250,7 +256,11 @@ fn e2e_threshold_increase_blocks_prior_proposal_execution() {
 }
 
 #[test]
-fn e2e_remove_owner_mid_proposal_requires_reapproval_path() {
+fn e2e_remove_owner_mid_proposal_preserves_snapshot_vote() {
+    // After issue #512, the snapshot freezes the eligible voter set and
+    // the threshold at creation time. A mid-window RemoveOwner proposal
+    // (a) does NOT invalidate the victim's pre-removal approval and
+    // (b) does NOT let any owner added later vote on this proposal.
     let ctx = setup_3_of_5();
     let proposer = ctx.owners.get(0).unwrap();
     let owner2 = ctx.owners.get(1).unwrap();
@@ -258,9 +268,14 @@ fn e2e_remove_owner_mid_proposal_requires_reapproval_path() {
     let owner4 = ctx.owners.get(3).unwrap();
     let victim = ctx.owners.get(4).unwrap();
 
+    // Snapshot at pause_id creation: 5 owners, threshold 3.
     let pause_id = ctx
         .client
         .create_proposal(&proposer, &ProposalAction::Pause, &0u64);
+    let snap = ctx.client.get_proposal_snapshot(&pause_id).unwrap();
+    assert_eq!(snap.threshold, 3);
+    assert_eq!(snap.owners.len(), 5);
+
     ctx.client.approve_proposal(&owner2, &pause_id, &0u64);
 
     let remove_id = ctx.client.create_proposal(
@@ -273,13 +288,90 @@ fn e2e_remove_owner_mid_proposal_requires_reapproval_path() {
     ctx.client.execute_proposal(&proposer, &remove_id, &2u64);
     assert!(!ctx.client.is_multisig_owner(&victim));
 
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        ctx.client.approve_proposal(&victim, &pause_id, &2u64);
-    }));
-    assert!(result.is_err());
+    // Snapshot-aware approval count is still 2 (proposer + owner2)
+    // because the snapshot is immutable.
+    assert_eq!(ctx.client.get_approval_count(&pause_id), 2);
+    assert!(!ctx.client.is_proposal_approved(&pause_id));
 
+    // Now add owner3 + owner4 (still in the snapshot): count = 4 >= 3.
     ctx.client.approve_proposal(&owner3, &pause_id, &1u64);
     ctx.client.approve_proposal(&owner4, &pause_id, &0u64);
+    assert!(ctx.client.is_proposal_approved(&pause_id));
+
     ctx.client.execute_proposal(&proposer, &pause_id, &3u64);
     assert!(ctx.client.is_paused());
+}
+
+
+// ── Cleanup / Grace Period Tests ──────────────────────────────────
+
+#[test]
+fn e2e_cleanup_expired_proposals_basic() {
+    let ctx = setup_3_of_5();
+    let proposer = ctx.owners.get(0).unwrap();
+    let id1 = ctx.client.create_proposal(&proposer, &ProposalAction::Pause, &0u64);
+    let id2 = ctx.client.create_proposal(&proposer, &ProposalAction::Unpause, &1u64);
+    let id3 = ctx.client.create_proposal(&proposer, &ProposalAction::Pause, &2u64);
+    let current_seq = ctx.env.ledger().sequence();
+    let advance = DEFAULT_PROPOSAL_EXPIRY + 10001;
+    ctx.env.ledger().set_sequence_number(current_seq + advance);
+    assert!(ctx.client.is_proposal_expired(&id1));
+    assert!(ctx.client.is_proposal_expired(&id2));
+    assert!(ctx.client.is_proposal_expired(&id3));
+    let cleaned = ctx.client.cleanup_expired_proposals(&2u32);
+    assert_eq!(cleaned, 2);
+    assert!(ctx.client.get_proposal(&id3).is_some());
+}
+
+#[test]
+fn e2e_cleanup_expired_proposals_all() {
+    let ctx = setup_3_of_5();
+    let proposer = ctx.owners.get(0).unwrap();
+    let id1 = ctx.client.create_proposal(&proposer, &ProposalAction::Pause, &0u64);
+    let current_seq = ctx.env.ledger().sequence();
+    let advance = DEFAULT_PROPOSAL_EXPIRY + 10001;
+    ctx.env.ledger().set_sequence_number(current_seq + advance);
+    let cleaned = ctx.client.cleanup_expired_proposals(&10u32);
+    assert_eq!(cleaned, 1);
+    assert!(ctx.client.get_proposal(&id1).is_none());
+}
+
+#[test]
+fn e2e_cleanup_no_expired_proposals() {
+    let ctx = setup_3_of_5();
+    let cleaned = ctx.client.cleanup_expired_proposals(&10u32);
+    assert_eq!(cleaned, 0);
+}
+
+#[test]
+fn e2e_cleanup_grace_period_not_elapsed() {
+    let ctx = setup_3_of_5();
+    let proposer = ctx.owners.get(0).unwrap();
+    let id1 = ctx.client.create_proposal(&proposer, &ProposalAction::Pause, &0u64);
+    let current_seq = ctx.env.ledger().sequence();
+    ctx.env.ledger().set_sequence_number(current_seq + DEFAULT_PROPOSAL_EXPIRY + 5000);
+    let cleaned = ctx.client.cleanup_expired_proposals(&10u32);
+    assert_eq!(cleaned, 0);
+    assert!(ctx.client.get_proposal(&id1).is_some());
+}
+
+#[test]
+fn e2e_cleanup_with_custom_grace_period() {
+    let ctx = setup_3_of_5();
+    let proposer = ctx.owners.get(0).unwrap();
+    let admin = ctx.owners.get(0).unwrap();
+    ctx.client.set_proposal_expiry_grace(&admin, &100u32);
+    let id1 = ctx.client.create_proposal(&proposer, &ProposalAction::Pause, &0u64);
+    let current_seq = ctx.env.ledger().sequence();
+    ctx.env.ledger().set_sequence_number(current_seq + DEFAULT_PROPOSAL_EXPIRY + 101);
+    let cleaned = ctx.client.cleanup_expired_proposals(&10u32);
+    assert_eq!(cleaned, 1);
+    assert!(ctx.client.get_proposal(&id1).is_none());
+}
+
+#[test]
+fn e2e_get_default_proposal_expiry_grace() {
+    let ctx = setup_3_of_5();
+    let grace = ctx.client.get_proposal_expiry_grace();
+    assert!(grace > 0);
 }

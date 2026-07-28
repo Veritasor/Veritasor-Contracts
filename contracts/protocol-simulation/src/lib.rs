@@ -739,13 +739,14 @@ impl ProtocolSimulationContract {
         count
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_seed_record(
         env: &Env,
         control: &DeterministicSeedControl,
         scenario_id: u64,
         scenario_name: String,
-        business: Address,
         lender: Address,
+        business: Address,
         attestor: Address,
         token: Address,
     ) -> ScenarioSeedRecord {

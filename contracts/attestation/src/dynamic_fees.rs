@@ -53,6 +53,12 @@ use soroban_sdk::{contracttype, token, Address, Env, Symbol, Val, Vec};
 //  Tier bounds
 // ════════════════════════════════════════════════════════════════════
 
+/// Minimum supported business tier index (inclusive).
+///
+/// Tier 0 is the default (Standard) tier. At this tier the discount must be
+/// exactly zero so that businesses pay the full base fee.
+pub const MIN_TIER: u32 = 0;
+
 /// Maximum supported business tier index (inclusive).
 ///
 /// Tiers are 0-indexed: 0 = Standard, 1 = Pro, 2 = Enterprise, …, MAX_TIER = top tier.
@@ -65,6 +71,9 @@ pub const MAX_TIER: u32 = 9;
 /// When the ledger timestamp crosses a multiple of this window, the epoch advances.
 pub const FEE_BUCKET_WINDOW_SECONDS: u64 = 86400; // 24 * 60 * 60
 
+/// Minimum delay in seconds between proposing and committing a fee configuration change.
+/// Users must have at least this window to observe and react to pending fee changes.
+pub const FEE_TIMELOCK_SECONDS: u64 = 86400; // 24 hours
 
 // ════════════════════════════════════════════════════════════════════
 //  Storage types
@@ -86,12 +95,16 @@ pub enum DataKey {
     // ── Attestor staking integration ───────────────────────────
     /// Address of the attestor staking contract used to enforce minimum stake.
     AttestorStakingContract,
+    /// Address of the audit log contract for slash events.
+    AuditLogContract,
 
     // ── Fee system ──────────────────────────────────────────────
     /// Contract administrator address.
     Admin,
     /// Core fee configuration (`FeeConfig`).
     FeeConfig,
+    /// Pending fee configuration with activation timestamp (`PendingFeeConfig`).
+    PendingFeeConfig,
     /// Discount in basis points for tier `u32`.
     TierDiscount(u32),
     /// Business-specific tier assignment.
@@ -116,6 +129,105 @@ pub enum DataKey {
     /// Stores a `Vec<u64>` of ledger timestamps.
     SubmissionTimestamps(Address),
     IsPaused,
+
+    // ── Time-locked revocation (grace-window appeal path) ──────
+    /// Pending revocation proposal keyed by (business, period).
+    ///
+    /// Written by `propose_revoke`; removed by either `commit_revoke`
+    /// (on commitment after grace) or `cancel_revoke_proposal` (on appeal).
+    RevokeProposal(Address, soroban_sdk::String),
+    /// Admin-configurable grace window in seconds.
+    ///
+    /// During this window after a proposal is raised, the business (or an
+    /// admin) can cancel it.  After the window elapses anyone can commit
+    /// the revocation.  Defaults to [`DEFAULT_REVOKE_GRACE_SECONDS`] when
+    /// not explicitly configured.
+    RevokeGraceSeconds,
+
+    // ── Epoch / backfill checkpoint tracking ────────────────────
+    /// Per-period submission count within the current epoch.
+    EpochSubmissions(soroban_sdk::String),
+    /// Per-period accumulated fees within the current epoch.
+    EpochFees(soroban_sdk::String),
+    /// Global running submission count for backfill checkpointing.
+    BackfillSubmissionCount,
+    // ── Archive Tier ─────────────────────────────────────────────
+    /// Global archive index.
+    ArchiveIndex,
+    /// Full attestation record stored in the archive.
+    ArchivedAttestation(Address, soroban_sdk::String),
+    /// Lightweight archive pointer.
+    ArchivePointer(Address, soroban_sdk::String),
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Time-locked revocation: grace window
+// ════════════════════════════════════════════════════════════════════
+
+/// Default grace period for the appeal window (86 400 s = 24 h).
+///
+/// Overridden by [`DataKey::RevokeGraceSeconds`] when the admin calls
+/// `set_revoke_grace_seconds`.
+pub const DEFAULT_REVOKE_GRACE_SECONDS: u64 = 86_400;
+
+/// Pending revocation proposal stored during the appeal grace window.
+///
+/// Stored under [`DataKey::RevokeProposal(business, period)`].
+#[soroban_sdk::contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct RevokeProposal {
+    /// Address that initiated the proposal (business owner or admin).
+    pub proposer: Address,
+    /// Ledger timestamp at which the proposal was submitted.
+    pub proposed_at: u64,
+    /// Human-readable revocation reason carried through to the final record.
+    pub reason: soroban_sdk::String,
+}
+
+/// Return the configured grace window in seconds, falling back to the default.
+pub fn get_revoke_grace_seconds(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::RevokeGraceSeconds)
+        .unwrap_or(DEFAULT_REVOKE_GRACE_SECONDS)
+}
+
+/// Set the grace window (admin-only enforcement is the caller's responsibility).
+pub fn set_revoke_grace_seconds(env: &Env, seconds: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::RevokeGraceSeconds, &seconds);
+}
+
+/// Store a revoke proposal.
+pub fn store_revoke_proposal(
+    env: &Env,
+    business: &Address,
+    period: &soroban_sdk::String,
+    proposal: &RevokeProposal,
+) {
+    env.storage().instance().set(
+        &DataKey::RevokeProposal(business.clone(), period.clone()),
+        proposal,
+    );
+}
+
+/// Load a revoke proposal, if present.
+pub fn get_revoke_proposal(
+    env: &Env,
+    business: &Address,
+    period: &soroban_sdk::String,
+) -> Option<RevokeProposal> {
+    env.storage()
+        .instance()
+        .get(&DataKey::RevokeProposal(business.clone(), period.clone()))
+}
+
+/// Remove a revoke proposal (after commit or cancel).
+pub fn remove_revoke_proposal(env: &Env, business: &Address, period: &soroban_sdk::String) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::RevokeProposal(business.clone(), period.clone()));
 }
 
 /// On-chain fee configuration.
@@ -132,6 +244,20 @@ pub struct FeeConfig {
     pub base_fee: i128,
     /// Master switch — when `false`, all attestations are free.
     pub enabled: bool,
+}
+
+/// A pending fee configuration waiting for the timelock to expire.
+///
+/// Stored under [`DataKey::PendingFeeConfig`].
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PendingFeeConfig {
+    /// The fee configuration to apply.
+    pub config: FeeConfig,
+    /// Ledger timestamp after which the configuration may be committed.
+    pub effective_at: u64,
+    /// Address that proposed this configuration change.
+    pub proposed_by: Address,
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -178,6 +304,44 @@ pub fn set_fee_enabled(env: &Env, enabled: bool) {
         config.enabled = enabled;
         set_fee_config(env, &config);
     }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Pending Fee Config (time-locked) helpers
+// ════════════════════════════════════════════════════════════════════
+
+/// Read the pending fee configuration, if any.
+pub fn get_pending_fee_config(env: &Env) -> Option<PendingFeeConfig> {
+    env.storage().instance().get(&DataKey::PendingFeeConfig)
+}
+
+/// Store a pending fee configuration.
+pub fn set_pending_fee_config(env: &Env, pending: &PendingFeeConfig) {
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingFeeConfig, pending);
+}
+
+/// Remove any pending fee configuration.
+pub fn clear_pending_fee_config(env: &Env) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::PendingFeeConfig);
+}
+
+/// If a pending fee config's timelock has expired, apply it to the live config
+/// and clear the pending state.
+///
+/// Returns `true` if a pending config was applied, `false` otherwise.
+pub fn check_and_apply_pending_fee_config(env: &Env) -> bool {
+    if let Some(pending) = get_pending_fee_config(env) {
+        if env.ledger().timestamp() >= pending.effective_at {
+            set_fee_config(env, &pending.config);
+            clear_pending_fee_config(env);
+            return true;
+        }
+    }
+    false
 }
 
 pub fn set_paused(env: &Env, paused: bool) {
@@ -409,10 +573,78 @@ pub fn collect_fee_from(env: &Env, payer: &Address, business: &Address) -> i128 
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  Epoch Counter
+//  Archive tier helpers
 // ════════════════════════════════════════════════════════════════════
 
-/// Gets the current fee bucket epoch. Returns 0 if never initialized.
+/// Read the current global archive index (0 if never set).
+pub fn get_archive_index(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::ArchiveIndex)
+        .unwrap_or(0u64)
+}
+
+/// Increment the global archive index and return the *new* value.
+pub fn next_archive_index(env: &Env) -> u64 {
+    let next = get_archive_index(env) + 1;
+    env.storage()
+        .instance()
+        .set(&DataKey::ArchiveIndex, &next);
+    next
+}
+
+/// Store a full attestation in the archive tier.
+pub fn set_archived_attestation(
+    env: &Env,
+    business: &Address,
+    period: &soroban_sdk::String,
+    data: &crate::AttestationData,
+) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ArchivedAttestation(business.clone(), period.clone()), data);
+}
+
+/// Read a full attestation from the archive tier.
+pub fn get_archived_attestation(
+    env: &Env,
+    business: &Address,
+    period: &soroban_sdk::String,
+) -> Option<crate::AttestationData> {
+    env.storage()
+        .instance()
+        .get(&DataKey::ArchivedAttestation(business.clone(), period.clone()))
+}
+
+/// Write the lightweight archive pointer for a (business, period).
+pub fn set_archive_pointer(
+    env: &Env,
+    business: &Address,
+    period: &soroban_sdk::String,
+    pointer: &ArchivePointerRecord,
+) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ArchivePointer(business.clone(), period.clone()), pointer);
+}
+
+/// Read the lightweight archive pointer for a (business, period).
+pub fn get_archive_pointer(
+    env: &Env,
+    business: &Address,
+    period: &soroban_sdk::String,
+) -> Option<ArchivePointerRecord> {
+    env.storage()
+        .instance()
+        .get(&DataKey::ArchivePointer(business.clone(), period.clone()))
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Epoch tracking (fee-bucket window rollover)
+// ════════════════════════════════════════════════════════════════════
+
+/// Return the current epoch counter. Starts at 0 and advances to 1 on
+/// the first submission, then increments on each fee-bucket window rollover.
 pub fn get_epoch(env: &Env) -> u64 {
     env.storage()
         .instance()
@@ -420,66 +652,91 @@ pub fn get_epoch(env: &Env) -> u64 {
         .unwrap_or(0u64)
 }
 
-/// Increments the epoch counter by one, persists it, and emits `EpochAdvanced`.
-///
-/// Private — only called from `handle_epoch_rollover`.
-/// Guarantees the counter is strictly monotonically increasing.
-fn advance_epoch(env: &Env) -> u64 {
-    let new_epoch = get_epoch(env) + 1;
-    env.storage()
-        .instance()
-        .set(&DataKey::EpochCounter, &new_epoch);
-    crate::events::emit_epoch_advanced(env, new_epoch);
-    new_epoch
-}
-
-/// Checks for a fee-bucket window rollover and advances the epoch counter if
-/// one (or more) windows have elapsed since the last recorded bucket.
-///
-/// Called on every attestation submission (single and batch paths).
-///
-/// ## Algorithm
-///
-/// `LastFeeBucket` stores an `Option<u64>` sentinel:
-/// - `None`  → first-ever call; initialize to the current bucket and emit epoch 1.
-/// - `Some(last)` where `current > last` → `(current - last)` windows elapsed;
-///   advance the epoch once per window and emit one `EpochAdvanced` event each.
-/// - `Some(last)` where `current == last` → same window; no-op.
-///
-/// ## Security invariants
-/// - `EpochCounter` is monotonically non-decreasing; it only ever increases.
-/// - Multiple rollovers in a single transaction each produce a separate event.
-/// - The sentinel uses `has()` rather than a zero-value sentinel so that bucket
-///   index 0 (timestamps 0–86 399 s) is handled correctly without false triggers.
+/// Check whether the fee-bucket window has rolled over since the last
+/// submission.  If so, advance the epoch counter and emit one
+/// `EpochAdvanced` event per elapsed window.
 pub fn handle_epoch_rollover(env: &Env) {
     let current_bucket = env.ledger().timestamp() / FEE_BUCKET_WINDOW_SECONDS;
+    let was_stored = env.storage().instance().has(&DataKey::LastFeeBucket);
 
-    let initialized = env
-        .storage()
-        .instance()
-        .has(&DataKey::LastFeeBucket);
-
-    if !initialized {
-        // First-ever call: record the current bucket and start epoch 1.
-        advance_epoch(env);
-    } else {
-        let last_bucket: u64 = env
-            .storage()
+    if !was_stored {
+        // First ever submission — initialise epoch to 1.
+        env.storage()
             .instance()
-            .get(&DataKey::LastFeeBucket)
-            .unwrap();
-
-        if current_bucket > last_bucket {
-            // One or more full windows have elapsed — advance once per window.
-            for _ in 0..(current_bucket - last_bucket) {
-                advance_epoch(env);
-            }
-        }
-        // current_bucket == last_bucket → same window, nothing to do.
+            .set(&DataKey::EpochCounter, &1u64);
+        env.storage()
+            .instance()
+            .set(&DataKey::LastFeeBucket, &current_bucket);
+        crate::events::emit_epoch_advanced(env, 1, env.ledger().timestamp());
+        return;
     }
 
-    // Always persist the current bucket so the next call has a reference point.
+    let last_bucket: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::LastFeeBucket)
+        .unwrap_or(0u64);
+
+    if current_bucket > last_bucket {
+        let mut epoch: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::EpochCounter)
+            .unwrap_or(0u64);
+
+        let now = env.ledger().timestamp();
+        for _b in (last_bucket + 1)..=current_bucket {
+            epoch += 1;
+            env.storage()
+                .instance()
+                .set(&DataKey::EpochCounter, &epoch);
+            crate::events::emit_epoch_advanced(env, epoch, now);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::LastFeeBucket, &current_bucket);
+    }
+}
+
+/// Increment the per-period submission counter and return the new value.
+pub fn increment_epoch_submissions(
+    env: &Env,
+    period: &soroban_sdk::String,
+    delta: u64,
+) -> u64 {
+    let key = DataKey::EpochSubmissions(period.clone());
+    let count: u64 = env.storage().instance().get(&key).unwrap_or(0u64);
+    let new = count + delta;
+    env.storage().instance().set(&key, &new);
+    new
+}
+
+/// Add `fee` to the per-period fee accumulator and return the new total.
+pub fn accumulate_epoch_fees(env: &Env, period: &soroban_sdk::String, fee: i128) -> i128 {
+    let key = DataKey::EpochFees(period.clone());
+    let total: i128 = env.storage().instance().get(&key).unwrap_or(0i128);
+    let new = total + fee;
+    env.storage().instance().set(&key, &new);
+    new
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Backfill checkpoint counter (global running total)
+// ════════════════════════════════════════════════════════════════════
+
+/// Return the global running submission count.
+pub fn get_backfill_count(env: &Env) -> u64 {
     env.storage()
         .instance()
-        .set(&DataKey::LastFeeBucket, &current_bucket);
+        .get(&DataKey::BackfillSubmissionCount)
+        .unwrap_or(0u64)
+}
+
+/// Increment the global submission counter and return the *new* value.
+pub fn increment_backfill_count(env: &Env) -> u64 {
+    let count = get_backfill_count(env) + 1;
+    env.storage()
+        .instance()
+        .set(&DataKey::BackfillSubmissionCount, &count);
+    count
 }
