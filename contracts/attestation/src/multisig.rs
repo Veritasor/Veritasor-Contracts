@@ -276,10 +276,12 @@ pub fn require_owner(env: &Env, caller: &Address) {
 
 /// Add an address to the owner set (used when executing `AddOwner` proposals).
 pub fn add_owner(env: &Env, owner: &Address) {
+    owner.require_auth();
     let mut owners = get_owners(env);
     assert!(!owners.contains(owner), "already an owner");
     owners.push_back(owner.clone());
     set_owners(env, &owners);
+    crate::events::emit_owner_recovery_phrase_acknowledged(env, owner);
 }
 
 /// Remove an address from the owner set (used when executing `RemoveOwner` proposals).
