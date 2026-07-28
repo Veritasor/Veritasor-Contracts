@@ -1,0 +1,884 @@
+diff --git a/.gitignore b/.gitignore
+index f338f32..8a2459b 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -10,3 +10,10 @@ Cargo.lock
+ 
+ # Test snapshots
+ **/test_snapshots/
++
++# Storage diff tooling (scripts/storage_snapshot.sh, scripts/storage_diff.sh):
++# generated ledger/storage snapshots and diff reports are environment- and
++# run-specific and should not be committed. Test fixtures live under
++# scripts/tests/fixtures/ and are intentionally not covered by this rule.
++scripts/snapshots/*.json
++!scripts/snapshots/.gitkeep
+diff --git a/docs/attestation-upgrades.md b/docs/attestation-upgrades.md
+index 47690e8..6577b8b 100644
+--- a/docs/attestation-upgrades.md
++++ b/docs/attestation-upgrades.md
+@@ -377,6 +377,107 @@ cargo test -p veritasor-attestation-registry
+ 4. **Rollback Scenarios**: Can rollback and re-upgrade
+ 5. **Admin Transfer**: New admin can perform operations
+ 
++## Storage Diff Tooling for Upgrade Signoff
++
++Before signing off on an implementation upgrade, capture a storage snapshot
++of the contract immediately before and immediately after the upgrade
++transaction, then diff them. This gives reviewers and auditors a
++machine-readable answer to "did this upgrade write anything it shouldn't
++have" instead of relying on manual inspection.
++
++The tooling lives in `scripts/`:
++
++- `scripts/storage_snapshot.sh` — wraps `stellar snapshot create` to capture
++  a contract's on-chain storage and normalizes it into JSON grouped by
++  storage-key **prefix** (the `DataKey` enum variant, e.g. `Admin`,
++  `AttestationKey`).
++- `scripts/storage_diff.sh` — compares two normalized snapshots and produces
++  a diff report, also grouped by prefix.
++
++Both scripts are read-only (no signing key required) and depend only on the
++[Stellar CLI](https://developers.stellar.org/docs/tools/cli/stellar-cli) and
++`jq`.
++
++### Usage
++
++```bash
++# 1. Snapshot storage before the upgrade
++./scripts/storage_snapshot.sh \
++    --contract <REGISTRY_OR_IMPLEMENTATION_ID> \
++    --network testnet \
++    --label before
++
++# 2. Execute the upgrade
++stellar contract invoke --network testnet --source <ADMIN_KEY> \
++    --id <REGISTRY_ID> -- upgrade \
++    --new_impl <NEW_IMPL_ID> --new_version <N> --migration_data null
++
++# 3. Snapshot storage after the upgrade
++./scripts/storage_snapshot.sh \
++    --contract <REGISTRY_OR_IMPLEMENTATION_ID> \
++    --network testnet \
++    --label after
++
++# 4. Generate the diff report for signoff
++./scripts/storage_diff.sh \
++    --before scripts/snapshots/before.snapshot.json \
++    --after scripts/snapshots/after.snapshot.json \
++    --strict \
++    --out scripts/snapshots/upgrade-diff.json
++```
++
++`--strict` makes `storage_diff.sh` exit non-zero if any storage prefix
++appears after the upgrade that did not exist at all before it — the signal
++most relevant to signoff: a genuinely new key namespace being written,
++rather than an expected value change in an existing one. Drop `--strict` for
++an informational report.
++
++### Output format
++
++The diff report is JSON keyed by storage prefix. A prefix is only included
++if something in it changed, so an upgrade that touches no storage produces
++`"diff_by_prefix": {}` with all summary counts at `0`:
++
++```json
++{
++  "before": { "contract": "C...", "network": "testnet", "ledger_sequence": 801343 },
++  "after":  { "contract": "C...", "network": "testnet", "ledger_sequence": 801400 },
++  "summary": {
++    "prefixes_changed": ["Admin"],
++    "total_added": 0,
++    "total_removed": 0,
++    "total_changed": 1,
++    "unexpected_new_prefixes": []
++  },
++  "diff_by_prefix": {
++    "Admin": {
++      "added": [],
++      "removed": [],
++      "changed": [
++        { "key": { "symbol": "Admin" }, "before": { "address": "G..." }, "after": { "address": "G..." } }
++      ]
++    }
++  }
++}
++```
++
++Generated snapshot and diff files are written to `scripts/snapshots/` by
++default and are git-ignored (they're run-specific artifacts); attach the
++diff report to the upgrade PR or signoff ticket instead of committing it.
++
++### Testing
++
++```bash
++./scripts/tests/test_storage_diff.sh
++```
++
++Runs the diff engine and normalization logic against static fixtures under
++`scripts/tests/fixtures/` — no network access or `stellar` CLI required.
++Covers: prefix extraction from both unit and tuple `DataKey` variants,
++scoping to a single contract, value changes, newly-introduced prefixes,
++`--strict` gating, and the no-op case (diffing a snapshot against itself
++produces an empty `diff_by_prefix`).
++
+ ## Deployment Checklist
+ 
+ Before deploying to production:
+diff --git a/scripts/lib/diff_snapshots.jq b/scripts/lib/diff_snapshots.jq
+new file mode 100644
+index 0000000..77ccb2d
+--- /dev/null
++++ b/scripts/lib/diff_snapshots.jq
+@@ -0,0 +1,76 @@
++# diff_snapshots.jq
++#
++# Computes a per-storage-prefix diff between two normalized snapshots
++# produced by normalize_snapshot.jq.
++#
++# Invocation:
++#   jq -n --slurpfile before before.json --slurpfile after after.json \
++#        --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
++#        -f diff_snapshots.jq
++#
++# A prefix only appears in `diff_by_prefix` if something in it actually
++# changed, so a no-op upgrade produces `"diff_by_prefix": {}`.
++#
++# `summary.unexpected_new_prefixes` lists any storage prefix that exists
++# after the upgrade but did not exist before it at all — the signal
++# reviewers care about most: "did this upgrade start writing to storage
++# it never touched before".
++
++def keyset(obj): (obj | keys_unsorted);
++
++def entries_for($snap; $prefix):
++  ($snap.entries_by_prefix[$prefix] // []);
++
++# Index an array of entries by their storage key (canonicalized via tostring)
++# so before/after entries can be matched regardless of array order.
++def index_by_key(arr):
++  reduce arr[] as $e ({}; . + { ($e.key | tostring): $e });
++
++def diff_prefix($before_snap; $after_snap; $prefix):
++  ( index_by_key(entries_for($before_snap; $prefix)) ) as $b
++  | ( index_by_key(entries_for($after_snap; $prefix)) ) as $a
++  | {
++      added:   [ $a | to_entries[] | . as $ent | select(($b | has($ent.key)) | not) | $ent.value ],
++      removed: [ $b | to_entries[] | . as $ent | select(($a | has($ent.key)) | not) | $ent.value ],
++      changed: [
++        $a | to_entries[] | . as $ent
++        | select(($b | has($ent.key)))
++        | select(($b[$ent.key].val) != ($ent.value.val))
++        | {
++            key: $ent.value.key,
++            before: $b[$ent.key].val,
++            after: $ent.value.val,
++            last_modified_ledger_seq: $ent.value.last_modified_ledger_seq
++          }
++      ]
++    };
++
++($before[0]) as $before_snap
++| ($after[0]) as $after_snap
++| ( (keyset($before_snap.entries_by_prefix) + keyset($after_snap.entries_by_prefix)) | unique ) as $prefixes
++| (
++    [ $prefixes[] | { key: ., value: diff_prefix($before_snap; $after_snap; .) } ]
++    | map(select(.value.added != [] or .value.removed != [] or .value.changed != []))
++    | from_entries
++  ) as $diff_by_prefix
++| {
++    before: {
++      contract: $before_snap.contract, network: $before_snap.network,
++      captured_at: $before_snap.captured_at, ledger_sequence: $before_snap.ledger_sequence
++    },
++    after: {
++      contract: $after_snap.contract, network: $after_snap.network,
++      captured_at: $after_snap.captured_at, ledger_sequence: $after_snap.ledger_sequence
++    },
++    generated_at: $generated_at,
++    summary: {
++      prefixes_changed: ($diff_by_prefix | keys),
++      total_added:   ([$diff_by_prefix[].added   // []] | flatten | length),
++      total_removed: ([$diff_by_prefix[].removed // []] | flatten | length),
++      total_changed: ([$diff_by_prefix[].changed // []] | flatten | length),
++      unexpected_new_prefixes: (
++        (keyset($after_snap.entries_by_prefix) - keyset($before_snap.entries_by_prefix))
++      )
++    },
++    diff_by_prefix: $diff_by_prefix
++  }
+diff --git a/scripts/lib/normalize_snapshot.jq b/scripts/lib/normalize_snapshot.jq
+new file mode 100644
+index 0000000..b7c5c5d
+--- /dev/null
++++ b/scripts/lib/normalize_snapshot.jq
+@@ -0,0 +1,69 @@
++# normalize_snapshot.jq
++#
++# Reads the JSON output of `stellar snapshot create --output json` and reduces
++# it to the contract-data entries belonging to a single contract, grouped by
++# storage "prefix".
++#
++# The "prefix" is the discriminant of the contract's `#[contracttype] enum
++# DataKey { ... }` storage key:
++#   - Unit variants (e.g. `Admin`)              -> ScVal is `{"symbol": "Admin"}`
++#   - Tuple variants (e.g. `AttestationKey(..)`) -> ScVal is `{"vec": [{"symbol": "AttestationKey"}, ...]}`
++# This matches the DataKey convention used across every contract in this
++# workspace (see contracts/*/src/lib.rs). Storage entries that don't follow
++# this convention (e.g. a raw String/Symbol key) fall back to a synthetic
++# "_raw_<type>" or "_untyped" bucket so nothing is silently dropped from the
++# report.
++#
++# Required --arg inputs:
++#   contract     - contract address (C...) to filter ledger_entries on
++#   network      - network name, informational only (e.g. "testnet")
++#   captured_at  - ISO8601 timestamp of when the snapshot was taken
++#
++# Output shape:
++# {
++#   "contract": "...", "network": "...", "captured_at": "...",
++#   "ledger_sequence": N, "protocol_version": N,
++#   "entries_by_prefix": {
++#     "Admin": [ { key, durability, val, last_modified_ledger_seq, live_until_ledger_seq }, ... ],
++#     ...
++#   }
++# }
++
++def prefix_of(k):
++  if (k | type) == "object" and (k | has("symbol")) then
++    k.symbol
++  elif (k | type) == "object" and (k | has("vec")) and ((k.vec | length) > 0)
++        and (k.vec[0] | type) == "object" and (k.vec[0] | has("symbol")) then
++    k.vec[0].symbol
++  elif (k | type) == "object" and (k | has("string")) then
++    ("_raw_string:" + k.string)
++  elif (k | type) == "object" and (k | length) == 1 then
++    ("_raw_" + (k | keys[0]))
++  else
++    "_untyped"
++  end;
++
++{
++  contract: $contract,
++  network: $network,
++  captured_at: $captured_at,
++  ledger_sequence: .sequence_number,
++  protocol_version: .protocol_version,
++  entries_by_prefix: (
++    [
++      (.ledger_entries // [])[]
++      | select(.[0].contract_data? != null)
++      | select(.[0].contract_data.contract == $contract)
++      | {
++          key: .[0].contract_data.key,
++          durability: .[0].contract_data.durability,
++          val: .[1][0].data.contract_data.val,
++          last_modified_ledger_seq: .[1][0].last_modified_ledger_seq,
++          live_until_ledger_seq: .[1][1]
++        }
++    ]
++    | group_by(prefix_of(.key))
++    | map({ key: prefix_of(.[0].key), value: (sort_by(.key | tostring)) })
++    | from_entries
++  )
++}
+diff --git a/scripts/snapshots/.gitkeep b/scripts/snapshots/.gitkeep
+new file mode 100644
+index 0000000..e69de29
+diff --git a/scripts/storage_diff.sh b/scripts/storage_diff.sh
+new file mode 100755
+index 0000000..d40cbb6
+--- /dev/null
++++ b/scripts/storage_diff.sh
+@@ -0,0 +1,129 @@
++#!/bin/bash
++# Storage Diff Tool for Veritasor Contracts
++#
++# Compares two normalized storage snapshots produced by
++# scripts/storage_snapshot.sh (one taken before an upgrade, one taken after)
++# and produces a JSON diff report keyed by storage prefix. Intended to be
++# attached to an upgrade signoff so reviewers/auditors can confirm no
++# unexpected keys were written.
++#
++# Run with --help for full usage.
++#
++# Exit codes:
++#   0 - Diff generated; no unexpected new storage prefixes found
++#   1 - Invalid usage
++#   2 - Missing dependency (jq) or input file not found
++#   3 - --strict was passed and unexpected new storage prefixes were found
++
++set -euo pipefail
++
++SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++DIFF_FILTER="$SCRIPT_DIR/lib/diff_snapshots.jq"
++
++BEFORE_FILE=""
++AFTER_FILE=""
++OUT_FILE=""
++STRICT=false
++
++print_help() {
++    cat <<'EOF'
++Usage: ./scripts/storage_diff.sh --before <SNAPSHOT> --after <SNAPSHOT> [OPTIONS]
++
++Required:
++  --before <FILE>   Normalized snapshot JSON captured before the upgrade
++                     (the *.snapshot.json file from storage_snapshot.sh)
++  --after <FILE>    Normalized snapshot JSON captured after the upgrade
++
++Options:
++  --out <FILE>      Write the diff report to a file instead of stdout
++  --strict          Exit non-zero if any storage prefix appears after the
++                     upgrade that did not exist at all before it (i.e. a
++                     genuinely new key namespace, as opposed to a changed
++                     value in an existing one). Use this to gate upgrade
++                     signoff on "no unannounced storage was introduced".
++  --help             Show this help message
++
++Output:
++  A JSON report with a summary and a diff_by_prefix map. Prefixes with no
++  changes are omitted; a completely unchanged contract produces
++  "diff_by_prefix": {} and all summary counts at 0.
++EOF
++}
++
++while [[ $# -gt 0 ]]; do
++    case $1 in
++        --before)
++            BEFORE_FILE="$2"; shift 2 ;;
++        --after)
++            AFTER_FILE="$2"; shift 2 ;;
++        --out)
++            OUT_FILE="$2"; shift 2 ;;
++        --strict)
++            STRICT=true; shift ;;
++        --help)
++            print_help; exit 0 ;;
++        *)
++            echo "Error: unknown option '$1'" >&2
++            exit 1 ;;
++    esac
++done
++
++if [[ -z "$BEFORE_FILE" || -z "$AFTER_FILE" ]]; then
++    echo "Error: both --before <FILE> and --after <FILE> are required" >&2
++    exit 1
++fi
++
++if ! command -v jq >/dev/null 2>&1; then
++    echo "Error: required dependency 'jq' not found on PATH" >&2
++    exit 2
++fi
++
++for f in "$BEFORE_FILE" "$AFTER_FILE"; do
++    if [[ ! -f "$f" ]]; then
++        echo "Error: file not found: $f" >&2
++        exit 2
++    fi
++done
++
++BEFORE_CONTRACT=$(jq -r '.contract' "$BEFORE_FILE")
++AFTER_CONTRACT=$(jq -r '.contract' "$AFTER_FILE")
++if [[ "$BEFORE_CONTRACT" != "$AFTER_CONTRACT" ]]; then
++    echo "Warning: snapshots are for different contracts ('$BEFORE_CONTRACT' vs '$AFTER_CONTRACT')" >&2
++fi
++
++GENERATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
++
++DIFF_JSON=$(jq -n \
++    --slurpfile before "$BEFORE_FILE" \
++    --slurpfile after "$AFTER_FILE" \
++    --arg generated_at "$GENERATED_AT" \
++    -f "$DIFF_FILTER")
++
++if [[ -n "$OUT_FILE" ]]; then
++    echo "$DIFF_JSON" > "$OUT_FILE"
++    echo "Diff report written to $OUT_FILE"
++else
++    echo "$DIFF_JSON"
++fi
++
++TOTAL_ADDED=$(echo "$DIFF_JSON" | jq '.summary.total_added')
++TOTAL_REMOVED=$(echo "$DIFF_JSON" | jq '.summary.total_removed')
++TOTAL_CHANGED=$(echo "$DIFF_JSON" | jq '.summary.total_changed')
++UNEXPECTED_COUNT=$(echo "$DIFF_JSON" | jq '.summary.unexpected_new_prefixes | length')
++
++{
++    echo ""
++    echo "Storage diff summary: +$TOTAL_ADDED / -$TOTAL_REMOVED / ~$TOTAL_CHANGED entries"
++    if [[ "$UNEXPECTED_COUNT" -gt 0 ]]; then
++        UNEXPECTED_LIST=$(echo "$DIFF_JSON" | jq -r '.summary.unexpected_new_prefixes | join(", ")')
++        echo "Unexpected new storage prefixes ($UNEXPECTED_COUNT): $UNEXPECTED_LIST"
++    else
++        echo "No unexpected new storage prefixes."
++    fi
++} >&2
++
++if [[ "$STRICT" == true && "$UNEXPECTED_COUNT" -gt 0 ]]; then
++    exit 3
++fi
++
++exit 0
+diff --git a/scripts/storage_snapshot.sh b/scripts/storage_snapshot.sh
+new file mode 100755
+index 0000000..1a8e115
+--- /dev/null
++++ b/scripts/storage_snapshot.sh
+@@ -0,0 +1,147 @@
++#!/bin/bash
++# Storage Snapshot Tool for Veritasor Contracts
++#
++# Captures a contract's on-chain storage (persistent, instance, and temporary
++# entries) via `stellar snapshot create`, then normalizes it into a small
++# JSON file grouped by storage-key prefix (the contract's DataKey enum
++# variant). Take one snapshot before an upgrade and one after, then feed both
++# into scripts/storage_diff.sh to produce a signoff-ready diff report.
++#
++# This script is read-only: it does not sign or submit any transaction, and
++# does not require a source/signing key. It only needs network access to an
++# RPC endpoint (via --network or --rpc-url).
++#
++# Run with --help for full usage.
++#
++# Exit codes:
++#   0 - Snapshot captured successfully
++#   1 - Invalid usage
++#   2 - Missing dependency (stellar CLI or jq)
++#   3 - stellar snapshot create failed
++
++set -euo pipefail
++
++SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++NORMALIZE_FILTER="$SCRIPT_DIR/lib/normalize_snapshot.jq"
++
++CONTRACT=""
++NETWORK="testnet"
++RPC_URL=""
++NETWORK_PASSPHRASE=""
++LABEL=""
++OUT_DIR="$SCRIPT_DIR/snapshots"
++EXTRA_ADDRESSES=()
++
++print_help() {
++    cat <<'EOF'
++Usage: ./scripts/storage_snapshot.sh --contract <CONTRACT_ID> [OPTIONS]
++
++Required:
++  --contract <ID>        Contract address (C...) to snapshot
++
++Options:
++  --network <NAME>       Network alias known to the Stellar CLI (default: testnet)
++  --rpc-url <URL>        Explicit RPC URL, overrides --network resolution
++  --network-passphrase <PASSPHRASE>
++                          Required alongside --rpc-url for custom networks
++  --label <LABEL>         Label used in output filenames, e.g. "before"/"after"
++                          (default: a UTC timestamp)
++  --out-dir <DIR>          Directory to write snapshot files into
++                          (default: scripts/snapshots)
++  --address <ADDR>        Additional account/contract address to include in
++                          the raw ledger snapshot (repeatable). Useful when
++                          the contract you are diffing depends on another
++                          contract's data (e.g. a registry). Does not affect
++                          the normalized, per-prefix output, which is always
++                          scoped to --contract.
++  --help                  Show this help message
++
++Output:
++  <out-dir>/<label>.raw.json          Full raw `stellar snapshot create` output
++  <out-dir>/<label>.snapshot.json     Normalized, per-prefix storage snapshot
++EOF
++}
++
++while [[ $# -gt 0 ]]; do
++    case $1 in
++        --contract)
++            CONTRACT="$2"; shift 2 ;;
++        --network)
++            NETWORK="$2"; shift 2 ;;
++        --rpc-url)
++            RPC_URL="$2"; shift 2 ;;
++        --network-passphrase)
++            NETWORK_PASSPHRASE="$2"; shift 2 ;;
++        --label)
++            LABEL="$2"; shift 2 ;;
++        --out-dir)
++            OUT_DIR="$2"; shift 2 ;;
++        --address)
++            EXTRA_ADDRESSES+=("$2"); shift 2 ;;
++        --help)
++            print_help; exit 0 ;;
++        *)
++            echo "Error: unknown option '$1'" >&2
++            exit 1 ;;
++    esac
++done
++
++if [[ -z "$CONTRACT" ]]; then
++    echo "Error: --contract <CONTRACT_ID> is required" >&2
++    exit 1
++fi
++
++if [[ -n "$RPC_URL" && -z "$NETWORK_PASSPHRASE" ]]; then
++    echo "Error: --network-passphrase is required when using --rpc-url" >&2
++    exit 1
++fi
++
++for bin in stellar jq; do
++    if ! command -v "$bin" >/dev/null 2>&1; then
++        echo "Error: required dependency '$bin' not found on PATH" >&2
++        exit 2
++    fi
++done
++
++if [[ -z "$LABEL" ]]; then
++    LABEL="$(date -u +%Y%m%dT%H%M%SZ)"
++fi
++
++mkdir -p "$OUT_DIR"
++RAW_FILE="$OUT_DIR/${LABEL}.raw.json"
++NORMALIZED_FILE="$OUT_DIR/${LABEL}.snapshot.json"
++
++SNAPSHOT_ARGS=(snapshot create --output json --out "$RAW_FILE" --address "$CONTRACT")
++for addr in "${EXTRA_ADDRESSES[@]:-}"; do
++    [[ -n "$addr" ]] && SNAPSHOT_ARGS+=(--address "$addr")
++done
++
++if [[ -n "$RPC_URL" ]]; then
++    SNAPSHOT_ARGS+=(--rpc-url "$RPC_URL" --network-passphrase "$NETWORK_PASSPHRASE")
++else
++    SNAPSHOT_ARGS+=(--network "$NETWORK")
++fi
++
++echo "Capturing storage snapshot for $CONTRACT (label: $LABEL)..."
++if ! stellar "${SNAPSHOT_ARGS[@]}"; then
++    echo "Error: 'stellar snapshot create' failed" >&2
++    exit 3
++fi
++
++CAPTURED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
++
++jq \
++    --arg contract "$CONTRACT" \
++    --arg network "$NETWORK" \
++    --arg captured_at "$CAPTURED_AT" \
++    -f "$NORMALIZE_FILTER" \
++    "$RAW_FILE" > "$NORMALIZED_FILE"
++
++PREFIX_COUNT=$(jq '.entries_by_prefix | keys | length' "$NORMALIZED_FILE")
++ENTRY_COUNT=$(jq '[.entries_by_prefix[]] | flatten | length' "$NORMALIZED_FILE")
++
++echo "Snapshot complete:"
++echo "  Raw ledger snapshot:  $RAW_FILE"
++echo "  Normalized snapshot:  $NORMALIZED_FILE"
++echo "  Storage prefixes:     $PREFIX_COUNT"
++echo "  Total entries:        $ENTRY_COUNT"
+diff --git a/scripts/tests/fixtures/contract-a.after.raw.json b/scripts/tests/fixtures/contract-a.after.raw.json
+new file mode 100644
+index 0000000..edb5a89
+--- /dev/null
++++ b/scripts/tests/fixtures/contract-a.after.raw.json
+@@ -0,0 +1,20 @@
++{
++  "protocol_version": 23,
++  "sequence_number": 801400,
++  "timestamp": 0,
++  "network_id": "abc123",
++  "ledger_entries": [
++    [
++      { "contract_data": { "contract": "CCONTRACT1", "key": { "symbol": "Admin" }, "durability": "persistent" } },
++      [ { "last_modified_ledger_seq": 801390, "data": { "contract_data": { "contract": "CCONTRACT1", "key": { "symbol": "Admin" }, "durability": "persistent", "val": { "address": "GADMIN2" } } }, "ext": "v0" }, 4294967295 ]
++    ],
++    [
++      { "contract_data": { "contract": "CCONTRACT1", "key": { "vec": [ {"symbol": "AttestationKey"}, {"address": "GATT1"}, {"string": "period1"} ] }, "durability": "persistent" } },
++      [ { "last_modified_ledger_seq": 801331, "data": { "contract_data": { "contract": "CCONTRACT1", "key": { "vec": [ {"symbol": "AttestationKey"}, {"address": "GATT1"}, {"string": "period1"} ] }, "durability": "persistent", "val": { "u64": 12345 } } }, "ext": "v0" }, 4294967295 ]
++    ],
++    [
++      { "contract_data": { "contract": "CCONTRACT1", "key": { "symbol": "UnexpectedNewFlag" }, "durability": "persistent" } },
++      [ { "last_modified_ledger_seq": 801395, "data": { "contract_data": { "contract": "CCONTRACT1", "key": { "symbol": "UnexpectedNewFlag" }, "durability": "persistent", "val": { "bool": true } } }, "ext": "v0" }, 4294967295 ]
++    ]
++  ]
++}
+diff --git a/scripts/tests/fixtures/contract-a.after.snapshot.json b/scripts/tests/fixtures/contract-a.after.snapshot.json
+new file mode 100644
+index 0000000..22a8332
+--- /dev/null
++++ b/scripts/tests/fixtures/contract-a.after.snapshot.json
+@@ -0,0 +1,58 @@
++{
++  "contract": "CCONTRACT1",
++  "network": "testnet",
++  "captured_at": "2026-07-28T01:00:00Z",
++  "ledger_sequence": 801400,
++  "protocol_version": 23,
++  "entries_by_prefix": {
++    "Admin": [
++      {
++        "key": {
++          "symbol": "Admin"
++        },
++        "durability": "persistent",
++        "val": {
++          "address": "GADMIN2"
++        },
++        "last_modified_ledger_seq": 801390,
++        "live_until_ledger_seq": 4294967295
++      }
++    ],
++    "AttestationKey": [
++      {
++        "key": {
++          "vec": [
++            {
++              "symbol": "AttestationKey"
++            },
++            {
++              "address": "GATT1"
++            },
++            {
++              "string": "period1"
++            }
++          ]
++        },
++        "durability": "persistent",
++        "val": {
++          "u64": 12345
++        },
++        "last_modified_ledger_seq": 801331,
++        "live_until_ledger_seq": 4294967295
++      }
++    ],
++    "UnexpectedNewFlag": [
++      {
++        "key": {
++          "symbol": "UnexpectedNewFlag"
++        },
++        "durability": "persistent",
++        "val": {
++          "bool": true
++        },
++        "last_modified_ledger_seq": 801395,
++        "live_until_ledger_seq": 4294967295
++      }
++    ]
++  }
++}
+diff --git a/scripts/tests/fixtures/contract-a.before.raw.json b/scripts/tests/fixtures/contract-a.before.raw.json
+new file mode 100644
+index 0000000..ca8a298
+--- /dev/null
++++ b/scripts/tests/fixtures/contract-a.before.raw.json
+@@ -0,0 +1,20 @@
++{
++  "protocol_version": 23,
++  "sequence_number": 801343,
++  "timestamp": 0,
++  "network_id": "abc123",
++  "ledger_entries": [
++    [
++      { "contract_data": { "contract": "CCONTRACT1", "key": { "symbol": "Admin" }, "durability": "persistent" } },
++      [ { "last_modified_ledger_seq": 801330, "data": { "contract_data": { "contract": "CCONTRACT1", "key": { "symbol": "Admin" }, "durability": "persistent", "val": { "address": "GADMIN" } } }, "ext": "v0" }, 4294967295 ]
++    ],
++    [
++      { "contract_data": { "contract": "CCONTRACT1", "key": { "vec": [ {"symbol": "AttestationKey"}, {"address": "GATT1"}, {"string": "period1"} ] }, "durability": "persistent" } },
++      [ { "last_modified_ledger_seq": 801331, "data": { "contract_data": { "contract": "CCONTRACT1", "key": { "vec": [ {"symbol": "AttestationKey"}, {"address": "GATT1"}, {"string": "period1"} ] }, "durability": "persistent", "val": { "u64": 12345 } } }, "ext": "v0" }, 4294967295 ]
++    ],
++    [
++      { "contract_data": { "contract": "COTHER", "key": { "symbol": "Ignored" }, "durability": "persistent" } },
++      [ { "last_modified_ledger_seq": 1, "data": { "contract_data": { "contract": "COTHER", "key": { "symbol": "Ignored" }, "durability": "persistent", "val": { "u32": 1 } } }, "ext": "v0" }, 100 ]
++    ]
++  ]
++}
+diff --git a/scripts/tests/fixtures/contract-a.before.snapshot.json b/scripts/tests/fixtures/contract-a.before.snapshot.json
+new file mode 100644
+index 0000000..ad9bac3
+--- /dev/null
++++ b/scripts/tests/fixtures/contract-a.before.snapshot.json
+@@ -0,0 +1,45 @@
++{
++  "contract": "CCONTRACT1",
++  "network": "testnet",
++  "captured_at": "2026-07-28T00:00:00Z",
++  "ledger_sequence": 801343,
++  "protocol_version": 23,
++  "entries_by_prefix": {
++    "Admin": [
++      {
++        "key": {
++          "symbol": "Admin"
++        },
++        "durability": "persistent",
++        "val": {
++          "address": "GADMIN"
++        },
++        "last_modified_ledger_seq": 801330,
++        "live_until_ledger_seq": 4294967295
++      }
++    ],
++    "AttestationKey": [
++      {
++        "key": {
++          "vec": [
++            {
++              "symbol": "AttestationKey"
++            },
++            {
++              "address": "GATT1"
++            },
++            {
++              "string": "period1"
++            }
++          ]
++        },
++        "durability": "persistent",
++        "val": {
++          "u64": 12345
++        },
++        "last_modified_ledger_seq": 801331,
++        "live_until_ledger_seq": 4294967295
++      }
++    ]
++  }
++}
+diff --git a/scripts/tests/test_storage_diff.sh b/scripts/tests/test_storage_diff.sh
+new file mode 100755
+index 0000000..8b6c78b
+--- /dev/null
++++ b/scripts/tests/test_storage_diff.sh
+@@ -0,0 +1,136 @@
++#!/bin/bash
++# Test harness for scripts/storage_snapshot.sh's normalization step and
++# scripts/storage_diff.sh's diff engine.
++#
++# These tests run entirely against static fixtures (no network access, no
++# `stellar` CLI required) so they're fast and deterministic enough to run
++# in CI on every PR. Only `jq` is required.
++#
++# Fixtures (scripts/tests/fixtures/):
++#   contract-a.before.raw.json / contract-a.after.raw.json
++#     Raw `stellar snapshot create --output json` output for a single
++#     contract (CCONTRACT1). "after" changes the `Admin` value and adds a
++#     brand-new `UnexpectedNewFlag` storage prefix; `AttestationKey` is
++#     left untouched. A second, unrelated contract (COTHER) is included in
++#     both files to verify contract-scoping/filtering.
++#   contract-a.before.snapshot.json / contract-a.after.snapshot.json
++#     The expected normalized output of the raw fixtures above.
++#
++# Usage: ./scripts/tests/test_storage_diff.sh
++
++set -uo pipefail
++
++SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++SCRIPTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
++FIXTURES_DIR="$SCRIPT_DIR/fixtures"
++NORMALIZE_FILTER="$SCRIPTS_DIR/lib/normalize_snapshot.jq"
++
++TMP_DIR="$(mktemp -d)"
++trap 'rm -rf "$TMP_DIR"' EXIT
++
++PASS_COUNT=0
++FAIL_COUNT=0
++
++assert_eq() {
++    local description="$1" expected="$2" actual="$3"
++    if [[ "$expected" == "$actual" ]]; then
++        echo "  [PASS] $description"
++        PASS_COUNT=$((PASS_COUNT + 1))
++    else
++        echo "  [FAIL] $description"
++        echo "         expected: $expected"
++        echo "         actual:   $actual"
++        FAIL_COUNT=$((FAIL_COUNT + 1))
++    fi
++}
++
++assert_exit_code() {
++    local description="$1" expected="$2" actual="$3"
++    assert_eq "$description (exit code)" "$expected" "$actual"
++}
++
++for bin in jq; do
++    if ! command -v "$bin" >/dev/null 2>&1; then
++        echo "Error: required dependency '$bin' not found on PATH" >&2
++        exit 2
++    fi
++done
++
++echo "== Normalization (scripts/lib/normalize_snapshot.jq) =="
++
++NORMALIZED_BEFORE=$(jq --arg contract "CCONTRACT1" --arg network "testnet" --arg captured_at "2026-07-28T00:00:00Z" \
++    -f "$NORMALIZE_FILTER" "$FIXTURES_DIR/contract-a.before.raw.json")
++
++assert_eq "unrelated contract (COTHER) is excluded" \
++    "false" \
++    "$(echo "$NORMALIZED_BEFORE" | jq 'has("Ignored")')"
++
++assert_eq "Admin prefix extracted from unit variant key" \
++    '"GADMIN"' \
++    "$(echo "$NORMALIZED_BEFORE" | jq '.entries_by_prefix.Admin[0].val.address')"
++
++assert_eq "AttestationKey prefix extracted from tuple variant key" \
++    "1" \
++    "$(echo "$NORMALIZED_BEFORE" | jq '.entries_by_prefix.AttestationKey | length')"
++
++echo ""
++echo "== Diff engine (scripts/lib/diff_snapshots.jq via storage_diff.sh) =="
++
++echo "-- Case: unchanged storage (before vs before) returns an empty diff --"
++"$SCRIPTS_DIR/storage_diff.sh" \
++    --before "$FIXTURES_DIR/contract-a.before.snapshot.json" \
++    --after "$FIXTURES_DIR/contract-a.before.snapshot.json" \
++    --strict \
++    --out "$TMP_DIR/unchanged.json" >/dev/null 2>&1
++UNCHANGED_EXIT=$?
++assert_exit_code "unchanged storage exits 0 even with --strict" "0" "$UNCHANGED_EXIT"
++assert_eq "unchanged storage produces empty diff_by_prefix" \
++    "{}" \
++    "$(jq -c '.diff_by_prefix' "$TMP_DIR/unchanged.json")"
++assert_eq "unchanged storage: total_added is 0" \
++    "0" "$(jq '.summary.total_added' "$TMP_DIR/unchanged.json")"
++assert_eq "unchanged storage: total_removed is 0" \
++    "0" "$(jq '.summary.total_removed' "$TMP_DIR/unchanged.json")"
++assert_eq "unchanged storage: total_changed is 0" \
++    "0" "$(jq '.summary.total_changed' "$TMP_DIR/unchanged.json")"
++
++echo "-- Case: changed value + new prefix (before vs after) --"
++"$SCRIPTS_DIR/storage_diff.sh" \
++    --before "$FIXTURES_DIR/contract-a.before.snapshot.json" \
++    --after "$FIXTURES_DIR/contract-a.after.snapshot.json" \
++    --out "$TMP_DIR/changed.json" >/dev/null 2>&1
++CHANGED_EXIT=$?
++assert_exit_code "non-strict run with changes exits 0" "0" "$CHANGED_EXIT"
++assert_eq "Admin value change detected" \
++    "1" "$(jq '.diff_by_prefix.Admin.changed | length' "$TMP_DIR/changed.json")"
++assert_eq "AttestationKey (untouched) is absent from diff_by_prefix" \
++    "null" "$(jq '.diff_by_prefix.AttestationKey' "$TMP_DIR/changed.json")"
++assert_eq "new prefix flagged as unexpected" \
++    '["UnexpectedNewFlag"]' \
++    "$(jq -c '.summary.unexpected_new_prefixes' "$TMP_DIR/changed.json")"
++
++echo "-- Case: --strict exits non-zero when a new prefix appears --"
++"$SCRIPTS_DIR/storage_diff.sh" \
++    --before "$FIXTURES_DIR/contract-a.before.snapshot.json" \
++    --after "$FIXTURES_DIR/contract-a.after.snapshot.json" \
++    --strict \
++    --out "$TMP_DIR/strict.json" >/dev/null 2>&1
++STRICT_EXIT=$?
++assert_exit_code "--strict fails the build on unexpected new prefix" "3" "$STRICT_EXIT"
++
++echo "-- Case: missing input file is a usage/dependency error --"
++"$SCRIPTS_DIR/storage_diff.sh" \
++    --before "$FIXTURES_DIR/does-not-exist.json" \
++    --after "$FIXTURES_DIR/contract-a.after.snapshot.json" >/dev/null 2>&1
++MISSING_EXIT=$?
++assert_exit_code "missing --before file exits 2" "2" "$MISSING_EXIT"
++
++echo ""
++echo "============================================================"
++echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
++echo "============================================================"
++
++if [[ "$FAIL_COUNT" -gt 0 ]]; then
++    exit 1
++fi
++exit 0

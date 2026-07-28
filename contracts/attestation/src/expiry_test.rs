@@ -240,7 +240,7 @@ fn cleanup_expired_attestation_removes_data_and_emits_event() {
     assert!(client.get_attestation(&business, &period).is_none());
     let events = env.events().all();
     let last = events.last().unwrap();
-    let event = super::events::AttestationCleanedUpEvent::from_val(&env, &last.2).unwrap();
+    let event = super::events::AttestationCleanedUpEvent::try_from_val(&env, &last.2).unwrap();
     assert_eq!(event.business, business);
     assert_eq!(event.period, period);
 }
@@ -296,7 +296,7 @@ fn cleanup_with_open_dispute_panics() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2027-Q8");
     let root = BytesN::from_array(&env, &[11u8; 32]);
-    let _challenger = Address::generate(&env);
+    let challenger = Address::generate(&env);
 
     env.ledger().set_timestamp(0);
     client.submit_attestation(
@@ -659,6 +659,7 @@ fn test_multiple_attestations_varying_large_expiries() {
             &period,
             &merkle_root,
             &1000,
+            &1u32,
             &0i128,
             &None,
             &Some(expiry),
