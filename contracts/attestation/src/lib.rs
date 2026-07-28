@@ -8,7 +8,7 @@ extern crate std;
 
 use core::cmp::Ordering;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, BytesN, Env, String, Symbol, Vec,
+    contract, contractimpl, contracttype, Address, BytesN, Env, IntoVal, String, Symbol, Vec,
 };
 
 use veritasor_common::replay_protection;
@@ -66,7 +66,7 @@ pub use events::{
     ProofHashUpdatedEvent, AdminWeightChangedEvent,
 };
 pub use fees::{collect_flat_fee, FlatFeeConfig};
-pub use multisig::{Proposal, ProposalAction, ProposalStatus};
+pub use multisig::{Proposal, ProposalAction, ProposalStatus, VoteWeightSnapshot};
 pub use rate_limit::RateLimitConfig;
 pub use registry::{BusinessRecord, BusinessStatus};
 
@@ -122,13 +122,37 @@ pub const MAX_BATCH_SIZE_VERIFY: u32 = 30;
 #[soroban_sdk::contractclient(name = "AttestorStakingClient")]
 pub trait AttestorStakingContractTrait {
     fn is_eligible(env: Env, attestor: Address) -> bool;
+    fn slash(env: Env, attestor: Address, amount: i128, dispute_id: u64) -> u32;
+}
+
+#[soroban_sdk::contractclient(name = "AuditLogClient")]
+pub trait AuditLogContractTrait {
+    fn append(
+        env: Env,
+        nonce: u64,
+        actor: Address,
+        source_contract: Address,
+        action: String,
+        payload: String,
+    ) -> u64;
+    fn get_replay_nonce(env: Env, actor: Address, channel: u32) -> u64;
 }
 
 #[contract]
 pub struct AttestationContract;
 
+#[cfg(test)]
+mod audit_log_integration_test;
+
 #[cfg(all(test, feature = "full-tests"))]
 mod active_submission_test;
+
+/// Vote-weight snapshot tests (issue #512). Always compiled into the test
+/// harness so the flash-vote defence is covered regardless of which
+/// feature gate is enabled (the regression it closes is impossible to
+/// reproduce without these tests).
+#[cfg(test)]
+mod vote_weight_snapshot_test;
 
 #[contractimpl]
 impl AttestationContract {
@@ -250,6 +274,15 @@ impl AttestationContract {
         env.storage()
             .instance()
             .get(&DataKey::AttestorStakingContract)
+    }
+
+    pub fn set_audit_log_contract(env: Env, caller: Address, audit_log: Address) {
+        access_control::require_admin(&env, &caller);
+        env.storage().instance().set(&DataKey::AuditLogContract, &audit_log);
+    }
+
+    pub fn get_audit_log_contract(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::AuditLogContract)
     }
 
     pub fn grant_role(env: Env, caller: Address, account: Address, role: u32) {
@@ -1076,8 +1109,37 @@ impl AttestationContract {
         multisig::get_proposal(&env, proposal_id)
     }
 
+    /// Return the immutable vote-weight snapshot captured at the moment
+    /// `proposal_id` was created (issue #512).
+    ///
+    /// The snapshot records the owner set, threshold, and total vote weight
+    /// that govern the proposal's approval tally. Subsequent `AddOwner`,
+    /// `RemoveOwner`, or `ChangeThreshold` actions do not modify this
+    /// snapshot, so callers can deterministically reconstruct the exact
+    /// approval rules in force at creation.
+    ///
+    /// Returns `None` if the proposal ID has no snapshot stored — this
+    /// would only occur for legacy proposals created before this feature
+    /// was live, or for IDs that do not correspond to any proposal.
+    ///
+    /// # Authorization
+    /// Read-only; no auth required.
+    pub fn get_proposal_snapshot(env: Env, proposal_id: u64) -> Option<VoteWeightSnapshot> {
+        multisig::get_vote_weight_snapshot(&env, proposal_id)
+    }
+
     pub fn get_approval_count(env: Env, proposal_id: u64) -> u32 {
         multisig::get_approval_count(&env, proposal_id)
+    }
+
+    /// Return the raw list of addresses that have approved the proposal.
+    ///
+    /// Unlike [`get_approval_count`] (which is snapshot-aware when a
+    /// snapshot exists), this view returns the **stored** approvals vector
+    /// verbatim — useful for off-chain forensic tooling that needs to
+    /// reconstruct exactly who signed.
+    pub fn get_proposal_approvals(env: Env, proposal_id: u64) -> Vec<Address> {
+        multisig::get_approvals(&env, proposal_id)
     }
 
     pub fn is_proposal_approved(env: Env, proposal_id: u64) -> bool {
@@ -1701,6 +1763,48 @@ impl AttestationContract {
         dispute::get_dispute_ids_by_challenger(&env, &challenger)
     }
 
+    /// Triggers a slash for a resolved dispute and records the event in the audit log.
+    pub fn trigger_slash(
+        env: Env,
+        caller: Address,
+        attestor: Address,
+        amount: i128,
+        dispute_id: u64,
+    ) {
+        access_control::require_admin(&env, &caller);
+
+        let staking_addr = Self::get_attestor_staking_contract(env.clone())
+            .expect("staking contract not configured");
+
+        // Execute the slash
+        let staking_client = AttestorStakingClient::new(&env, &staking_addr);
+        let mut args = soroban_sdk::vec![&env];
+        args.push_back(attestor.into_val(&env));
+        args.push_back(amount.into_val(&env));
+        args.push_back(dispute_id.into_val(&env));
+        let _ = env.invoke_contract::<soroban_sdk::Val>(&staking_addr, &soroban_sdk::Symbol::new(&env, "slash"), args);
+
+        events::emit_slash_triggered(&env, &attestor, amount, dispute_id);
+
+        if let Some(audit_log) = Self::get_audit_log_contract(env.clone()) {
+            let audit_client = AuditLogClient::new(&env, &audit_log);
+            let current_contract = env.current_contract_address();
+            
+            // 1 is NONCE_CHANNEL_ADMIN in audit-log
+            let nonce = audit_client.get_replay_nonce(&current_contract, &1u32);
+            let action = String::from_str(&env, "SlashTriggered");
+            let payload = String::from_str(&env, "SlashPayload");
+
+            audit_client.append(
+                &nonce,
+                &caller,
+                &current_contract,
+                &action,
+                &payload,
+            );
+        }
+    }
+
     /// Revoke an attestation.
     ///
     /// The caller must be the business owner or hold the ADMIN role.
@@ -1733,7 +1837,8 @@ impl AttestationContract {
         dispute::require_revocation_authorized(&env, &caller, &business, &period);
         let revocation: RevocationData = (caller.clone(), env.ledger().timestamp(), reason.clone());
         dispute::record_revocation(&env, &business, &period, &revocation);
-        events::emit_attestation_revoked(&env, &business, &period, &caller, &reason);
+        let reason_code = events::RevocationReason::from_reason_str(&reason);
+        events::emit_attestation_revoked(&env, &business, &period, &caller, &reason, reason_code);
     }
 
     /// Return `true` when the attestation has been revoked.
@@ -2020,6 +2125,8 @@ mod fee_reconciliation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod fees_test;
 #[cfg(test)]
+mod fuzz_volume_brackets_test;
+#[cfg(test)]
 mod gas_benchmark_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod key_rotation_test;
@@ -2059,5 +2166,5 @@ mod ttl_test;
 mod verify_attestation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod verify_attestations_batch_test;
-#[cfg(test)]
-mod archival_tier_test;
+#[cfg(all(test, feature = "full-tests"))]
+mod revoke_reason_test;
