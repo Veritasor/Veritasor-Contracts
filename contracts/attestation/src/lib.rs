@@ -262,6 +262,10 @@ impl AttestationContract {
         access_control::revoke_role(&env, &account, role, &caller);
     }
 
+    pub fn swap_admin(env: Env, caller: Address, old_admin: Address, new_admin: Address) {
+        access_control::swap_admin(&env, &old_admin, &new_admin, &caller);
+    }
+
     pub fn has_role(env: Env, account: Address, role: u32) -> bool {
         access_control::has_role(&env, &account, role)
     }

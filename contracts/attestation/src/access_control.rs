@@ -182,6 +182,57 @@ pub fn revoke_role_by_admin(env: &Env, admin: &Address, account: &Address, role:
     revoke_role(env, account, role, admin);
 }
 
+/// Atomically swap one admin for another.
+///
+/// Revokes `ROLE_ADMIN` from `old_admin` and grants it to `new_admin`
+/// in a single operation, emitting a combined `AdminSwapped` event.
+///
+/// # Invariant
+///
+/// After the swap, at least one address must hold `ROLE_ADMIN`. This is
+/// enforced by requiring that either `new_admin` already holds the admin
+/// role, or at least one *other* admin exists besides `old_admin`.
+///
+/// # Security
+///
+/// - Caller must hold `ROLE_ADMIN` and authorize via `require_auth()`.
+/// - `old_admin` must currently hold `ROLE_ADMIN`.
+/// - The admin-always-exists invariant is checked before any state change.
+///
+/// # Edge Cases
+///
+/// - If `old_admin == new_admin`, this is a no-op (revoke clears the bit,
+///   grant sets it back; idempotent on the bitmap).
+/// - If `new_admin` already has `ROLE_ADMIN`, only the event is emitted
+///   (the revoke + grant are idempotent on the bitmap).
+pub fn swap_admin(env: &Env, old_admin: &Address, new_admin: &Address, swapped_by: &Address) {
+    require_admin(env, swapped_by);
+
+    assert!(
+        has_role(env, old_admin, ROLE_ADMIN),
+        "old_admin does not have ADMIN role"
+    );
+
+    // Enforce the invariant: at least one admin must remain after the swap.
+    // If new_admin already has ADMIN, the count won't decrease.
+    // Otherwise, there must be another admin besides old_admin.
+    if !has_role(env, new_admin, ROLE_ADMIN) {
+        let holders = get_role_holders(env);
+        let mut admin_count: u32 = 0;
+        for i in 0..holders.len() {
+            if has_role(env, &holders.get(i).unwrap(), ROLE_ADMIN) {
+                admin_count += 1;
+            }
+        }
+        assert!(admin_count >= 2, "swap would leave no admin remaining");
+    }
+
+    revoke_role(env, old_admin, ROLE_ADMIN, swapped_by);
+    grant_role(env, new_admin, ROLE_ADMIN, swapped_by);
+
+    crate::events::emit_admin_swapped(env, old_admin, new_admin, swapped_by);
+}
+
 /// Get all addresses that hold any role.
 pub fn get_role_holders(env: &Env) -> Vec<Address> {
     env.storage()
