@@ -260,6 +260,24 @@ fn test_execute_add_owner_proposal() {
 
     assert!(client.is_multisig_owner(&new_owner));
     assert_eq!(client.get_multisig_owners().len(), 4);
+
+    // Verify auth was requested from new_owner (acknowledging recovery-phrase custody)
+    let auths = env.auths();
+    assert!(auths.iter().any(|a| a.0 == new_owner));
+
+    // Verify OwnerRecoveryPhraseAcknowledged event was emitted
+    let events = env.events().all();
+    let (_cid, topics, data) = events.last().unwrap();
+    assert_eq!(
+        topics.get(0).unwrap(),
+        soroban_sdk::IntoVal::into_val(&crate::events::TOPIC_OWNER_RECOVERY_PHRASE_ACKNOWLEDGED, &env)
+    );
+    assert_eq!(
+        topics.get(1).unwrap(),
+        soroban_sdk::IntoVal::into_val(&new_owner, &env)
+    );
+    let event_data: crate::events::OwnerRecoveryPhraseAcknowledgedEvent = soroban_sdk::FromVal::from_val(&env, &data);
+    assert_eq!(event_data.new_owner, new_owner);
 }
 
 #[test]

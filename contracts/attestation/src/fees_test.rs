@@ -913,3 +913,80 @@ fn test_sac_integration_collector_equal_to_business_records_fee() {
         .unwrap();
     assert_eq!(record.3, 500);
 }
+
+/// Validates that tier discount rounding correctly truncates toward zero (half-up or floor equivalent).
+/// When tier discounts multiply small base fees, rounding can drop the discount to zero, or
+/// even reduce the fee to zero depending on the arithmetic.
+/// 
+/// Security note: Truncating toward zero ensures fees never exceed the expected base. 
+/// However, businesses may inadvertently pay 0 for small base_fee and small discounts.
+#[test]
+fn test_tier_discount_rounding_boundary() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let dyn_collector = Address::generate(&env);
+    let business = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_addr = token_contract.address().clone();
+
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &0u64);
+
+    mint(&env, &token_addr, &business, 1_000_000);
+
+    // Iterating small base fees and specific fractional bps discounts
+    let test_cases = [
+        // (base_fee, tier_discount_bps, expected_fee)
+        // 1 bps discount on base_fee 1: 
+        // 1 * (10000 - 1) * 10000 / 100000000 = 99990000 / 100000000 = 0
+        (1, 1, 0),
+        // base_fee 2, discount 5000 bps (50%): 
+        // 2 * 5000 * 10000 / 100000000 = 100000000 / 100000000 = 1
+        (2, 5_000, 1),
+        // base_fee 5, discount 3333 bps (~33.33%):
+        // 5 * 6667 * 10000 / 100000000 = 333350000 / 100000000 = 3
+        (5, 3_333, 3),
+        // base_fee 7, discount 1000 bps (10%):
+        // 7 * 9000 * 10000 / 100000000 = 630000000 / 100000000 = 6
+        (7, 1_000, 6),
+    ];
+
+    let mut period_idx = 1;
+    for (base_fee, discount_bps, expected_fee) in test_cases {
+        client.configure_fees(&token_addr, &dyn_collector, &base_fee, &true);
+        client.set_tier_discount(&1, &discount_bps);
+        client.set_business_tier(&business, &1);
+        
+        assert_eq!(
+            client.get_fee_quote(&business),
+            expected_fee,
+            "fee quote rounding failed for base {} and discount {}",
+            base_fee,
+            discount_bps
+        );
+
+        let dyn_before = sac_balance(&env, &token_addr, &dyn_collector);
+        let period_str = std::format!("2027-{:02}", period_idx);
+        submit(&client, &env, &business, &period_str, period_idx as u8);
+
+        let dyn_delta = sac_balance(&env, &token_addr, &dyn_collector) - dyn_before;
+        assert_eq!(
+            dyn_delta, expected_fee,
+            "collector received incorrect rounded amount"
+        );
+        
+        let record = client
+            .get_attestation(&business, &String::from_str(&env, &period_str))
+            .unwrap();
+        assert_eq!(
+            record.3, expected_fee,
+            "recorded fee_paid mismatch"
+        );
+        period_idx += 1;
+    }
+}

@@ -439,6 +439,25 @@ pub struct ProofHashUpdatedEvent {
     pub updated_by: Address,
 }
 
+/// Normalized payload for `AttestorLockedForDispute` events.
+///
+/// Emitted when an attestor is locked because a dispute has been opened
+/// against an attestation they submitted. The attestor is prevented from
+/// submitting new attestations until the dispute is resolved and the lock
+/// is cleared.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AttestorLockedForDisputeEvent {
+    /// Address of the attestor being locked.
+    pub attestor: Address,
+    /// Business address associated with the disputed attestation.
+    pub business: Address,
+    /// Period identifier of the disputed attestation.
+    pub period: String,
+    /// Dispute ID that triggered the lock.
+    pub dispute_id: u64,
+}
+
 // ════════════════════════════════════════════════════════════════════
 //  Event Emission Functions
 //

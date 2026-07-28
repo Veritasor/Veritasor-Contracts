@@ -150,3 +150,21 @@ Operational guidance:
 - Event emission is contract-internal and follows successful authorization and state transition checks.
 - Event payloads intentionally avoid private key or raw signature material.
 - For strong consistency, indexers should pair event ingestion with occasional state reconciliation reads for mission-critical workflows.
+
+## Machine-Readable Event JSON Schemas & Build Artifacts
+
+During compilation (`cargo build` or `cargo test`), the attestation build script automatically inspects `contracts/attestation/src/events.rs` and exports formal JSON Schema (Draft-07) specifications for all 22 event topics to `target/event_schemas/`.
+
+### Schema Artifact Structure
+
+- Individual schemas: `target/event_schemas/<topic_symbol>.json` (e.g. `att_sub.json`, `att_rev.json`, `role_gr.json`).
+- Catalog index: `target/event_schemas/index.json` detailing schema version, struct mappings, per-topic SHA-256 hashes, and the aggregate catalog checksum.
+
+### Current Build Checksum Hash
+
+- **Schema Version**: `1`
+- **Topic Count**: `22`
+- **Aggregate Schema SHA-256**: `a584dccc1b91bc3bbccd124ec1719349c5949bf3a8a0a20604e5749dab9dad84`
+
+Downstream indexer teams can run codegen tools (e.g., `quicktype`, `openapi-generator`, `json-schema-to-typescript`, or Rust/Go deserializer generators) against `target/event_schemas/*.json` to automate deserializer maintenance and guarantee drift-free alignment with contract event releases.
+

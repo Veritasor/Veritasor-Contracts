@@ -61,6 +61,11 @@ use soroban_sdk::{contracttype, token, Address, Env, Symbol, Val, Vec};
 /// that silently yields a 0-discount (full fee).
 pub const MAX_TIER: u32 = 9;
 
+/// The duration of a fee bucket window in seconds (e.g., 24 hours).
+/// When the ledger timestamp crosses a multiple of this window, the epoch advances.
+pub const FEE_BUCKET_WINDOW_SECONDS: u64 = 86400; // 24 * 60 * 60
+
+
 // ════════════════════════════════════════════════════════════════════
 //  Storage types
 // ════════════════════════════════════════════════════════════════════
@@ -99,6 +104,10 @@ pub enum DataKey {
     VolumeDiscounts,
     /// Protocol DAO contract address controlling fee configuration.
     Dao,
+    /// Monotonic, non-decreasing epoch counter. Increments when the fee bucket rolls over.
+    EpochCounter,
+    /// The last fee bucket index processed. Used to detect rollovers.
+    LastFeeBucket,
 
     // ── Rate limiting ──────────────────────────────────────────
     /// Global rate limit configuration (`RateLimitConfig`).
