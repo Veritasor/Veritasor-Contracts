@@ -12,7 +12,7 @@
 //!   - Ordering and determinism guarantees
 
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env};
 
 use crate::replay_protection::{
     get_nonce, get_nonces_for_channels, is_custom_channel, is_well_known_channel, peek_next_nonce,
@@ -29,6 +29,46 @@ impl ReplayProtectionTestContract {
         // Simple function to satisfy contract requirement
         42
     }
+
+    /// Schedules a WASM replacement for this contract after the invocation
+    /// commits. The test below uses this entrypoint to exercise the same
+    /// upgrade mechanism used on-chain.
+    pub fn upgrade(env: Env, wasm_hash: BytesN<32>) {
+        env.deployer().update_current_contract_wasm(wasm_hash);
+    }
+}
+
+// A small, valid Soroban contract WASM fixture (the SDK's `add` fixture),
+// encoded as base64 so the upgrade test is self-contained and does not depend
+// on a build artifact or a developer's Cargo registry path.
+const UPGRADE_WASM_BASE64: &str = "AGFzbQEAAAABFARgAX4BfmACf34AYAJ+fgF+YAAAAg0CAWkBMAAAAWkBXwAAAwYFAQIDAwMFAwEAEAYZA38BQYCAwAALfwBBgIDAAAt/AEGAgMAACwcvBQZtZW1vcnkCAANhZGQAAwFfAAYKX19kYXRhX2VuZAMBC19faGVhcF9iYXNlAwIKjAIFXQIBfwF+AkACQCABp0H/AXEiAkHAAEYNAAJAIAJBBkYNAEIBIQNCg5CAgIABIQEMAgsgAUIIiCEBQgAhAwwBC0IAIQMgARCAgICAACEBCyAAIAE3AwggACADNwMAC5kBAQF/I4CAgIAAQSBrIgIkgICAgAAgAkEQaiAAEIKAgIAAAkACQCACKAIQDQAgAikDGCEAIAIgARCCgICAACACKQMApw0AIAAgAikDCHwiASAAVA0BAkACQCABQv//////////AFYNACABQgiGQgaEIQAMAQsgARCBgICAACEACyACQSBqJICAgIAAIAAPCwAACxCEgICAAAALCQAQhYCAgAAACwQAAAALAgALAEsOY29udHJhY3RzcGVjdjAAAAAAAAAAAAAAAANhZGQAAAAAAgAAAAAAAAABYQAAAAAAAAYAAAAAAAAAAWIAAAAAAAAGAAAAAQAAAAYAHhFjb250cmFjdGVudm1ldGF2MAAAAAAAAAAVAAAAAAB7DmNvbnRyYWN0bWV0YXYwAAAAAAAAAAVyc3ZlcgAAAAAAAAYxLjc0LjAAAAAAAAAAAAAIcnNzZGt2ZXIAAAA5MjEuMC4xLXByZXZpZXcuMSMxMTZjMzViYzllMDNmNGIxYjVlNjViNWVlODMxYWUwZjg2YWE5MmZkAAAA";
+
+fn decode_base64(input: &str) -> std::vec::Vec<u8> {
+    let mut decoded = std::vec::Vec::new();
+    let mut accumulator = 0u32;
+    let mut bits = 0u32;
+
+    for byte in input.bytes() {
+        if byte == b'=' {
+            break;
+        }
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => continue,
+        };
+        accumulator = (accumulator << 6) | u32::from(value);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            decoded.push((accumulator >> bits) as u8);
+        }
+    }
+
+    decoded
 }
 
 /// Second contract type used for cross-contract isolation tests.
@@ -68,6 +108,60 @@ fn nonce_starts_at_zero_and_increments() {
         // Next call uses nonce = 1.
         verify_and_increment_nonce(&env, &actor, channel, 1);
         assert_eq!(get_nonce(&env, &actor, channel), 2);
+    });
+}
+
+#[test]
+fn replay_nonce_state_survives_wasm_upgrade() {
+    const SEEDED_CHANNEL: u32 = 77;
+    const CHANNEL_ADDED_AFTER_UPGRADE: u32 = 78;
+    const SEEDED_NONCE: u64 = 3;
+
+    let env = Env::default();
+    let contract_id = env.register(ReplayProtectionTestContract, ());
+    let contract = ReplayProtectionTestContractClient::new(&env, &contract_id);
+    let actor = Address::generate(&env);
+
+    // Seed the nonce at N before the executable changes. N-1 must remain
+    // unusable after the upgrade; otherwise a previously valid submission
+    // could be replayed against the new implementation.
+    env.as_contract(&contract_id, || {
+        for nonce in 0..SEEDED_NONCE {
+            verify_and_increment_nonce(&env, &actor, SEEDED_CHANNEL, nonce);
+        }
+        assert_eq!(get_nonce(&env, &actor, SEEDED_CHANNEL), SEEDED_NONCE);
+    });
+
+    let wasm = decode_base64(UPGRADE_WASM_BASE64);
+    let wasm_hash = env
+        .deployer()
+        .upload_contract_wasm(Bytes::from_slice(&env, &wasm));
+    contract.upgrade(&wasm_hash);
+
+    // The updated executable uses the same contract instance storage. A
+    // channel introduced after the update must still begin independently at 0.
+    env.as_contract(&contract_id, || {
+        assert_eq!(get_nonce(&env, &actor, SEEDED_CHANNEL), SEEDED_NONCE);
+        assert_eq!(get_nonce(&env, &actor, CHANNEL_ADDED_AFTER_UPGRADE), 0);
+        verify_and_increment_nonce(&env, &actor, CHANNEL_ADDED_AFTER_UPGRADE, 0);
+        assert_eq!(get_nonce(&env, &actor, CHANNEL_ADDED_AFTER_UPGRADE), 1);
+    });
+
+    // Re-submit nonce N-1 after the WASM upgrade. The rejection proves the
+    // old replay state was retained rather than reset by the replacement.
+    let replay = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        env.as_contract(&contract_id, || {
+            verify_and_increment_nonce(&env, &actor, SEEDED_CHANNEL, SEEDED_NONCE - 1);
+        });
+    }));
+    assert!(
+        replay.is_err(),
+        "a seeded nonce must remain stale after upgrade"
+    );
+
+    env.as_contract(&contract_id, || {
+        assert_eq!(get_nonce(&env, &actor, SEEDED_CHANNEL), SEEDED_NONCE);
+        assert_eq!(get_nonce(&env, &actor, CHANNEL_ADDED_AFTER_UPGRADE), 1);
     });
 }
 

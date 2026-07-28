@@ -270,6 +270,22 @@ pub fn submit_attestation(...) {
 
 ## Safety Constraints
 
+### Replay-Protection State
+
+Contract WASM upgrades preserve the contract instance storage namespace. Replay
+nonces are keyed by `(actor, channel)` in that storage, so an upgrade must not
+reset or migrate them to a different key format. In particular, a nonce already
+consumed before an upgrade remains stale afterwards; a re-submission using
+`N - 1` when the stored next nonce is `N` must be rejected. New nonce channels
+introduced by a later implementation begin independently at `0` and do not
+alter existing channels.
+
+This invariant is covered by
+`replay_nonce_state_survives_wasm_upgrade` in
+`contracts/common/src/replay_protection_test.rs`. The test seeds a channel,
+calls `update_current_contract_wasm`, verifies a new channel remains fresh, and
+asserts that a pre-upgrade nonce is rejected without changing either counter.
+
 ### Version Validation
 
 - Versions must be **strictly increasing** (new > current)
