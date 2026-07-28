@@ -660,36 +660,89 @@ fn bench_fee_with_combined_discounts() {
 
 // ── Access Control Benchmarks ───────────────────────────────────────
 
-#[test]
-fn bench_grant_role() {
-    let (env, client, admin) = setup_basic();
+fn append_to_csv(op: &str, cpu: u64, mem: u64) {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    use std::path::PathBuf;
 
-    let account = Address::generate(&env);
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let target_dir = manifest_dir.join("../../target");
+    std::fs::create_dir_all(&target_dir).ok();
+    let csv_path = target_dir.join("gas_benchmarks.csv");
 
-    let before = BudgetSnapshot::capture(&env);
-    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
-    let after = BudgetSnapshot::capture(&env);
-
-    let cost = before.delta(&after);
-    cost.print("grant_role");
-    cost.assert_within_target("grant_role", 250_000, 7_000);
+    let file_exists = csv_path.exists();
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&csv_path) {
+        if !file_exists {
+            let _ = writeln!(file, "operation,cpu_instructions,memory_bytes");
+        }
+        let _ = writeln!(file, "{},{},{}", op, cpu, mem);
+    }
 }
 
 #[test]
-fn bench_has_role() {
+fn bench_role_ops() {
     let (env, client, admin) = setup_basic();
-
     let account = Address::generate(&env);
+
+    // 1. grant_role (new role)
+    let before = BudgetSnapshot::capture(&env);
     client.grant_role(&admin, &account, &ROLE_ATTESTOR);
+    let after = BudgetSnapshot::capture(&env);
+    let cost_new = before.delta(&after);
+    cost_new.print("grant_role (new)");
+    cost_new.assert_within_target("grant_role (new)", 250_000, 7_000);
+    append_to_csv("grant_role_new", cost_new.cpu_insns, cost_new.mem_bytes);
+
+    // 2. grant_role (repeated/existing role)
+    let before = BudgetSnapshot::capture(&env);
+    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
+    let after = BudgetSnapshot::capture(&env);
+    let cost_existing = before.delta(&after);
+    cost_existing.print("grant_role (existing)");
+    cost_existing.assert_within_target("grant_role (existing)", 100_000, 3_000);
+    append_to_csv(
+        "grant_role_existing",
+        cost_existing.cpu_insns,
+        cost_existing.mem_bytes,
+    );
+
+    // 3. has_role
+    let before = BudgetSnapshot::capture(&env);
+    let res = client.has_role(&account, &ROLE_ATTESTOR);
+    let after = BudgetSnapshot::capture(&env);
+    assert!(res);
+    let cost_has = before.delta(&after);
+    cost_has.print("has_role");
+    cost_has.assert_within_target("has_role", 80_000, 2_000);
+    append_to_csv("has_role", cost_has.cpu_insns, cost_has.mem_bytes);
+
+    // 4. revoke_role (keep in holders)
+    client.grant_role(&admin, &account, &ROLE_BUSINESS);
 
     let before = BudgetSnapshot::capture(&env);
-    let result = client.has_role(&account, &ROLE_ATTESTOR);
+    client.revoke_role(&admin, &account, &ROLE_ATTESTOR);
     let after = BudgetSnapshot::capture(&env);
+    let cost_revoke_keep = before.delta(&after);
+    cost_revoke_keep.print("revoke_role (keep)");
+    cost_revoke_keep.assert_within_target("revoke_role (keep)", 150_000, 4_000);
+    append_to_csv(
+        "revoke_role_keep",
+        cost_revoke_keep.cpu_insns,
+        cost_revoke_keep.mem_bytes,
+    );
 
-    assert!(result);
-    let cost = before.delta(&after);
-    cost.print("has_role");
-    cost.assert_within_target("has_role", 80_000, 2_000);
+    // 5. revoke_role (remove from holders)
+    let before = BudgetSnapshot::capture(&env);
+    client.revoke_role(&admin, &account, &ROLE_BUSINESS);
+    let after = BudgetSnapshot::capture(&env);
+    let cost_revoke_remove = before.delta(&after);
+    cost_revoke_remove.print("revoke_role (remove)");
+    cost_revoke_remove.assert_within_target("revoke_role (remove)", 250_000, 7_000);
+    append_to_csv(
+        "revoke_role_remove",
+        cost_revoke_remove.cpu_insns,
+        cost_revoke_remove.mem_bytes,
+    );
 }
 
 // ── Worst-Case Scenarios ────────────────────────────────────────────
@@ -987,6 +1040,71 @@ fn regression_grant_role_threshold() {
     let cost = before.delta(&after);
     cost.print("regression: grant_role");
     cost.assert_within_target("regression_grant_role", 250_000, 7_000);
+}
+
+/// Regression: grant_role (existing role) must stay under threshold.
+#[test]
+fn regression_grant_role_existing_threshold() {
+    let (env, client, admin) = setup_basic();
+    let account = Address::generate(&env);
+    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
+
+    let before = BudgetSnapshot::capture(&env);
+    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("regression: grant_role (existing)");
+    cost.assert_within_target("regression_grant_role_existing", 100_000, 3_000);
+}
+
+/// Regression: revoke_role (keep in holders) must stay under threshold.
+#[test]
+fn regression_revoke_role_keep_threshold() {
+    let (env, client, admin) = setup_basic();
+    let account = Address::generate(&env);
+    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
+    client.grant_role(&admin, &account, &ROLE_BUSINESS);
+
+    let before = BudgetSnapshot::capture(&env);
+    client.revoke_role(&admin, &account, &ROLE_ATTESTOR);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("regression: revoke_role (keep)");
+    cost.assert_within_target("regression_revoke_role_keep", 150_000, 4_000);
+}
+
+/// Regression: revoke_role (remove from holders) must stay under threshold.
+#[test]
+fn regression_revoke_role_remove_threshold() {
+    let (env, client, admin) = setup_basic();
+    let account = Address::generate(&env);
+    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
+
+    let before = BudgetSnapshot::capture(&env);
+    client.revoke_role(&admin, &account, &ROLE_ATTESTOR);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("regression: revoke_role (remove)");
+    cost.assert_within_target("regression_revoke_role_remove", 250_000, 7_000);
+}
+
+/// Regression: has_role must stay under threshold.
+#[test]
+fn regression_has_role_threshold() {
+    let (env, client, admin) = setup_basic();
+    let account = Address::generate(&env);
+    client.grant_role(&admin, &account, &ROLE_ATTESTOR);
+
+    let before = BudgetSnapshot::capture(&env);
+    let _ = client.has_role(&account, &ROLE_ATTESTOR);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("regression: has_role");
+    cost.assert_within_target("regression_has_role", 80_000, 2_000);
 }
 
 /// Regression: is_revoked on active attestation must stay under threshold.
