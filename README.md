@@ -24,6 +24,12 @@ Attestations can optionally include a SHA-256 hash pointing to a full off-chain 
 
 See [docs/offchain-proof-hash.md](docs/offchain-proof-hash.md) for the full specification, security assumptions, and usage guide.
 
+### Staking Contract Time-Lock
+
+Rebinding the attestor staking contract is a high-blast-radius operation. A 24-hour mandatory delay is enforced between proposing and committing a new staking contract address, giving monitoring systems and stakeholders time to detect and react to an unintended or hostile change.
+
+See [docs/timelock-staking-binding.md](docs/timelock-staking-binding.md) for the full specification, event catalog, security invariants, and operational runbook.
+
 ### Methods
 
 | Method                                                                                                | Description                                                                                                                    |

@@ -46,6 +46,9 @@
 //! | `EpochCheckpoint`           | `ep_ckpt`      | *(none)*          |
 //! | `EpochAdvanced`             | `ep_adv`       | *(none)*          |
 //! | `BackfillCheckpoint`        | `bkf_chk`      | *(none)*          |
+//! | `StakingContractProposed`   | `sk_prop`      | *(none)*          |
+//! | `StakingContractCommitted`  | `sk_com`       | *(none)*          |
+//! | `StakingContractCancelled`  | `sk_canc`      | *(none)*          |
 //!
 //! ## Indexer Compatibility Contract
 //!
@@ -164,6 +167,12 @@ pub const TOPIC_EPOCH_CHECKPOINT: Symbol = symbol_short!("ep_ckpt");
 pub const TOPIC_EPOCH_ADVANCED: Symbol = symbol_short!("ep_adv");
 /// Topic: backfill checkpoint emitted every N submissions (global counter)
 pub const TOPIC_BACKFILL_CHECKPOINT: Symbol = symbol_short!("bkf_chk");
+/// Topic: attestor staking contract rebinding proposed (24 h time-locked)
+pub const TOPIC_STAKING_CONTRACT_PROPOSED: Symbol = symbol_short!("sk_prop");
+/// Topic: attestor staking contract rebinding committed after timelock
+pub const TOPIC_STAKING_CONTRACT_COMMITTED: Symbol = symbol_short!("sk_com");
+/// Topic: attestor staking contract rebinding proposal cancelled
+pub const TOPIC_STAKING_CONTRACT_CANCELLED: Symbol = symbol_short!("sk_canc");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
