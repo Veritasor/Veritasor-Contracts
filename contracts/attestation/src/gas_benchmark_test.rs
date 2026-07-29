@@ -32,6 +32,7 @@
 //! | revoke_attestation | < 300k | < 8k | < 1.5k |
 //! | migrate_attestation | < 400k | < 10k | < 2k |
 //! | get_attestation | < 100k | < 3k | < 500 |
+//! | get_attestation_with_status | < 130k | < 4k | < 700 |
 //! | get_fee_quote | < 150k | < 5k | < 800 |
 //! | pause (cold) | < 250k | < 7k | < 1k |
 //! | pause (hot) | < 220k | < 6k | < 1k |
@@ -973,6 +974,186 @@ fn bench_get_attestation() {
     let cost = before.delta(&after);
     cost.print("get_attestation");
     cost.assert_within_target("get_attestation", 100_000, 3_000);
+    append_to_csv("get_attestation", cost.cpu_insns, cost.mem_bytes);
+}
+
+#[test]
+fn bench_get_attestation_with_status() {
+    let (env, client, _admin) = setup_basic();
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[6u8; 32]);
+
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    let before = BudgetSnapshot::capture(&env);
+    let result = client.get_attestation_with_status(&business, &period);
+    let after = BudgetSnapshot::capture(&env);
+
+    assert!(result.is_some());
+    let (_, revocation) = result.unwrap();
+    assert!(revocation.is_none()); // active, not revoked
+    let cost = before.delta(&after);
+    cost.print("get_attestation_with_status (active)");
+    cost.assert_within_target("get_attestation_with_status", 130_000, 4_000);
+    append_to_csv("get_attestation_with_status_active", cost.cpu_insns, cost.mem_bytes);
+}
+
+#[test]
+fn bench_get_attestation_with_status_revoked() {
+    let (env, client, admin) = setup_basic();
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[6u8; 32]);
+
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    let reason = String::from_str(&env, "benchmark revocation");
+    client.revoke_attestation(&admin, &business, &period, &reason, &1u64);
+
+    let before = BudgetSnapshot::capture(&env);
+    let result = client.get_attestation_with_status(&business, &period);
+    let after = BudgetSnapshot::capture(&env);
+
+    assert!(result.is_some());
+    let (_, revocation) = result.unwrap();
+    assert!(revocation.is_some()); // revoked
+    let cost = before.delta(&after);
+    cost.print("get_attestation_with_status (revoked)");
+    cost.assert_within_target("get_attestation_with_status", 130_000, 4_000);
+    append_to_csv("get_attestation_with_status_revoked", cost.cpu_insns, cost.mem_bytes);
+}
+
+/// Comparative report: get_attestation vs get_attestation_with_status.
+#[test]
+fn bench_get_attestation_variants_comparison() {
+    std::println!("\n╔═══════════════════════════════════════════════════════════════════════╗");
+    std::println!("║     get_attestation vs get_attestation_with_status Gas Report        ║");
+    std::println!("╚═══════════════════════════════════════════════════════════════════════╝");
+
+    // ── Scenario: Active (non-revoked) attestation ────────────────────
+    {
+        let (env, client, _admin) = setup_basic();
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "2026-04");
+        let root = BytesN::from_array(&env, &[10u8; 32]);
+
+        client.submit_attestation(
+            &business,
+            &period,
+            &root,
+            &1_700_000_000u64,
+            &1u32,
+            &0i128,
+            &None,
+            &None,
+        );
+
+        // get_attestation (no status)
+        let before = BudgetSnapshot::capture(&env);
+        let result = client.get_attestation(&business, &period);
+        let after = BudgetSnapshot::capture(&env);
+        assert!(result.is_some());
+        let plain_cost = before.delta(&after);
+        plain_cost.print("get_attestation (active, plain)");
+
+        // get_attestation_with_status
+        let before = BudgetSnapshot::capture(&env);
+        let result = client.get_attestation_with_status(&business, &period);
+        let after = BudgetSnapshot::capture(&env);
+        assert!(result.is_some());
+        let status_cost = before.delta(&after);
+        status_cost.print("get_attestation_with_status (active)");
+
+        // Delta
+        let delta_cpu = status_cost.cpu_insns.saturating_sub(plain_cost.cpu_insns);
+        let delta_mem = status_cost.mem_bytes.saturating_sub(plain_cost.mem_bytes);
+        std::println!("\n=== Delta (with_status - plain) ===");
+        std::println!("CPU instructions: {} (plain: {}, with_status: {})", delta_cpu, plain_cost.cpu_insns, status_cost.cpu_insns);
+        std::println!("Memory bytes: {} (plain: {}, with_status: {})", delta_mem, plain_cost.mem_bytes, status_cost.mem_bytes);
+
+        std::println!(
+            "{{\"benchmark\": \"get_attestation_variants_active\", \"plain_cpu\": {}, \"status_cpu\": {}, \"delta_cpu\": {}, \"plain_mem\": {}, \"status_mem\": {}, \"delta_mem\": {}}}",
+            plain_cost.cpu_insns, status_cost.cpu_insns, delta_cpu,
+            plain_cost.mem_bytes, status_cost.mem_bytes, delta_mem
+        );
+    }
+
+    // ── Scenario: Revoked attestation ────────────────────────────────
+    {
+        let (env, client, admin) = setup_basic();
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "2026-05");
+        let root = BytesN::from_array(&env, &[11u8; 32]);
+
+        client.submit_attestation(
+            &business,
+            &period,
+            &root,
+            &1_700_000_000u64,
+            &1u32,
+            &0i128,
+            &None,
+            &None,
+        );
+
+        let reason = String::from_str(&env, "revoked for comparison");
+        client.revoke_attestation(&admin, &business, &period, &reason, &1u64);
+
+        // get_attestation (no status, on revoked entry)
+        let before = BudgetSnapshot::capture(&env);
+        let result = client.get_attestation(&business, &period);
+        let after = BudgetSnapshot::capture(&env);
+        assert!(result.is_some());
+        let plain_cost = before.delta(&after);
+        plain_cost.print("get_attestation (revoked, plain)");
+
+        // get_attestation_with_status (on revoked entry)
+        let before = BudgetSnapshot::capture(&env);
+        let result = client.get_attestation_with_status(&business, &period);
+        let after = BudgetSnapshot::capture(&env);
+        assert!(result.is_some());
+        let (_attestation, revocation) = result.unwrap();
+        assert!(revocation.is_some());
+        let status_cost = before.delta(&after);
+        status_cost.print("get_attestation_with_status (revoked)");
+
+        // Delta
+        let delta_cpu = status_cost.cpu_insns.saturating_sub(plain_cost.cpu_insns);
+        let delta_mem = status_cost.mem_bytes.saturating_sub(plain_cost.mem_bytes);
+        std::println!("\n=== Delta (with_status - plain) [revoked] ===");
+        std::println!("CPU instructions: {} (plain: {}, with_status: {})", delta_cpu, plain_cost.cpu_insns, status_cost.cpu_insns);
+        std::println!("Memory bytes: {} (plain: {}, with_status: {})", delta_mem, plain_cost.mem_bytes, status_cost.mem_bytes);
+
+        std::println!(
+            "{{\"benchmark\": \"get_attestation_variants_revoked\", \"plain_cpu\": {}, \"status_cpu\": {}, \"delta_cpu\": {}, \"plain_mem\": {}, \"status_mem\": {}, \"delta_mem\": {}}}",
+            plain_cost.cpu_insns, status_cost.cpu_insns, delta_cpu,
+            plain_cost.mem_bytes, status_cost.mem_bytes, delta_mem
+        );
+    }
+
+    std::println!("\nSecurity note: get_attestation_with_status includes an extra storage");
+    std::println!("read for revocation info. Use get_attestation when status is not needed.");
 }
 
 #[test]
@@ -1191,13 +1372,8 @@ fn setup_rate_limit(
     client.configure_rate_limit(&100u32, &3600u64, &10u32, &60u64, &true, &1u64);
 }
 
-/// Benchmark check_rate_limit with cold storage (no prior submissions).
-///
-/// This measures the cost of the first rate-limit check for a business with
-/// no existing timestamp history. No pruning occurs, just a config read and
-/// empty vector analysis.
 #[test]
-fn bench_check_rate_limit_cold() {
+fn bench_check_rate_limit_cold_only() {
     let (env, client, admin) = setup_basic();
     setup_rate_limit(&env, &client, &admin);
 
@@ -1212,12 +1388,8 @@ fn bench_check_rate_limit_cold() {
     append_to_csv("check_rate_limit_cold", cost.cpu_insns, cost.mem_bytes);
 }
 
-/// Benchmark check_rate_limit with warm storage (timestamps already exist).
-///
-/// After a submission has been recorded, the timestamp vector is populated.
-/// The check must iterate and count active entries.
 #[test]
-fn bench_check_rate_limit_warm() {
+fn bench_check_rate_limit_warm_only() {
     let (env, client, admin) = setup_basic();
     setup_rate_limit(&env, &client, &admin);
 
@@ -1246,12 +1418,8 @@ fn bench_check_rate_limit_warm() {
     append_to_csv("check_rate_limit_warm", cost.cpu_insns, cost.mem_bytes);
 }
 
-/// Benchmark check_rate_limit with multiple existing timestamps (pruning path).
-///
-/// With multiple timestamps, the function must iterate, prune expired entries,
-/// and potentially write back the pruned vector.
 #[test]
-fn bench_check_rate_limit_with_pruning() {
+fn bench_check_rate_limit_pruning_only() {
     let (env, client, admin) = setup_basic();
     setup_rate_limit(&env, &client, &admin);
 
@@ -1286,12 +1454,8 @@ fn bench_check_rate_limit_with_pruning() {
     append_to_csv("check_rate_limit_pruning", cost.cpu_insns, cost.mem_bytes);
 }
 
-/// Benchmark record_submission with cold storage (no prior submissions).
-///
-/// This is the first submission for a business - the timestamp vector is empty
-/// and must be created and written.
 #[test]
-fn bench_record_submission_cold() {
+fn bench_record_submission_cold_only() {
     let (env, client, admin) = setup_basic();
     setup_rate_limit(&env, &client, &admin);
 
@@ -1306,12 +1470,8 @@ fn bench_record_submission_cold() {
     append_to_csv("record_submission_cold", cost.cpu_insns, cost.mem_bytes);
 }
 
-/// Benchmark record_submission with warm storage (timestamps already exist).
-///
-/// After check_rate_limit has been called (or a previous submission), the
-/// timestamp vector exists and is warm in storage.
 #[test]
-fn bench_record_submission_warm() {
+fn bench_record_submission_warm_only() {
     let (env, client, admin) = setup_basic();
     setup_rate_limit(&env, &client, &admin);
 

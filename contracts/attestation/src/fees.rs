@@ -1,20 +1,21 @@
+// # Flat Fee Mechanism for Attestations
+//
+// This module implements a flat fee mechanism for the Veritasor attestation protocol.
+// Fees are collected in a specified token and sent to a collector address.
+//
+// ## Historical Reconstruction and Per-Epoch Snapshots
+// - Per-epoch snapshots of the effective fee configuration are persisted on config change
+//   and on epoch advance.
+// - Queries for `get_fee_quote_at_epoch` retrieve the fee amount that actually applied at that time.
+// - Historical snapshots are capped at `MAX_EPOCH_HISTORY` retention entries to prevent unbounded storage growth.
+//
+// ## Invariants
+// - If `enabled` is true and `amount > 0`, fee collection is mandatory.
+// - Insufficient balance will cause the transaction to panic, preventing
+//   unpaid attestations.
+// - DAO configuration overrides local contract configuration if set.
+
 use crate::events as events;
-//! # Flat Fee Mechanism for Attestations
-//!
-//! This module implements a flat fee mechanism for the Veritasor attestation protocol.
-//! Fees are collected in a specified token and sent to a collector address.
-//!
-//! ## Historical Reconstruction and Per-Epoch Snapshots
-//! - Per-epoch snapshots of the effective fee configuration are persisted on config change
-//!   and on epoch advance.
-//! - Queries for `get_fee_quote_at_epoch` retrieve the fee amount that actually applied at that time.
-//! - Historical snapshots are capped at `MAX_EPOCH_HISTORY` retention entries to prevent unbounded storage growth.
-//!
-//! ## Invariants
-//! - If `enabled` is true and `amount > 0`, fee collection is mandatory.
-//! - Insufficient balance will cause the transaction to panic, preventing
-//!   unpaid attestations.
-//! - DAO configuration overrides local contract configuration if set.
 
 use soroban_sdk::{contracttype, token, Address, Env, Symbol, Val, Vec};
 
