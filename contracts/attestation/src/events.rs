@@ -1981,3 +1981,17 @@ pub fn emit_backfill_checkpoint(
     };
     env.events().publish((TOPIC_BACKFILL_CHECKPOINT,), event);
 }
+
+// DAO Rotation Events
+pub fn emit_dao_rotation_proposed(env: &Env, old_dao: &Address, new_dao: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "dao_rotation_proposed"), old_dao.clone()),
+        new_dao.clone(),
+    );
+}
+pub fn emit_dao_rotation_accepted(env: &Env, old_dao: &Address, new_dao: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "dao_rotation_accepted"), old_dao.clone()),
+        new_dao.clone(),
+    );
+}

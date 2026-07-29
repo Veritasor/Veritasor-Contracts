@@ -1847,16 +1847,30 @@ impl AttestationContract {
         env.storage().instance().set(&ranges_key, &ranges);
     }
 
+    /// Propose a new DAO contract address (two-phase rotation). The current DAO calls this.
+    pub fn propose_dao_rotation(env: Env, new_dao: Address) {
+        let caller = env.current_contract().address();
+        fees::propose_dao_rotation(&env, &caller, &new_dao);
+    }
+    /// The proposed new DAO calls this to accept the role.
+    pub fn accept_dao_rotation(env: Env) {
+        let caller = env.invoker();
+        fees::accept_dao_rotation(&env, &caller);
+    }
     /// Admin: set the DAO contract address for dynamic fee config override.
     pub fn set_dao(env: Env, dao: Address) {
         dynamic_fees::require_admin(&env);
         dynamic_fees::set_dao(&env, &dao);
     }
-
     /// Admin: set the DAO contract address for flat fee config override.
     pub fn set_flat_fee_dao(env: Env, dao: Address) {
         dynamic_fees::require_admin(&env);
         fees::set_dao(&env, &dao);
+    }
+
+    /// Returns the pending DAO rotation proposal if any.
+    pub fn get_pending_dao_rotation(env: Env) -> Option<fees::DaoRotationProposal> {
+        fees::get_pending_dao_rotation(&env)
     }
 
     /// Returns the locally stored dynamic fee config (ignores DAO).
