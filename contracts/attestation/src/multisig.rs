@@ -36,13 +36,16 @@
 //! See `docs/attestation-vote-weight-snapshot.md` for the full threat model,
 //! security notes, and migration considerations.
 
-use soroban_sdk::{contracttype, Address, Env, Vec};
+use soroban_sdk::{contracttype, signature, Signature, Address, Env, Vec};
 
 use crate::events;
+use crate::access_control::{is_paused, set_paused};
 
 /// Default proposal expiry, expressed in ledger sequences after creation.
 pub const DEFAULT_PROPOSAL_EXPIRY: u32 = 100_000;
 
+/// Cooldown period for quorum (threshold) changes, in ledger sequences.
+pub const PROPOSAL_COOLDOWN_LEDGERS: u32 = 1_000;
 /// Default grace period after proposal expiry before auto-cleanup (ledger sequences)
 pub const DEFAULT_PROPOSAL_EXPIRY_GRACE: u32 = 10_000;
 
@@ -66,6 +69,8 @@ pub enum MultisigKey {
     NextProposalId,
     /// Expiry ledger for a proposal
     ProposalExpiry(u64),
+    /// Ledger sequence of the last quorum change
+    LastQuorumChange,
     /// Admin-configurable grace period in ledger sequences after expiry
     ProposalExpiryGrace,
     /// Immutable vote-weight snapshot captured at proposal creation.
@@ -133,6 +138,8 @@ pub enum ProposalAction {
     UpdateFeeConfig(Address, Address, i128, bool),
     /// Emergency admin key rotation (bypasses timelock)
     EmergencyRotateAdmin(Address), // new_admin
+    /// Emergency pause bypass (requires two independent hardware keys)
+    EmergencyPause,
 }
 
 /// Proposal state
@@ -222,6 +229,19 @@ pub fn is_multisig_initialized(env: &Env) -> bool {
 pub fn create_proposal(env: &Env, proposer: &Address, action: ProposalAction) -> u64 {
     proposer.require_auth();
     assert!(is_owner(env, proposer), "only owners can create proposals");
+
+    // Cooldown check for ChangeThreshold
+    if let ProposalAction::ChangeThreshold(_) = action {
+        let last_change: u32 = env
+            .storage()
+            .instance()
+            .get(&MultisigKey::LastQuorumChange)
+            .unwrap_or(0);
+        assert!(
+            env.ledger().sequence() >= last_change + PROPOSAL_COOLDOWN_LEDGERS,
+            "quorum change cooldown has not elapsed"
+        );
+    }
 
     let id: u64 = env
         .storage()
@@ -313,6 +333,7 @@ fn action_tag(action: &ProposalAction) -> u32 {
         ProposalAction::RevokeRole(_, _) => 7,
         ProposalAction::UpdateFeeConfig(_, _, _, _) => 8,
         ProposalAction::EmergencyRotateAdmin(_) => 9,
+        ProposalAction::EmergencyPause => 10,
     }
 }
 
@@ -486,6 +507,14 @@ pub fn mark_executed(env: &Env, id: u64) {
     );
     assert!(is_proposal_approved(env, id), "proposal not approved");
     proposal.status = ProposalStatus::Executed;
+
+    // Update last quorum change
+    if let ProposalAction::ChangeThreshold(_) = proposal.action {
+        env.storage()
+            .instance()
+            .set(&MultisigKey::LastQuorumChange, &env.ledger().sequence());
+    }
+
     env.storage()
         .instance()
         .set(&MultisigKey::Proposal(id), &proposal);
@@ -525,6 +554,48 @@ pub fn remove_owner(env: &Env, owner: &Address) {
         "cannot remove owner: would drop below threshold"
     );
     set_owners(env, &next);
+}
+
+/// Emergency pause bypass requiring two independent hardware keys.
+/// Bypasses multisig time-locks for zero-day incident response.
+///
+/// This function allows immediate emergency pausing of the contract
+/// by requiring two distinct hardware key signatures from the owner
+/// set (or appropriate privileges), providing strong security while
+/// eliminating review window delays.
+///
+/// # Arguments
+/// * `sig1` - First hardware key signature
+/// * `sig2` - Second hardware key signature (must be from different key)
+///
+/// # Events
+/// Emits EmergencyPauseTriggered event on success
+///
+/// # Panics
+/// - If either signature is invalid
+/// - If signatures come from the same key
+/// - If either key is not in owner set
+/// - If contract is already paused
+pub fn emergency_pause(env: &Env, sig1: &Signature, sig2: &Signature) {
+    // Verify both signatures are valid and from owners
+    let addr1 = env.verify(sig1);
+    let addr2 = env.verify(sig2);
+
+    // Ensure distinct signers (different hardware keys)
+    assert!(addr1 != addr2, "both signatures must come from distinct keys");
+
+    // Validate both addresses are in owner set
+    let owners = get_owners(env);
+    assert!(owners.contains(&addr1), "first signature not from owner");
+    assert!(owners.contains(&addr2), "second signature not from owner");
+
+    // Verify contract is not already paused before proceeding
+    if is_paused(env) {
+        panic!("contract already paused");
+    }
+
+    // Execute pause using access control module
+    access_control::emergency_pause_execute(env, &addr1, &addr2);
 }
 
 pub fn get_next_proposal_id(env: &Env) -> u64 {
@@ -578,4 +649,20 @@ pub fn cleanup_expired_proposals(env: &Env, limit: u32) -> u32 {
         }
     }
     cleaned
+}
+
+pub fn revoke_approval(env: &Env, approver: &Address, id: u64) {
+    approver.require_auth();
+    let proposal = get_proposal(env, id).expect("proposal not found");
+    if is_proposal_expired(env, id) { panic!("proposal has expired"); }
+    assert!(proposal.status == ProposalStatus::Pending, "cannot revoke approval: proposal already executed or rejected");
+    let mut approvals = get_approvals(env, id);
+    let pos = approvals.iter().position(|a| a == approver);
+    if let Some(idx) = pos {
+        let last = approvals.len() - 1;
+        if idx != last { let last_addr = approvals.get(last).unwrap(); approvals.set(idx, last_addr); }
+        approvals.pop_back();
+        env.storage().instance().set(&MultisigKey::Approvals(id), &approvals);
+        events::emit_approval_revoked(env, id, approver);
+    }
 }
