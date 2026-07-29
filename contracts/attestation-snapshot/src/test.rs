@@ -245,8 +245,7 @@ fn test_commitment_with_multiple_businesses_and_epochs() {
 }
 
 #[test]
-fn test_commitment_order_matters() {
-    // Use a single contract: record biz_a then biz_b and capture C1.
+fn test_commitment_is_order_independent() {
     let (env, client, admin) = setup_snapshot_only();
     let biz_a = Address::generate(&env);
     let biz_b = Address::generate(&env);
@@ -269,8 +268,6 @@ fn test_commitment_order_matters() {
     );
     let commitment_ab = client.export_snapshot_commitment();
 
-    // Re-order: record biz_b then biz_a in the same epoch.
-    // We need a separate contract because order is set at record-time.
     let env2 = Env::default();
     env2.mock_all_auths();
     let contract_id2 = env2.register(AttestationSnapshotContract, ());
@@ -278,8 +275,6 @@ fn test_commitment_order_matters() {
     let admin2 = Address::generate(&env2);
     client2.initialize(&admin2, &None::<Address>);
 
-    // Generate *new* addresses bound to env2 with the same semantic values.
-    // (We cannot re-use Address objects from env across environments in Soroban.)
     let biz_b2 = Address::generate(&env2);
     let biz_a2 = Address::generate(&env2);
 
@@ -301,8 +296,24 @@ fn test_commitment_order_matters() {
     );
     let commitment_ba = client2.export_snapshot_commitment();
 
-    // Different insertion order => different commitment
-    assert_ne!(commitment_ab, commitment_ba);
+    assert_eq!(commitment_ab, commitment_ba);
+}
+
+#[test]
+fn test_commitment_with_count_returns_entry_total() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    client.record_snapshot(
+        &admin,
+        &business,
+        &String::from_str(&env, "2026-01"),
+        &100_000i128,
+        &0u32,
+        &1u64,
+    );
+    let (commitment, count) = client.export_snapshot_commitment_with_count();
+    assert_eq!(commitment.len(), 32);
+    assert_eq!(count, 1u64);
 }
 
 // ── Epoch listing ─────────────────────────────────────────────────────

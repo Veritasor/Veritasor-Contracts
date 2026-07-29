@@ -46,7 +46,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
-    xdr::ToXdr, BytesN, Env, String, Symbol, Vec,
+    xdr::ToXdr, Bytes, BytesN, Env, String, Symbol, Vec,
 };
 
 /// Maximum UTF-8 byte length for period/epoch identifiers.
@@ -799,21 +799,26 @@ impl AttestationSnapshotContract {
     ///
     /// # Algorithm
     ///
-    /// 1. Iterate all known epochs in insertion order.
-    /// 2. For each epoch, iterate its businesses in insertion order.
-    /// 3. For each business, iterate its snapshot records in period order.
-    /// 4. Serialize the flat `Vec<SnapshotRecord>` to XDR.
-    /// 5. Return `sha256(xdr_bytes)`.
+    /// 1. Collect all live snapshot records from contract storage.
+    /// 2. Canonicalize each record into a stable byte encoding.
+    /// 3. Sort the canonical entries by their encoded bytes.
+    /// 4. Hash the sorted entries with SHA-256.
     ///
-    /// An empty contract returns the SHA-256 of the empty XDR vector.
+    /// The resulting commitment is order-independent, so the same snapshot set
+    /// produces the same hash even when records were inserted in different orders.
     pub fn export_snapshot_commitment(env: Env) -> BytesN<32> {
+        let (commitment, _) = Self::export_snapshot_commitment_with_count(env);
+        commitment
+    }
+
+    /// Export a deterministic commitment and the number of live snapshot entries.
+    pub fn export_snapshot_commitment_with_count(env: Env) -> (BytesN<32>, u64) {
+        let mut entries = Vec::new(&env);
         let all_epochs: Vec<String> = env
             .storage()
             .instance()
             .get(&DataKey::AllEpochs)
             .unwrap_or_else(|| Vec::new(&env));
-
-        let mut records = Vec::new(&env);
 
         for i in 0..all_epochs.len() {
             let epoch = all_epochs.get(i).unwrap();
@@ -833,14 +838,32 @@ impl AttestationSnapshotContract {
                     let snap_key = DataKey::Snapshot(business.clone(), period.clone());
                     if let Some(record) = env.storage().instance().get::<_, SnapshotRecord>(&snap_key)
                     {
-                        records.push_back(record);
+                        entries.push_back(Self::canonicalize_snapshot_record(&env, &record));
                     }
                 }
             }
         }
 
-        let encoded = records.to_xdr(&env);
-        env.crypto().sha256(&encoded).into()
+        entries.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+
+        let mut body = Bytes::new(&env);
+        for i in 0..entries.len() {
+            let entry = entries.get(i).unwrap();
+            body.append(&entry);
+        }
+
+        let commitment: BytesN<32> = env.crypto().sha256(&body).into();
+        (commitment, entries.len() as u64)
+    }
+
+    fn canonicalize_snapshot_record(env: &Env, record: &SnapshotRecord) -> Bytes {
+        let mut bytes = Bytes::new(env);
+        bytes.append(&record.period.to_xdr(env));
+        bytes.append(&record.trailing_revenue.to_le_bytes().as_slice().to_xdr(env));
+        bytes.append(&record.anomaly_count.to_le_bytes().as_slice().to_xdr(env));
+        bytes.append(&record.attestation_count.to_le_bytes().as_slice().to_xdr(env));
+        bytes.append(&record.recorded_at.to_le_bytes().as_slice().to_xdr(env));
+        bytes
     }
 
     // ── Internal ────────────────────────────────────────────────────
