@@ -98,6 +98,8 @@ pub struct Dispute {
     pub challenger: Address,
     /// Business address associated with the attestation
     pub business: Address,
+    /// Attestor address associated with the attestation
+    pub attestor: Address,
     /// Period of the attestation being disputed
     pub period: String,
     /// Status of the dispute

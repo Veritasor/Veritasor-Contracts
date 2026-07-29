@@ -7,7 +7,7 @@
 
 use super::*;
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{Address, Env, String};
+use soroban_sdk::{Address, Env, String, Vec};
 
 fn setup_snapshot_only() -> (Env, AttestationSnapshotContractClient<'static>, Address) {
     let env = Env::default();
@@ -421,4 +421,111 @@ fn test_set_attestation_contract_non_admin_panics() {
     let (_env, client, _admin) = setup_snapshot_only();
     let other = Address::generate(&_env);
     client.set_attestation_contract(&other, &None::<Address>);
+}
+
+// ── Restore idempotency ──────────────────────────────────────────────
+
+fn restore_entry(env: &Env, business: &Address, period: &str, revenue: i128) -> RestoreEntry {
+    let period = String::from_str(env, period);
+    RestoreEntry {
+        business: business.clone(),
+        period: period.clone(),
+        record: SnapshotRecord {
+            period,
+            trailing_revenue: revenue,
+            anomaly_count: 0,
+            attestation_count: 1,
+            recorded_at: env.ledger().timestamp(),
+        },
+    }
+}
+
+fn restore_batch(env: &Env, entry: RestoreEntry) -> Vec<RestoreEntry> {
+    let mut entries = Vec::new(env);
+    entries.push_back(entry);
+    entries
+}
+
+#[test]
+fn restore_idempotency_rejects_double_restore_with_specific_code() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let entries = restore_batch(
+        &env,
+        restore_entry(&env, &business, "2026-08", 100_000),
+    );
+
+    assert!(client.restore_dry_run(&admin, &entries).ready_to_commit);
+    client.restore_commit(&admin, &entries);
+    let first_id = client.get_last_restore_id().unwrap();
+
+    // A fresh dry-run must not make an already-applied batch replayable.
+    assert!(client.restore_dry_run(&admin, &entries).ready_to_commit);
+    let second = client.try_restore_commit(&admin, &entries);
+    assert_eq!(
+        second,
+        Err(Ok(soroban_sdk::Error::from_contract_error(
+            SnapshotError::AlreadyRestored as u32,
+        )))
+    );
+    assert_eq!(client.get_last_restore_id(), Some(first_id));
+    assert_eq!(
+        client
+            .get_snapshot(&business, &String::from_str(&env, "2026-08"))
+            .unwrap()
+            .trailing_revenue,
+        100_000
+    );
+}
+
+#[test]
+fn restore_changed_payload_cannot_reuse_validated_restore_id() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let validated = restore_batch(
+        &env,
+        restore_entry(&env, &business, "2026-09", 100_000),
+    );
+    let changed = restore_batch(
+        &env,
+        restore_entry(&env, &business, "2026-09", 999_999),
+    );
+
+    assert!(client.restore_dry_run(&admin, &validated).ready_to_commit);
+    assert!(client.try_restore_commit(&admin, &changed).is_err());
+    assert!(client.get_last_restore_id().is_none());
+    assert!(client
+        .get_snapshot(&business, &String::from_str(&env, "2026-09"))
+        .is_none());
+}
+
+#[test]
+fn restore_different_batch_after_first_restore_is_allowed() {
+    let (env, client, admin) = setup_snapshot_only();
+    let first_business = Address::generate(&env);
+    let second_business = Address::generate(&env);
+    let first = restore_batch(
+        &env,
+        restore_entry(&env, &first_business, "2026-10", 100_000),
+    );
+    let second = restore_batch(
+        &env,
+        restore_entry(&env, &second_business, "2026-11", 200_000),
+    );
+
+    client.restore_dry_run(&admin, &first);
+    client.restore_commit(&admin, &first);
+    let first_id = client.get_last_restore_id().unwrap();
+
+    client.restore_dry_run(&admin, &second);
+    client.restore_commit(&admin, &second);
+    let second_id = client.get_last_restore_id().unwrap();
+
+    assert_ne!(first_id, second_id);
+    assert!(client
+        .get_snapshot(&first_business, &String::from_str(&env, "2026-10"))
+        .is_some());
+    assert!(client
+        .get_snapshot(&second_business, &String::from_str(&env, "2026-11"))
+        .is_some());
 }
