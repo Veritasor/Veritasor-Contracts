@@ -37,6 +37,8 @@
 //! | pause (hot) | < 220k | < 6k | < 1k |
 //! | unpause (cold) | < 250k | < 7k | < 1k |
 //! | unpause (hot) | < 220k | < 6k | < 1k |
+//! | is_paused (cold) | < 80k | < 2k | < 500 |
+//! | is_paused (hot) | < 80k | < 2k | < 500 |
 //!
 //! ## Regression Detection
 //!
@@ -1037,6 +1039,194 @@ fn bench_unpause_hot() {
     cost.assert_within_target("unpause (hot)", 220_000, 6_000);
 }
 
+// ── is_paused Read Benchmarks ──────────────────────────────────────
+//
+// is_paused() is called on every hot path (submit_attestation,
+// verify_attestation, etc.) to gate execution before any state mutation.
+// Its cost is paid on *every* contract invocation, so even a small
+// regression compounds across the protocol.
+//
+// Cold: The Paused flag has never been written to instance storage.
+//       The contract is freshly deployed and no pause() call has run.
+//       `is_paused` returns `false` via the `unwrap_or(false)` default.
+//       This is the worst-case ledger I/O cost because the entry is not
+//       in the instance-storage cache.
+//
+// Hot:  The Paused flag has been written at least once (pause() was called
+//       and the entry is in instance storage).  The ledger cache already
+//       holds the value, so the I/O cost is minimal.
+//
+// Target: comparable to has_role (< 80 000 CPU / < 2 000 memory), since
+// both are single instance-storage boolean reads.
+
+/// Benchmark is_paused on a freshly deployed contract (cold read).
+///
+/// The Paused key has never been written to storage; the read falls through
+/// to the `unwrap_or(false)` default path.  This is the worst-case cost
+/// paid on the very first invocation after deployment or after a long
+/// period with no pause activity.
+#[test]
+fn bench_is_paused_cold() {
+    // Fresh contract — Paused key has NEVER been written.
+    let (env, client, _admin) = setup_basic();
+
+    let before = BudgetSnapshot::capture(&env);
+    let result = client.is_paused();
+    let after = BudgetSnapshot::capture(&env);
+
+    // Contract is not paused after initialization.
+    assert!(!result, "freshly deployed contract must not be paused");
+
+    let cost = before.delta(&after);
+    cost.print("is_paused (cold – Paused key absent from storage)");
+    cost.assert_within_target("is_paused (cold)", 80_000, 2_000);
+    append_to_csv("is_paused_cold", cost.cpu_insns, cost.mem_bytes);
+}
+
+/// Benchmark is_paused when the Paused flag is warm in instance storage.
+///
+/// After at least one pause() call the Paused key is present in instance
+/// storage and already loaded by the contract runtime.  This is the steady-
+/// state cost for all subsequent hot-path checks while the contract is live.
+#[test]
+fn bench_is_paused_hot() {
+    let (env, client, admin) = setup_basic();
+
+    // Write the Paused key to instance storage so it is warm.
+    client.pause(&admin, &1u64);
+
+    let before = BudgetSnapshot::capture(&env);
+    let result = client.is_paused();
+    let after = BudgetSnapshot::capture(&env);
+
+    // Contract is paused after pause() call.
+    assert!(result, "contract must be paused after pause()");
+
+    let cost = before.delta(&after);
+    cost.print("is_paused (hot – Paused key present in storage)");
+    cost.assert_within_target("is_paused (hot)", 80_000, 2_000);
+    append_to_csv("is_paused_hot", cost.cpu_insns, cost.mem_bytes);
+}
+
+/// Cold/hot comparison for is_paused — emits a structured report.
+///
+/// Runs both scenarios in sequence and prints a JSON summary so that
+/// automated pipelines can track the delta over time.
+#[test]
+fn bench_is_paused_cold_hot_comparison() {
+    std::println!("\n╔════════════════════════════════════════════════════════════════╗");
+    std::println!("║          is_paused Cold vs Hot Storage Report                  ║");
+    std::println!("╚════════════════════════════════════════════════════════════════╝");
+    std::println!("Security note: is_paused is a read-only, no-auth single flag read.");
+    std::println!("It is called on every hot path; cold overhead is paid at most once");
+    std::println!("per ledger (first call after deployment or long idle periods).");
+
+    // ── Cold measurement ──────────────────────────────────────────
+    let cold_cpu;
+    let cold_mem;
+    {
+        let (env, client, _admin) = setup_basic();
+
+        let before = BudgetSnapshot::capture(&env);
+        let result = client.is_paused();
+        let after = BudgetSnapshot::capture(&env);
+        assert!(!result);
+
+        let cold = before.delta(&after);
+        cold.print("COLD is_paused");
+        cold_cpu = cold.cpu_insns;
+        cold_mem = cold.mem_bytes;
+    }
+
+    // ── Hot measurement ───────────────────────────────────────────
+    let hot_cpu;
+    let hot_mem;
+    {
+        let (env, client, admin) = setup_basic();
+        client.pause(&admin, &1u64);
+
+        let before = BudgetSnapshot::capture(&env);
+        let result = client.is_paused();
+        let after = BudgetSnapshot::capture(&env);
+        assert!(result);
+
+        let hot = before.delta(&after);
+        hot.print("HOT is_paused");
+        hot_cpu = hot.cpu_insns;
+        hot_mem = hot.mem_bytes;
+    }
+
+    // ── Delta summary ─────────────────────────────────────────────
+    std::println!("\n=== COLD → HOT DELTA ===");
+    if cold_cpu > 0 && hot_cpu > 0 {
+        let cpu_savings = cold_cpu.saturating_sub(hot_cpu);
+        let cpu_pct = (cpu_savings as f64 / cold_cpu as f64) * 100.0;
+        std::println!("CPU savings: {} ({:.1}% reduction)", cpu_savings, cpu_pct);
+    } else {
+        std::println!(
+            "CPU: cold={} hot={} (delta unavailable in test env)",
+            cold_cpu,
+            hot_cpu
+        );
+    }
+    if cold_mem > 0 && hot_mem > 0 {
+        let mem_savings = cold_mem.saturating_sub(hot_mem);
+        let mem_pct = (mem_savings as f64 / cold_mem as f64) * 100.0;
+        std::println!(
+            "Memory savings: {} ({:.1}% reduction)",
+            mem_savings,
+            mem_pct
+        );
+    } else {
+        std::println!(
+            "Memory: cold={} hot={} (delta unavailable in test env)",
+            cold_mem,
+            hot_mem
+        );
+    }
+
+    // Structured JSON for automated consumers.
+    std::println!(
+        "{{\"benchmark\": \"is_paused_cold_hot\", \"cold_cpu\": {}, \"hot_cpu\": {}, \"cold_mem\": {}, \"hot_mem\": {}}}",
+        cold_cpu, hot_cpu, cold_mem, hot_mem
+    );
+
+    // Both paths must stay within the fast-path budget.
+    let budget_cpu: u64 = 80_000;
+    let budget_mem: u64 = 2_000;
+    let limit_cpu = budget_cpu + budget_cpu / 2; // 150 %
+    let limit_mem = budget_mem + budget_mem / 2;
+
+    for (label, cpu, mem) in [
+        ("is_paused_cold", cold_cpu, cold_mem),
+        ("is_paused_hot", hot_cpu, hot_mem),
+    ] {
+        if cpu == 0 && mem == 0 {
+            std::println!(
+                "{}: skipping budget assertion (test env returned 0)",
+                label
+            );
+            continue;
+        }
+        assert!(
+            cpu <= limit_cpu,
+            "{}: CPU {} exceeds fast-path limit {} (target: {})",
+            label,
+            cpu,
+            limit_cpu,
+            budget_cpu
+        );
+        assert!(
+            mem <= limit_mem,
+            "{}: Memory {} exceeds fast-path limit {} (target: {})",
+            label,
+            mem,
+            limit_mem,
+            budget_mem
+        );
+    }
+}
+
 // ── Worst-Case Scenarios ────────────────────────────────────────────
 
 #[test]
@@ -1175,6 +1365,8 @@ fn bench_summary_report() {
     std::println!("  • pause (hot):                   < 220k / < 6k");
     std::println!("  • unpause (cold):                < 250k / < 7k");
     std::println!("  • unpause (hot):                 < 220k / < 6k");
+    std::println!("  • is_paused (cold):              < 80k  / < 2k  [fast-path budget]");
+    std::println!("  • is_paused (hot):               < 80k  / < 2k  [fast-path budget]");
     std::println!("\nRegression threshold: 150% of target values");
     std::println!("\nFor detailed results, run:");
     std::println!("  cargo test --test gas_benchmark_test -- --nocapture\n");
@@ -1528,6 +1720,51 @@ fn regression_unpause_hot_threshold() {
     let cost = before.delta(&after);
     cost.print("regression: unpause (hot)");
     cost.assert_within_target("regression_unpause_hot", 220_000, 6_000);
+}
+
+/// Regression: is_paused (cold) must stay within the fast-path budget.
+///
+/// Cold path = Paused key absent from instance storage (freshly deployed
+/// contract, no prior pause() call).  The read falls through to the
+/// `unwrap_or(false)` default.  Budget is identical to `has_role` because
+/// both are single instance-storage boolean reads.
+#[test]
+fn regression_is_paused_cold_threshold() {
+    // Fresh contract — Paused key has never been written.
+    let (env, client, _admin) = setup_basic();
+
+    let before = BudgetSnapshot::capture(&env);
+    let result = client.is_paused();
+    let after = BudgetSnapshot::capture(&env);
+
+    assert!(!result, "freshly deployed contract must not be paused");
+
+    let cost = before.delta(&after);
+    cost.print("regression: is_paused (cold)");
+    // Fast-path budget: same as has_role (single boolean flag read).
+    cost.assert_within_target("regression_is_paused_cold", 80_000, 2_000);
+}
+
+/// Regression: is_paused (hot) must stay within the fast-path budget.
+///
+/// Hot path = Paused key is present in instance storage (written by a
+/// prior pause() call).  This is the steady-state cost paid on every
+/// contract invocation while the protocol is live.
+#[test]
+fn regression_is_paused_hot_threshold() {
+    let (env, client, admin) = setup_basic();
+    // Write the Paused key so it is warm in instance storage.
+    client.pause(&admin, &1u64);
+
+    let before = BudgetSnapshot::capture(&env);
+    let result = client.is_paused();
+    let after = BudgetSnapshot::capture(&env);
+
+    assert!(result, "contract must be paused after pause()");
+
+    let cost = before.delta(&after);
+    cost.print("regression: is_paused (hot)");
+    cost.assert_within_target("regression_is_paused_hot", 80_000, 2_000);
 }
 
 // ── WASM Size Budget Edge Cases ──────────────────────────────────────
