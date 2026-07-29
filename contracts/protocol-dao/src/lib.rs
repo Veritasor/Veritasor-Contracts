@@ -100,6 +100,8 @@ pub enum ProposalAction {
     SetAttestationFeeEnabled(bool),
     /// (min_votes, proposal_duration)
     UpdateGovernanceConfig(u32, u32),
+    PauseAttestation,
+    UnpauseAttestation,
 }
 
 #[contracttype]

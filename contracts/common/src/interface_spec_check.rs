@@ -1,5 +1,3 @@
-#![no_std]
-
 //! # Interface Specification Consistency Check
 //!
 //! Enforces ABI-like assumptions, cross-crate compatibility, and version tagging.

@@ -8,6 +8,18 @@ Memory bytes: 21975
 CPU instructions: 0
 Memory bytes: 0
 Note: Cost tracking shows 0 in test environment (expected for simple operations)
+=== verify_attestation (cold storage) ===
+CPU instructions: 0
+Memory bytes: 0
+Note: Cost tracking shows 0 in test environment (expected for simple operations)
+=== verify_attestation (warm storage) ===
+CPU instructions: 0
+Memory bytes: 0
+Note: Cost tracking shows 0 in test environment (expected for simple operations)
+=== verify_attestation (non-existent entry) ===
+CPU instructions: 0
+Memory bytes: 0
+Note: Cost tracking shows 0 in test environment (expected for simple operations)
 === revoke_attestation ===
 CPU instructions: 9186
 Memory bytes: 3495

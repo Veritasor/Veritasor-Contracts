@@ -3,8 +3,6 @@
 //! Issue #374 — confirms no drift between quote (`calculate_fee` + `calculate_flat_fee`)
 //! and collection (`collect_fee_from` + `collect_flat_fee`) at submission time.
 
-#![cfg(test)]
-
 extern crate std;
 
 use std::format;
@@ -19,7 +17,7 @@ use soroban_sdk::{vec, Address, Env, String};
 struct Ctx {
     env: Env,
     client: AttestationContractClient<'static>,
-    admin: Address,
+    _admin: Address,
 }
 
 fn fresh_ctx() -> Ctx {
@@ -29,7 +27,11 @@ fn fresh_ctx() -> Ctx {
     let client = AttestationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     client.initialize(&admin, &0u64);
-    Ctx { env, client, admin }
+    Ctx {
+        env,
+        client,
+        _admin: admin,
+    }
 }
 
 fn deploy_and_fund(env: &Env, to: &Address, amount: i128) -> Address {

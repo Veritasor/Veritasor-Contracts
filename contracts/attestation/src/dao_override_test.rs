@@ -119,6 +119,7 @@ fn setup_contract<'a>(
     client
 }
 
+#[allow(dead_code)]
 fn mint(env: &Env, token_addr: &Address, to: &Address, amount: i128) {
     StellarAssetClient::new(env, token_addr).mint(to, &amount);
 }
@@ -221,4 +222,49 @@ fn test_dao_override_charges_dao_fee_on_submit() {
     let business = Address::generate(&env);
     // Quote reflects DAO base_fee=2000
     assert_eq!(client.get_fee_quote(&business), 2_000);
+}
+
+/// Regression test for a cross-contract symbol mismatch: `fees.rs` called
+/// `env.invoke_contract(&dao, &Symbol::new(env, "get_attestation_flat_fee_config"), ...)`,
+/// but `ProtocolDao` only ever exported `get_attestation_fee_config` (no
+/// "flat_" in the name — the same symbol the dynamic-fee DAO-override path
+/// already used correctly). Every one of the `dao_override_test.rs` mocks
+/// above happens to only implement `get_attestation_fee_config`, so none of
+/// them exercised (or could have caught) the flat-fee path's mismatched
+/// symbol — this is the first test to configure a *flat*-fee DAO override
+/// against a real deployed mock DAO contract. Before the fix in
+/// src/fees.rs, this panicked with a missing-function host error the
+/// moment `set_flat_fee_dao` was combined with any flat-fee read.
+#[test]
+fn test_flat_fee_dao_override_uses_correct_cross_contract_symbol() {
+    let (env, admin, token_addr, collector) = base_env();
+    let client = setup_contract(&env, &admin, &token_addr, &collector, 1_000);
+
+    // Local flat fee is 0 (unconfigured) until we point at a DAO.
+    assert_eq!(client.get_effective_flat_fee_config(), None);
+
+    let dao_id = env.register(MockDaoEnabled, ());
+    client.set_flat_fee_dao(&dao_id);
+
+    // MockDaoEnabled returns (token, collector, 2_000, true) regardless of
+    // local config — this call must not panic, and must reflect the DAO's
+    // values, not any locally configured flat fee.
+    let effective = client.get_effective_flat_fee_config().unwrap();
+    assert_eq!(effective.amount, 2_000);
+    assert!(effective.enabled);
+}
+
+/// `enabled: false` from the DAO disables the flat fee entirely, mirroring
+/// the dynamic-fee `enabled=false` behavior tested above.
+#[test]
+fn test_flat_fee_dao_override_disabled_yields_zero_fee() {
+    let (env, admin, token_addr, collector) = base_env();
+    let client = setup_contract(&env, &admin, &token_addr, &collector, 1_000);
+
+    let dao_id = env.register(MockDaoDisabled, ());
+    client.set_flat_fee_dao(&dao_id);
+
+    let effective = client.get_effective_flat_fee_config().unwrap();
+    assert!(!effective.enabled);
+    assert_eq!(client.get_fee_quote(&Address::generate(&env)), 0);
 }

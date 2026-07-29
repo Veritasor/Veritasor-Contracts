@@ -594,3 +594,140 @@ fn test_disabled_config_enforces_nothing() {
     assert_eq!(client.get_submission_burst_count(&business), 0);
     assert_eq!(client.get_business_count(&business), 3);
 }
+
+// ── Window-rollover exact-boundary tests ─────────────────────────────────────
+
+/// # Security assumption
+///
+/// The sliding-window cutoff is defined as `now.saturating_sub(window_seconds)`
+/// and a stored timestamp `ts` is kept only when `ts > cutoff` (strict `>`).
+///
+/// Therefore, at `now = T + window_seconds` the cutoff equals exactly `T`.
+/// Since `T > T` is **false**, the timestamp recorded at `T` is pruned and the
+/// window has fully rolled over.  A new submission at this exact instant must
+/// succeed; counting it against the *previous* window would create an off-by-
+/// one denial-of-service: a legitimate submitter who used their last slot right
+/// at the boundary would be locked out for one extra second beyond what the
+/// configured `window_seconds` promises.
+///
+/// This test fills the window to its cap, advances the ledger by *exactly*
+/// `window_seconds` (no more, no less), and asserts that the next submission
+/// is accepted and starts a fresh counter at 1.
+#[test]
+fn test_rate_window_rollover_exact_boundary() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+
+    // Use burst == full window so the burst guard never fires first.
+    // window_seconds = 100; cap = 2 submissions.
+    configure_rate_limit(&client, 2, 100, 2, 100, true, 1);
+
+    // ── Phase 1: fill the window ──────────────────────────────────────────
+    // Submit at t = 1_000.
+    set_ledger_timestamp(&env, 1_000);
+    submit(&client, &env, &business, 1);
+
+    // Submit at t = 1_001 — this is the *last* timestamp in the window;
+    // it defines the precise rollover point we will test against.
+    set_ledger_timestamp(&env, 1_001);
+    submit(&client, &env, &business, 2);
+
+    // Window is now full: 2/2.
+    assert_eq!(client.get_submission_window_count(&business), 2);
+
+    // ── Phase 2: advance to the exact rollover boundary ───────────────────
+    // now = 1_001 + 100 = 1_101.
+    // cutoff = 1_101 - 100 = 1_001.
+    // Stored timestamps: {1_000, 1_001}.
+    //   1_000 > 1_001? false → pruned.
+    //   1_001 > 1_001? false → pruned.
+    // Both entries are evicted; window count drops to 0.
+    set_ledger_timestamp(&env, 1_101);
+    assert_eq!(
+        client.get_submission_window_count(&business),
+        0,
+        "all prior timestamps must be pruned at exactly now = last_ts + window_seconds"
+    );
+
+    // ── Phase 3: new submission at the boundary must succeed ──────────────
+    // This call panics (test fails) if the old window entries were not pruned.
+    submit(&client, &env, &business, 3);
+
+    // Counter must reflect exactly this one new submission.
+    assert_eq!(
+        client.get_submission_window_count(&business),
+        1,
+        "submission at exact rollover boundary must open a fresh window counter of 1"
+    );
+}
+
+/// # Security assumption
+///
+/// At `now = T + window_seconds - 1` the cutoff equals `T - 1`.
+/// Since `T > T - 1` is **true**, the timestamp recorded at `T` is **still
+/// active** and counts towards the current window.
+///
+/// This is the complementary half of the boundary proof: one second *before*
+/// the rollover the previous window's entry must not be released prematurely.
+/// Releasing it early would allow an attacker to exceed the configured cap by
+/// submitting one extra request per window period.
+///
+/// This test fills the window to its cap, advances the ledger to
+/// `last_ts + window_seconds - 1` (one second short of rollover), and asserts
+/// that the next submission is **rejected** with "rate limit exceeded".
+#[test]
+#[should_panic(expected = "rate limit exceeded")]
+fn test_rate_window_one_second_before_rollover_still_blocked() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+
+    // Use burst == full window so only the full-window guard can fire.
+    // window_seconds = 100; cap = 2 submissions.
+    configure_rate_limit(&client, 2, 100, 2, 100, true, 1);
+
+    // ── Phase 1: fill the window ──────────────────────────────────────────
+    set_ledger_timestamp(&env, 1_000);
+    submit(&client, &env, &business, 1);
+
+    // The *latest* timestamp in the window is at t = 1_001.
+    set_ledger_timestamp(&env, 1_001);
+    submit(&client, &env, &business, 2);
+
+    assert_eq!(client.get_submission_window_count(&business), 2);
+
+    // ── Phase 2: advance to one second *before* rollover ─────────────────
+    // now = 1_001 + 100 - 1 = 1_100.
+    // cutoff = 1_100 - 100 = 1_000.
+    // Stored timestamps: {1_000, 1_001}.
+    //   1_000 > 1_000? false → pruned.
+    //   1_001 > 1_000? true  → still active.
+    // Window count = 1, which is still < cap (2), so count alone won't block.
+    // We need the earlier submission (t=1_000) pruned but the later (t=1_001)
+    // still live, and together they total 1 — below cap.
+    //
+    // Wait — to get a *guaranteed* block we must ensure *both* timestamps
+    // survive at the boundary - 1.  We therefore record both at the same
+    // second (t = 1_000) so the cutoff at t = 1_099 is 999, and both
+    // 1_000 > 999 entries remain active.
+    //
+    // Re-set up with both timestamps at t = 1_000 so the proof is clean:
+    // (The setup above already did t=1_000 and t=1_001; let's use a
+    // separate business address to keep this test fully self-contained.)
+    let business2 = Address::generate(&env);
+
+    set_ledger_timestamp(&env, 2_000);
+    submit(&client, &env, &business2, 3);
+    set_ledger_timestamp(&env, 2_000); // same second — timestamp vector: {2_000, 2_000}
+    submit(&client, &env, &business2, 4);
+
+    assert_eq!(client.get_submission_window_count(&business2), 2);
+
+    // now = 2_000 + 100 - 1 = 2_099.
+    // cutoff = 2_099 - 100 = 1_999.
+    // 2_000 > 1_999? true for both entries → both still active → count = 2.
+    // 2 < 2 is false → "rate limit exceeded" must fire.
+    set_ledger_timestamp(&env, 2_099);
+
+    // This must panic.
+    submit(&client, &env, &business2, 5);
+}
