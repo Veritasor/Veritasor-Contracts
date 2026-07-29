@@ -502,7 +502,12 @@ fn test_fuzz_grant_revoke_role_random_bitmaps() {
     for &roles in valid_roles.iter() {
         contract.set_roles(&user1, &0u32);
         contract.grant_role(&user1, &roles);
-        assert_eq!(contract.get_roles(&user1), roles, "grant_role failed for bitmap {}", roles);
+        assert_eq!(
+            contract.get_roles(&user1),
+            roles,
+            "grant_role failed for bitmap {}",
+            roles
+        );
     }
 
     contract.set_roles(&user1, &0u32);
@@ -527,7 +532,11 @@ fn test_fuzz_grant_revoke_role_random_bitmaps() {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             contract.grant_role(&user1, &invalid);
         }));
-        assert!(result.is_err(), "grant_role should panic for invalid bitmap: {}", invalid);
+        assert!(
+            result.is_err(),
+            "grant_role should panic for invalid bitmap: {}",
+            invalid
+        );
     }
 
     assert!(contract.is_valid_role_bitmap(0b0000u32));
@@ -694,4 +703,48 @@ fn test_swap_admin_old_other_roles_preserved() {
     assert!(client.has_role(&admin, &ROLE_ATTESTOR));
     assert!(client.has_role(&admin, &ROLE_OPERATOR));
     assert!(client.has_role(&new_admin, &ROLE_ADMIN));
+}
+
+#[test]
+#[should_panic(expected = "admin removal would violate MIN_ADMIN_COUNT")]
+fn test_revoke_last_admin_is_rejected() {
+    let (_env, client, admin) = setup();
+
+    client.revoke_role(&admin, &admin, &ROLE_ADMIN);
+}
+
+#[test]
+#[should_panic(expected = "admin removal cooldown not elapsed")]
+fn test_admin_removal_cooldown_is_enforced() {
+    let (env, client, admin) = setup();
+    let first = Address::generate(&env);
+    let second = Address::generate(&env);
+    let third = Address::generate(&env);
+
+    client.grant_role(&admin, &first, &ROLE_ADMIN);
+    client.grant_role(&admin, &second, &ROLE_ADMIN);
+    client.grant_role(&admin, &third, &ROLE_ADMIN);
+
+    client.revoke_role(&admin, &first, &ROLE_ADMIN);
+    client.revoke_role(&admin, &second, &ROLE_ADMIN);
+}
+
+#[test]
+fn test_admin_removal_succeeds_at_cooldown_boundary() {
+    let (env, client, admin) = setup();
+    let first = Address::generate(&env);
+    let second = Address::generate(&env);
+    let third = Address::generate(&env);
+
+    client.grant_role(&admin, &first, &ROLE_ADMIN);
+    client.grant_role(&admin, &second, &ROLE_ADMIN);
+    client.grant_role(&admin, &third, &ROLE_ADMIN);
+
+    client.revoke_role(&admin, &first, &ROLE_ADMIN);
+    env.ledger().with_mut(|ledger| {
+        ledger.timestamp += access_control::ADMIN_REMOVAL_COOLDOWN_SECS;
+    });
+    client.revoke_role(&admin, &second, &ROLE_ADMIN);
+
+    assert!(!client.has_role(&second, &ROLE_ADMIN));
 }

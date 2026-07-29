@@ -18,3 +18,5 @@ veritasor-integration-registry = { path = "../integration-registry" }
 veritasor-attestation-snapshot = { path = "../attestation-snapshot" }
 veritasor-aggregated-attestations = { path = "../aggregated-attestations" }
 veritasor-protocol-dao = { path = "../protocol-dao" }
+proptest    = { version = "=1.5.0", default-features = false, features = ["std"] }
+proptest-state-machine = "0.1"

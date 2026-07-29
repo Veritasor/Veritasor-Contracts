@@ -25,7 +25,7 @@ extern crate std;
 use super::*;
 use crate::access_control::ROLE_ADMIN;
 use crate::events::{
-    AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent,
+    AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent, EpochAdvancedEvent,
     BusinessApprovedEvent, BusinessReactivatedEvent, BusinessRegisteredEvent,
     BusinessSuspendedEvent, CollectorRotationAcceptedEvent,
     CollectorRotationProposedEvent, FeeConfigChangedEvent,
@@ -37,7 +37,7 @@ use crate::events::{
     TOPIC_BIZ_APPROVED, TOPIC_BIZ_REACTIVATE, TOPIC_BIZ_REGISTERED, TOPIC_BIZ_SUSPENDED,
     TOPIC_COLLECTOR_ROTATION_ACCEPTED, TOPIC_COLLECTOR_ROTATION_PROPOSED,
     TOPIC_FEE_CONFIG, TOPIC_FLAT_FEE_CONFIG, TOPIC_KEY_ROTATION_CANCELLED,
-    TOPIC_KEY_ROTATION_CONFIRMED, TOPIC_KEY_ROTATION_EMERGENCY, TOPIC_KEY_ROTATION_PROPOSED,
+    TOPIC_KEY_ROTATION_CONFIRMED, TOPIC_KEY_ROTATION_EMERGENCY, TOPIC_KEY_ROTATION_PROPOSED, TOPIC_EPOCH_ADVANCED,
     TOPIC_PAUSED, TOPIC_PROOF_HASH_UPDATED, TOPIC_RATE_LIMIT, TOPIC_ROLE_GRANTED,
     TOPIC_ROLE_REVOKED, TOPIC_UNPAUSED,
 };
@@ -838,6 +838,33 @@ fn test_business_reactivated_schema_snapshot() {
 }
 
 // ════════════════════════════════════════════════════════════════════
+//  18. Schema Snapshot — EpochAdvancedEvent
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_epoch_advanced_schema_snapshot() {
+    let (env, _, _) = setup();
+    env.ledger().set_timestamp(1_700_000_000);
+
+    crate::events::emit_epoch_advanced(&env, 42);
+
+    let (_cid, topics, data) = env.events().all().last().unwrap();
+
+    // --- Topics ---
+    assert_eq!(topics.len(), 1);
+    assert_eq!(
+        Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+        TOPIC_EPOCH_ADVANCED
+    );
+
+    // --- Data ---
+    let ev = EpochAdvancedEvent::try_from_val(&env, &data).unwrap();
+    assert_eq!(ev.epoch, 42);
+    assert_eq!(ev.at_ts, 1_700_000_000);
+}
+
+
+// ════════════════════════════════════════════════════════════════════
 //  12. Positive Integration — revocation, migration, role, pause
 // ════════════════════════════════════════════════════════════════════
 
@@ -1471,6 +1498,7 @@ fn test_all_topic_symbols_are_distinct() {
         TOPIC_BIZ_SUSPENDED,
         TOPIC_BIZ_REACTIVATE,
         TOPIC_PROOF_HASH_UPDATED,
+        TOPIC_EPOCH_ADVANCED,
         crate::events::TOPIC_ATTESTATION_EXPIRY_EXTENDED,
         crate::events::TOPIC_MULTI_PERIOD_ISSUED,
     ];
@@ -1486,7 +1514,7 @@ fn test_all_topic_symbols_are_distinct() {
     }
 
     // Explicitly verify count to catch any future additions.
-    assert_eq!(topics.len(), 22, "expected 22 distinct topic symbols");
+    assert_eq!(topics.len(), 20, "expected 20 distinct topic symbols");
     let _ = env; // env required for Address::generate in other tests
 }
 
@@ -1563,7 +1591,8 @@ fn test_schema_hash_catalog_integrity() {
     let catalog: serde_json::Value = serde_json::from_str(&index_content).expect("json parse");
 
     let topics_map = catalog["topics"].as_object().unwrap();
-    assert_eq!(topics_map.len(), 22);
+    // 22 existing + 3 new (ep_ckpt, ep_adv, bkf_chk) = 25
+    assert_eq!(topics_map.len(), 25);
 
     for (topic_symbol, summary) in topics_map {
         let topic_file = schemas_dir.join(alloc::format!("{}.json", topic_symbol));
@@ -1595,6 +1624,7 @@ fn test_edge_case_new_event_topic_coverage() {
         "att_sub", "att_rev", "att_mig", "att_cl", "role_gr", "role_rv", "paused", "unpaus",
         "fee_cfg", "ff_cfg", "rate_lm", "kr_prop", "kr_conf", "kr_canc", "kr_emer", "biz_reg",
         "biz_apr", "biz_sus", "biz_rea", "ph_upd", "att_exp", "mul_iss",
+        "ep_ckpt", "ep_adv", "bkf_chk",
     ];
 
     for expected in &required_topics {

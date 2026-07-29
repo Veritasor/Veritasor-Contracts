@@ -42,6 +42,7 @@
 //! | `BusinessApproved`          | `biz_apr`      | `business`        |
 //! | `BusinessSuspended`         | `biz_sus`      | `business`        |
 //! | `BusinessReactivated`       | `biz_rea`      | `business`        |
+//! | `EpochAdvanced`             | `ep_adv`       | *(none)*          |
 //! | `EpochCheckpoint`           | `ep_ckpt`      | *(none)*          |
 //!
 //! ## Indexer Compatibility Contract
@@ -145,12 +146,16 @@ pub const TOPIC_BIZ_SUSPENDED: Symbol = symbol_short!("biz_sus");
 pub const TOPIC_BIZ_REACTIVATE: Symbol = symbol_short!("biz_rea");
 /// Topic: proof hash updated
 pub const TOPIC_PROOF_HASH_UPDATED: Symbol = symbol_short!("ph_upd");
+/// Topic: fee bucket epoch advanced
+pub const TOPIC_EPOCH_ADVANCED: Symbol = symbol_short!("ep_adv");
 /// Topic: revocation proposed (grace window started)
 pub const TOPIC_REVOCATION_PROPOSED: Symbol = symbol_short!("rv_prop");
 /// Topic: revocation proposal cancelled (appeal succeeded)
 pub const TOPIC_REVOCATION_CANCELLED: Symbol = symbol_short!("rv_canc");
 /// Topic: revocation committed (grace window elapsed, revocation finalised)
 pub const TOPIC_REVOCATION_COMMITTED: Symbol = symbol_short!("rv_cmmt");
+/// Topic: relayer gas reported for delegated submission
+pub const TOPIC_RELAYER_GAS_REPORTED: Symbol = symbol_short!("rl_gas");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -651,6 +656,24 @@ pub struct BusinessReactivatedEvent {
     pub reactivated_by: Address,
 }
 
+/// Normalized payload for `EpochAdvanced` events.
+///
+/// Emitted once per fee-bucket window rollover. Indexers use `epoch` as a
+/// monotonic cursor to align analytics windows with on-chain state.
+///
+/// ## Security
+/// - `epoch` is strictly monotonic: it only ever increases.
+/// - `at_ts` is the ledger timestamp at the moment of the rollover.
+/// - Multiple rollovers in a single transaction each produce a separate event.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EpochAdvancedEvent {
+    /// New epoch number (1-based, monotonically non-decreasing).
+    pub epoch: u64,
+    /// Ledger timestamp when the epoch was advanced.
+    pub at_ts: u64,
+}
+
 /// Normalized payload for `ProofHashUpdated` events.
 ///
 /// Emitted when an attestation's proof hash is updated by an admin.
@@ -691,6 +714,32 @@ pub struct SlashTriggeredEvent {
     pub attestor: Address,
     pub amount: i128,
     pub dispute_id: u64,
+}
+
+/// Normalized payload for `RelayerGasReported` events.
+///
+/// Emitted when a delegated submission (attestor or batch attestor) reports
+/// the gas consumed to the relayer's accumulator.
+///
+/// This provides a clean billing surface for relayer operators to track
+/// their infrastructure costs.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RelayerGasReportedEvent {
+    /// Relayer address that submitted the attestation on behalf of a business.
+    pub relayer: Address,
+    /// Business on whose behalf the submission was made.
+    pub business: Address,
+    /// Period identifier of the submitted attestation.
+    pub period: String,
+    /// CPU instructions consumed by the delegated submission.
+    pub cpu_instructions: u64,
+    /// Memory bytes consumed by the delegated submission.
+    pub memory_bytes: u64,
+    /// Total accumulated CPU instructions for this relayer.
+    pub total_cpu_instructions: u64,
+    /// Total accumulated memory bytes for this relayer.
+    pub total_memory_bytes: u64,
 }
 
 // ── Attestation lifecycle ─────────────────────────────────────────
@@ -859,6 +908,48 @@ pub fn emit_slash_triggered(
     };
     env.events()
         .publish((TOPIC_SLASH_TRIGGERED, attestor.clone()), event);
+}
+
+/// Emit a `RelayerGasReported` event.
+///
+/// Call this after a delegated submission (attestor or batch attestor) to
+/// attribute the gas cost to the relayer's accumulator.
+///
+/// # Arguments
+///
+/// * `env`                 – Soroban execution environment.
+/// * `relayer`             – Relayer address that submitted the attestation.
+/// * `business`            – Business on whose behalf the submission was made.
+/// * `period`              – Period identifier of the submitted attestation.
+/// * `cpu_instructions`    – CPU instructions consumed by this submission.
+/// * `memory_bytes`        – Memory bytes consumed by this submission.
+/// * `total_cpu_instructions` – Total accumulated CPU instructions for this relayer.
+/// * `total_memory_bytes`     – Total accumulated memory bytes for this relayer.
+///
+/// # Events
+///
+/// Publishes `(rl_gas, relayer)` → `RelayerGasReportedEvent`.
+pub fn emit_relayer_gas_reported(
+    env: &Env,
+    relayer: &Address,
+    business: &Address,
+    period: &String,
+    cpu_instructions: u64,
+    memory_bytes: u64,
+    total_cpu_instructions: u64,
+    total_memory_bytes: u64,
+) {
+    let event = RelayerGasReportedEvent {
+        relayer: relayer.clone(),
+        business: business.clone(),
+        period: period.clone(),
+        cpu_instructions,
+        memory_bytes,
+        total_cpu_instructions,
+        total_memory_bytes,
+    };
+    env.events()
+        .publish((TOPIC_RELAYER_GAS_REPORTED, relayer.clone()), event);
 }
 
 /// Normalized payload for `AttestationExpiryExtended` events.
@@ -1512,6 +1603,11 @@ pub fn emit_proof_hash_updated(
         .publish((TOPIC_PROOF_HASH_UPDATED, business.clone()), event);
 }
 
+/// Emit an `EpochAdvanced` event.
+///
+/// Call this after the fee bucket window has rolled over and the epoch counter
+/// has been incremented. Each rollover window produces one event, so multiple
+/// rollovers in a single transaction emit multiple events.
 // ── Time-locked revocation (grace-window appeal) ──────────────────
 
 /// Normalized payload for `RevocationProposed` events.
@@ -1683,4 +1779,153 @@ pub fn emit_revocation_committed(
     };
     env.events()
         .publish((TOPIC_REVOCATION_COMMITTED, business.clone()), event);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Epoch & Backfill Checkpoints
+// ════════════════════════════════════════════════════════════════════
+
+/// Normalized payload for `EpochCheckpoint` events.
+///
+/// Emitted after every attestation submission to provide a per-period
+/// checkpoint that includes a running count of submissions in the current
+/// epoch, total fees collected, and the latest Merkle root (state root).
+///
+/// | Event Catalog | Topic | Secondary topic |
+/// |---|---|--|
+/// | EpochCheckpoint | `ep_ckpt` | *(none)* |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EpochCheckpointEvent {
+    /// Period identifier (e.g., `"2026-02"`).
+    pub period: String,
+    /// Merkle root of the current submission (state root for the checkpoint).
+    pub state_root: BytesN<32>,
+    /// Running submission count for this period within the current epoch.
+    pub submissions_count: u64,
+    /// Total fees collected for this period within the current epoch.
+    pub fees_collected: i128,
+    /// Ledger timestamp at checkpoint emission.
+    pub checkpoint_timestamp: u64,
+}
+
+/// Normalized payload for `EpochAdvanced` events.
+///
+/// Emitted when the fee-bucket window rolls over, incrementing the
+/// monotonic epoch counter. One event is emitted per elapsed window.
+///
+/// | Event Catalog | Topic | Secondary topic |
+/// |---|---|--|
+/// | EpochAdvanced | `ep_adv` | *(none)* |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EpochAdvancedEvent {
+    /// New epoch value after the rollover.
+    pub epoch: u64,
+    /// Ledger timestamp at which the rollover was detected.
+    pub at_ts: u64,
+}
+
+/// Normalized payload for `BackfillCheckpoint` events.
+///
+/// Emitted every `BACKFILL_CHECKPOINT_INTERVAL` (global) submissions to
+/// provide a resumable checkpoint for off-chain indexers.  The
+/// `state_commitment` is a deterministic SHA-256 hash of the current
+/// submission count and the latest Merkle root, allowing indexers to
+/// verify integrity when resuming from this checkpoint.
+///
+/// | Event Catalog | Topic | Secondary topic |
+/// |---|---|--|
+/// | BackfillCheckpoint | `bkf_chk` | *(none)* |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct BackfillCheckpointEvent {
+    /// Global running submission count at this checkpoint.
+    pub submission_count: u64,
+    /// Deterministic commitment: SHA-256( submission_count ‖ latest_merkle_root ).
+    pub state_commitment: BytesN<32>,
+}
+
+/// Emit an `EpochCheckpoint` event.
+///
+/// Called after each attestation submission to record a per-period
+/// checkpoint. The `checkpoint_timestamp` is populated from the ledger
+/// at emission time.
+///
+/// # Arguments
+///
+/// * `env`               – Soroban execution environment.
+/// * `period`            – Period identifier.
+/// * `state_root`        – Merkle root included in the checkpoint.
+/// * `submissions_count` – Running submission count for this period.
+/// * `fees_collected`    – Total fees accumulated for this period.
+///
+/// # Events
+///
+/// Publishes `(ep_ckpt,)` → `EpochCheckpointEvent`.
+pub fn emit_epoch_checkpoint(
+    env: &Env,
+    period: &String,
+    state_root: &BytesN<32>,
+    submissions_count: u64,
+    fees_collected: i128,
+) {
+    let event = EpochCheckpointEvent {
+        period: period.clone(),
+        state_root: state_root.clone(),
+        submissions_count,
+        fees_collected,
+        checkpoint_timestamp: env.ledger().timestamp(),
+    };
+    env.events().publish((TOPIC_EPOCH_CHECKPOINT,), event);
+}
+
+/// Emit an `EpochAdvanced` event.
+///
+/// Called when the fee-bucket window rolls over and the epoch counter
+/// increments. Each elapsed window produces one event.
+///
+/// # Arguments
+///
+/// * `env`   – Soroban execution environment.
+/// * `epoch` – The new epoch number (monotonically non-decreasing).
+/// * `epoch` – New epoch value.
+/// * `at_ts` – Ledger timestamp at emission.
+///
+/// # Events
+///
+/// Publishes `(ep_adv,)` → `EpochAdvancedEvent`.
+pub fn emit_epoch_advanced(env: &Env, epoch: u64) {
+    let event = EpochAdvancedEvent {
+        epoch,
+        at_ts: env.ledger().timestamp(),
+    };
+    env.events().publish((TOPIC_EPOCH_ADVANCED,), event);
+}
+
+/// Emit a `BackfillCheckpoint` event.
+///
+/// Called when the global submission counter reaches a multiple of
+/// `BACKFILL_CHECKPOINT_INTERVAL`.  Indexers can use these events to
+/// resume processing without a full replay.
+///
+/// # Arguments
+///
+/// * `env`               – Soroban execution environment.
+/// * `submission_count`  – Global running submission count.
+/// * `state_commitment`  – Deterministic SHA-256 commitment.
+///
+/// # Events
+///
+/// Publishes `(bkf_chk,)` → `BackfillCheckpointEvent`.
+pub fn emit_backfill_checkpoint(
+    env: &Env,
+    submission_count: u64,
+    state_commitment: &BytesN<32>,
+) {
+    let event = BackfillCheckpointEvent {
+        submission_count,
+        state_commitment: state_commitment.clone(),
+    };
+    env.events().publish((TOPIC_BACKFILL_CHECKPOINT,), event);
 }
