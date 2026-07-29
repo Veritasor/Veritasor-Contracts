@@ -35,10 +35,12 @@
 //!
 //! ## Clock Skew
 //!
-//! Soroban ledger timestamps are set by validators and advance
-//! monotonically within a single ledger sequence. The sliding-window
-//! cutoff uses `saturating_sub` so a zero-valued timestamp (e.g. in
-//! tests) never underflows. Callers must not assume sub-second precision.
+//! Soroban ledger timestamps are set by validators, but defensive handling
+//! is required for rollback or malformed test sequences. Each business keeps
+//! a timestamp high-water mark. Window calculations and newly recorded
+//! submissions use `max(ledger_timestamp, high_water_mark)`, so a forward
+//! jump followed by a backward jump cannot reopen capacity that was already
+//! consumed. Cutoffs use `saturating_sub` to avoid underflow at timestamp zero.
 //!
 //! ## Backward Compatibility
 //!
@@ -183,6 +185,20 @@ fn set_timestamps(env: &Env, business: &Address, timestamps: &Vec<u64>) {
         .set(&DataKey::SubmissionTimestamps(business.clone()), timestamps);
 }
 
+/// Return a non-decreasing clock for this business.
+///
+/// The high-water mark is written only after a successful submission, keeping
+/// failed attempts from advancing the limiter clock or consuming capacity.
+fn effective_timestamp(env: &Env, business: &Address) -> u64 {
+    let ledger_timestamp = env.ledger().timestamp();
+    let high_water: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::RateLimitHighWaterTimestamp(business.clone()))
+        .unwrap_or(ledger_timestamp);
+    ledger_timestamp.max(high_water)
+}
+
 /// Analyze the current submission history for the configured windows.
 ///
 /// Prunes timestamps that have fallen outside the full window and counts
@@ -192,15 +208,15 @@ fn set_timestamps(env: &Env, business: &Address, timestamps: &Vec<u64>) {
 ///
 /// # Clock Skew
 ///
-/// `now` is taken from `env.ledger().timestamp()`. The cutoffs use
-/// `saturating_sub` so a ledger timestamp of `0` (common in unit tests)
-/// never underflows to `u64::MAX`.
+/// `now` is the greater of the current ledger timestamp and the business's
+/// successful-submission high-water mark. The cutoffs use `saturating_sub`,
+/// so timestamp `0` never underflows to `u64::MAX`.
 fn analyze_submission_windows(
     env: &Env,
     config: &RateLimitConfig,
     business: &Address,
 ) -> (Vec<u64>, u32, u32, u32) {
-    let now = env.ledger().timestamp();
+    let now = effective_timestamp(env, business);
     let cutoff = now.saturating_sub(config.window_seconds);
     let burst_cutoff = now.saturating_sub(config.burst_window_seconds);
 
@@ -278,11 +294,15 @@ pub fn record_submission(env: &Env, business: &Address) {
         _ => return,
     };
 
-    let now = env.ledger().timestamp();
+    let now = effective_timestamp(env, business);
     let (mut active, _, _, _) = analyze_submission_windows(env, &config, business);
     active.push_back(now);
 
     set_timestamps(env, business, &active);
+    env.storage().instance().set(
+        &DataKey::RateLimitHighWaterTimestamp(business.clone()),
+        &now,
+    );
 }
 
 /// Count active submissions for `business` in the full sliding window.

@@ -1,0 +1,48 @@
+[workspace]
+# Keep members in alphabetical order so new PRs add in the same place (reduces merge conflicts).
+# When adding a new crate, complete the security checklist in docs/security-checklist.md first.
+members = [
+    "contracts/aggregated-attestations",
+    "contracts/attestation",
+    "contracts/attestation-registry",
+    "contracts/attestation-snapshot",
+    "contracts/attestor-staking",
+    "contracts/audit-log",
+    "contracts/business-config",
+    "contracts/common",
+    "contracts/integration-registry",
+    "contracts/lender-access-list",
+    "contracts/lender-consumer",
+    "contracts/network-config",
+    "contracts/protocol-dao",
+    "contracts/protocol-simulation",
+    "contracts/revenue-bonds",
+    "contracts/revenue-curve",
+    "contracts/revenue-settlement",
+    "contracts/revenue-share",
+    "contracts/revenue-stream",
+]
+resolver = "2"
+
+# ---------------------------------------------------------------------------
+# Workspace-level metadata — referenced by CI and tooling.
+# ---------------------------------------------------------------------------
+[workspace.metadata.security]
+# Minimum required test coverage percentage for all crates in this workspace.
+# Gaps must be justified with a RISK-ACCEPT comment in the relevant source file.
+min_coverage_pct = 95
+
+
+
+[profile.test]
+overflow-checks = true
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true

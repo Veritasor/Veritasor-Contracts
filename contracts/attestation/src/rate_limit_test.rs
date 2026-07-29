@@ -3,6 +3,7 @@
 extern crate std;
 
 use super::*;
+use proptest::prelude::*;
 use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};
 use soroban_sdk::{Address, BytesN, Env, String};
 
@@ -593,4 +594,121 @@ fn test_disabled_config_enforces_nothing() {
     assert_eq!(client.get_submission_window_count(&business), 0);
     assert_eq!(client.get_submission_burst_count(&business), 0);
     assert_eq!(client.get_business_count(&business), 3);
+}
+
+/// A forward jump must not erase quota history that a later rollback could
+/// exploit. With a budget of one, the rollback attempt remains rejected.
+#[test]
+#[should_panic(expected = "rate limit exceeded")]
+fn test_forward_jump_then_backward_jump_does_not_reopen_capacity() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+    configure_rate_limit(&client, 1, 100, 1, 100, true, 1);
+
+    set_ledger_timestamp(&env, 1_000);
+    submit(&client, &env, &business, 1);
+
+    set_ledger_timestamp(&env, 1_200);
+    submit(&client, &env, &business, 2);
+
+    set_ledger_timestamp(&env, 1_001);
+    submit(&client, &env, &business, 3);
+}
+prop_compose! {
+    /// Generates clock movement biased toward the exact expiry boundary and
+    /// its two adjacent seconds, plus larger forward/backward jumps.
+    fn skewed_rate_limit_sequence()
+        (window_seconds in 2u64..120, max_per_window in 1u32..8)
+        (
+            movements in prop::collection::vec(
+                prop_oneof![
+                    4 => Just(window_seconds as i64),
+                    4 => Just(window_seconds as i64 - 1),
+                    4 => Just(window_seconds as i64 + 1),
+                    3 => Just(-(window_seconds as i64)),
+                    3 => Just(-(window_seconds as i64 - 1)),
+                    3 => Just(-(window_seconds as i64 + 1)),
+                    2 => -240i64..=240,
+                ],
+                1..48,
+            ),
+            window_seconds in Just(window_seconds),
+            max_per_window in Just(max_per_window),
+        ) -> (u64, u32, std::vec::Vec<i64>) {
+            (window_seconds, max_per_window, movements)
+        }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: 64,
+        max_shrink_iters: 2_048,
+        ..ProptestConfig::default()
+    })]
+
+    /// Replays randomized ledger skew against the contract. The oracle uses
+    /// the same non-decreasing effective clock required by the security model
+    /// and verifies that every admitted submission fits the configured budget.
+    #[test]
+    fn check_rate_limit_never_exceeds_window_budget_under_clock_skew(
+        (window_seconds, max_per_window, movements) in skewed_rate_limit_sequence()
+    ) {
+        let (env, client, _admin) = setup();
+        let business = Address::generate(&env);
+        configure_rate_limit(
+            &client,
+            max_per_window,
+            window_seconds,
+            max_per_window,
+            window_seconds,
+            true,
+            1,
+        );
+
+        let mut ledger_now = 10_000u64;
+        let mut effective_now = ledger_now;
+        let mut admitted_at = std::vec::Vec::<u64>::new();
+
+        for (index, movement) in movements.into_iter().enumerate() {
+            ledger_now = if movement < 0 {
+                ledger_now.saturating_sub(movement.unsigned_abs())
+            } else {
+                ledger_now.saturating_add(movement as u64)
+            };
+            set_ledger_timestamp(&env, ledger_now);
+
+            let period = String::from_str(&env, &std::format!("skew-{index}"));
+            let root = BytesN::from_array(&env, &[index as u8; 32]);
+            let admitted = client
+                .try_submit_attestation(
+                    &business,
+                    &period,
+                    &root,
+                    &1_700_000_000u64,
+                    &1u32,
+                    &0i128,
+                    &None,
+                    &None,
+                )
+                .is_ok();
+
+            if admitted {
+                effective_now = effective_now.max(ledger_now);
+                admitted_at.retain(|timestamp| {
+                    *timestamp > effective_now.saturating_sub(window_seconds)
+                });
+                admitted_at.push(effective_now);
+
+                prop_assert!(
+                    admitted_at.len() <= max_per_window as usize,
+                    "{} admits in a {}-second window with budget {}; ledger_now={}, effective_now={}",
+                    admitted_at.len(),
+                    window_seconds,
+                    max_per_window,
+                    ledger_now,
+                    effective_now,
+                );
+            }
+        }
+    }
 }
