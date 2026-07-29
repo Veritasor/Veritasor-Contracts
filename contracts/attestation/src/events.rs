@@ -46,6 +46,9 @@
 //! | `EpochCheckpoint`           | `ep_ckpt`      | *(none)*          |
 //! | `EpochAdvanced`             | `ep_adv`       | *(none)*          |
 //! | `BackfillCheckpoint`        | `bkf_chk`      | *(none)*          |
+//! | `StakingContractProposed`   | `sk_prop`      | *(none)*          |
+//! | `StakingContractCommitted`  | `sk_com`       | *(none)*          |
+//! | `StakingContractCancelled`  | `sk_canc`      | *(none)*          |
 //!
 //! ## Indexer Compatibility Contract
 //!
@@ -137,7 +140,7 @@ pub const TOPIC_KEY_ROTATION_CANCELLED: Symbol = symbol_short!("kr_canc");
 /// Topic: emergency key rotation executed
 pub const TOPIC_KEY_ROTATION_EMERGENCY: Symbol = symbol_short!("kr_emer");
 /// Topic: emergency pause triggered (dual-key bypass)
-pub const TOPIC_EMERGENCY_PAUSE_TRIGGERED: Symbol = symbol_short!("emer_pause");
+pub const TOPIC_EMERGENCY_PAUSE_TRIGGERED: Symbol = symbol_short!("emr_pse");
 /// Topic: business registered
 pub const TOPIC_BIZ_REGISTERED: Symbol = symbol_short!("biz_reg");
 /// Topic: business approved
@@ -160,10 +163,14 @@ pub const TOPIC_REVOCATION_COMMITTED: Symbol = symbol_short!("rv_cmmt");
 pub const TOPIC_APPROVAL_REVOKED: Symbol = symbol_short!("appr_rv");
 /// Topic: epoch checkpoint emitted after each submission (per-period)
 pub const TOPIC_EPOCH_CHECKPOINT: Symbol = symbol_short!("ep_ckpt");
-/// Topic: epoch advanced on fee-bucket window rollover
-pub const TOPIC_EPOCH_ADVANCED: Symbol = symbol_short!("ep_adv");
 /// Topic: backfill checkpoint emitted every N submissions (global counter)
 pub const TOPIC_BACKFILL_CHECKPOINT: Symbol = symbol_short!("bkf_chk");
+/// Topic: attestor staking contract rebinding proposed (24 h time-locked)
+pub const TOPIC_STAKING_CONTRACT_PROPOSED: Symbol = symbol_short!("sk_prop");
+/// Topic: attestor staking contract rebinding committed after timelock
+pub const TOPIC_STAKING_CONTRACT_COMMITTED: Symbol = symbol_short!("sk_com");
+/// Topic: attestor staking contract rebinding proposal cancelled
+pub const TOPIC_STAKING_CONTRACT_CANCELLED: Symbol = symbol_short!("sk_canc");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -1861,23 +1868,6 @@ pub struct EpochCheckpointEvent {
     pub checkpoint_timestamp: u64,
 }
 
-/// Normalized payload for `EpochAdvanced` events.
-///
-/// Emitted when the fee-bucket window rolls over, incrementing the
-/// monotonic epoch counter. One event is emitted per elapsed window.
-///
-/// | Event Catalog | Topic | Secondary topic |
-/// |---|---|--|
-/// | EpochAdvanced | `ep_adv` | *(none)* |
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct EpochAdvancedEvent {
-    /// New epoch value after the rollover.
-    pub epoch: u64,
-    /// Ledger timestamp at which the rollover was detected.
-    pub at_ts: u64,
-}
-
 /// Normalized payload for `BackfillCheckpoint` events.
 ///
 /// Emitted every `BACKFILL_CHECKPOINT_INTERVAL` (global) submissions to
@@ -1980,4 +1970,18 @@ pub fn emit_backfill_checkpoint(
         state_commitment: state_commitment.clone(),
     };
     env.events().publish((TOPIC_BACKFILL_CHECKPOINT,), event);
+}
+
+// DAO Rotation Events
+pub fn emit_dao_rotation_proposed(env: &Env, old_dao: &Address, new_dao: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "dao_rotation_proposed"), old_dao.clone()),
+        new_dao.clone(),
+    );
+}
+pub fn emit_dao_rotation_accepted(env: &Env, old_dao: &Address, new_dao: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "dao_rotation_accepted"), old_dao.clone()),
+        new_dao.clone(),
+    );
 }

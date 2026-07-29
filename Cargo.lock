@@ -833,6 +833,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "kani"
+version = "0.57.0"
+source = "git+https://github.com/model-checking/kani?tag=kani-0.57.0#9fd39c0023bc31956fe77db6c4ece7a5cc24e5a8"
+dependencies = [
+ "kani_core",
+ "kani_macros",
+]
+
+[[package]]
+name = "kani_core"
+version = "0.57.0"
+source = "git+https://github.com/model-checking/kani?tag=kani-0.57.0#9fd39c0023bc31956fe77db6c4ece7a5cc24e5a8"
+dependencies = [
+ "kani_macros",
+]
+
+[[package]]
+name = "kani_macros"
+version = "0.57.0"
+source = "git+https://github.com/model-checking/kani?tag=kani-0.57.0#9fd39c0023bc31956fe77db6c4ece7a5cc24e5a8"
+dependencies = [
+ "proc-macro-error2",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "keccak"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1004,6 +1032,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "353e1ca18966c16d9deb1c69278edbc5f194139612772bd9537af60ac231e1e6"
 dependencies = [
  "elliptic-curve",
+]
+
+[[package]]
+name = "proc-macro-error-attr2"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96de42df36bb9bba5542fe9f1a054b8cc87e172759a1868aa05c1f3acc89dfc5"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
+name = "proc-macro-error2"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11ec05c52be0a07b08061f7dd003e7d7092e0472bc731b4af7bb1ef876109802"
+dependencies = [
+ "proc-macro-error-attr2",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -1742,6 +1792,7 @@ version = "0.1.0"
 dependencies = [
  "arbitrary",
  "hex",
+ "kani",
  "proptest",
  "serde",
  "serde_json",
