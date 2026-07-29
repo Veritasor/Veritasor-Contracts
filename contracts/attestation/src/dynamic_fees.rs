@@ -99,6 +99,12 @@ pub enum DataKey {
     AttestorStakingContract,
     /// Address of the audit log contract for slash events.
     AuditLogContract,
+    /// Pending staking contract rebinding with activation timestamp.
+    ///
+    /// Written by `propose_staking_contract`; consumed by
+    /// `commit_staking_contract` or removed by
+    /// `cancel_pending_staking_contract`.
+    PendingStakingContract,
 
     // ── Fee system ──────────────────────────────────────────────
     /// Contract administrator address.
@@ -742,4 +748,52 @@ pub fn add_relayer_gas(env: &Env, relayer: &Address, gas: u64) {
     env.storage()
         .instance()
         .set(&DataKey::RelayerGasAccumulator(relayer.clone()), &new_total);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Pending Staking Contract (time-locked rebinding)
+// ════════════════════════════════════════════════════════════════════
+
+/// A pending staking-contract rebinding waiting for the timelock to expire.
+///
+/// Stored under [`DataKey::PendingStakingContract`].
+///
+/// The rebinding of the attestor staking contract is a high-blast-radius
+/// operation: pointing the contract at a malicious or misconfigured address
+/// could instantly break attestor eligibility checks for all businesses.
+/// Requiring a 24-hour delay gives monitoring systems and stakeholders time
+/// to detect and react to a hostile or accidental change before it takes
+/// effect.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PendingStakingContract {
+    /// The staking contract address that will become active after `effective_at`.
+    pub new_contract: Address,
+    /// Ledger timestamp (Unix seconds) after which the rebinding may be committed.
+    ///
+    /// Set to `env.ledger().timestamp() + FEE_TIMELOCK_SECONDS` at proposal time.
+    pub effective_at: u64,
+    /// Address that proposed this rebinding.
+    pub proposed_by: Address,
+}
+
+/// Read the pending staking-contract proposal, if one exists.
+pub fn get_pending_staking_contract(env: &Env) -> Option<PendingStakingContract> {
+    env.storage()
+        .instance()
+        .get(&DataKey::PendingStakingContract)
+}
+
+/// Store a pending staking-contract proposal.
+pub fn set_pending_staking_contract(env: &Env, pending: &PendingStakingContract) {
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingStakingContract, pending);
+}
+
+/// Remove any pending staking-contract proposal (after commit or cancel).
+pub fn clear_pending_staking_contract(env: &Env) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::PendingStakingContract);
 }
