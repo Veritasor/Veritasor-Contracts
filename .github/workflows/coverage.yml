@@ -43,8 +43,14 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
+      - name: Build attestation WASM
+        run: cargo build --release -p veritasor-attestation --target wasm32-unknown-unknown
+
+      - name: Build snapshot WASM
+        run: cargo build --release -p veritasor-attestation-snapshot --target wasm32-unknown-unknown
+
       - name: Generate workspace lcov report
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.txt
+        run: cargo llvm-cov --locked --workspace --lcov --output-path lcov.txt
 
       - name: Upload lcov report
         uses: actions/upload-artifact@v4

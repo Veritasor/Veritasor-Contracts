@@ -32,7 +32,7 @@ cargo test bench_submit_attestation_no_fee -- --nocapture
 
 ## Test Coverage
 
-- **Total tests**: 106 (20 new benchmark tests)
+- **Total tests**: 114 (24 new benchmark tests)
 - **All passing**: ✓
 - **Coverage**: >95%
 
@@ -65,6 +65,12 @@ cargo test bench_submit_attestation_no_fee -- --nocapture
    - Verify revoked
    - Max entropy root
 
+7. **Pause / Unpause** (4 tests)
+   - Pause cold
+   - Pause hot
+   - Unpause cold
+   - Unpause hot
+
 6. **Analysis** (2 tests)
    - Read vs Write comparison
    - Summary report
@@ -80,6 +86,10 @@ cargo test bench_submit_attestation_no_fee -- --nocapture
 | migrate_attestation | < 400k | < 10k |
 | get_attestation | < 100k | < 3k |
 | get_fee_quote | < 150k | < 5k |
+| pause (cold) | < 250k | < 7k |
+| pause (hot) | < 220k | < 6k |
+| unpause (cold) | < 250k | < 7k |
+| unpause (hot) | < 220k | < 6k |
 
 **Regression threshold**: 150% of target values
 
