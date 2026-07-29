@@ -722,6 +722,80 @@ fn batch_submit_fails_when_ineligible() {
     assert!(res.is_err());
 }
 
+#[test]
+fn test_slash_on_invalid_attestation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Deploy attestation
+    let attestation_id = env.register(AttestationContract, ());
+    let att_client = AttestationContractClient::new(&env, &attestation_id);
+    let admin = Address::generate(&env);
+    att_client.initialize(&admin, &0u64);
+
+    // Deploy staking
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    let staking_id = env.register(AttestorStakingContract, ());
+    let staking = StakingClient::new(&env, &staking_id);
+    let staking_admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    
+    // Dispute contract is the attestation contract
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &attestation_id,
+        &0u64,
+    );
+    att_client.set_attestor_staking_contract(&admin, &staking_id);
+
+    // Setup attestor
+    let attestor = Address::generate(&env);
+    att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&attestor, &2_000i128);
+    staking.stake(&attestor, &1_000i128);
+
+    // Submit attestation
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    att_client.submit_attestation_as_attestor(
+        &attestor,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
+    );
+
+    // Open dispute
+    let challenger = Address::generate(&env);
+    let dispute_id = att_client.open_dispute(
+        &challenger,
+        &business,
+        &period,
+        &DisputeType::DataIntegrity,
+        &String::from_str(&env, "bad"),
+    );
+
+    // Resolve dispute as Upheld
+    att_client.resolve_dispute(
+        &dispute_id,
+        &admin,
+        &DisputeOutcome::Upheld,
+        &String::from_str(&env, "upheld"),
+    );
+
+    // Assert slash
+    let stake_info = staking.get_stake(&attestor);
+    assert_eq!(stake_info.unwrap().amount, 0i128);
+}
+
 /// Min stake increase makes previously eligible attestor ineligible
 #[test]
 fn min_stake_increase_makes_ineligible() {
@@ -1066,6 +1140,80 @@ fn batch_with_duplicate_fails_entirely() {
     assert!(res.is_err());
 }
 
+#[test]
+fn test_slash_on_invalid_attestation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Deploy attestation
+    let attestation_id = env.register(AttestationContract, ());
+    let att_client = AttestationContractClient::new(&env, &attestation_id);
+    let admin = Address::generate(&env);
+    att_client.initialize(&admin, &0u64);
+
+    // Deploy staking
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    let staking_id = env.register(AttestorStakingContract, ());
+    let staking = StakingClient::new(&env, &staking_id);
+    let staking_admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    
+    // Dispute contract is the attestation contract
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &attestation_id,
+        &0u64,
+    );
+    att_client.set_attestor_staking_contract(&admin, &staking_id);
+
+    // Setup attestor
+    let attestor = Address::generate(&env);
+    att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&attestor, &2_000i128);
+    staking.stake(&attestor, &1_000i128);
+
+    // Submit attestation
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    att_client.submit_attestation_as_attestor(
+        &attestor,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
+    );
+
+    // Open dispute
+    let challenger = Address::generate(&env);
+    let dispute_id = att_client.open_dispute(
+        &challenger,
+        &business,
+        &period,
+        &DisputeType::DataIntegrity,
+        &String::from_str(&env, "bad"),
+    );
+
+    // Resolve dispute as Upheld
+    att_client.resolve_dispute(
+        &dispute_id,
+        &admin,
+        &DisputeOutcome::Upheld,
+        &String::from_str(&env, "upheld"),
+    );
+
+    // Assert slash
+    let stake_info = staking.get_stake(&attestor);
+    assert_eq!(stake_info.unwrap().amount, 0i128);
+}
+
 // ════════════════════════════════════════════════════════════════════
 //  Failure Mode Assertions
 // ════════════════════════════════════════════════════════════════════
@@ -1358,6 +1506,80 @@ fn batch_submission_fails_when_paused() {
 
     let res = att_client.try_submit_batch_as_attestor(&attestor, &items);
     assert!(res.is_err());
+}
+
+#[test]
+fn test_slash_on_invalid_attestation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Deploy attestation
+    let attestation_id = env.register(AttestationContract, ());
+    let att_client = AttestationContractClient::new(&env, &attestation_id);
+    let admin = Address::generate(&env);
+    att_client.initialize(&admin, &0u64);
+
+    // Deploy staking
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    let staking_id = env.register(AttestorStakingContract, ());
+    let staking = StakingClient::new(&env, &staking_id);
+    let staking_admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    
+    // Dispute contract is the attestation contract
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &attestation_id,
+        &0u64,
+    );
+    att_client.set_attestor_staking_contract(&admin, &staking_id);
+
+    // Setup attestor
+    let attestor = Address::generate(&env);
+    att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&attestor, &2_000i128);
+    staking.stake(&attestor, &1_000i128);
+
+    // Submit attestation
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    att_client.submit_attestation_as_attestor(
+        &attestor,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
+    );
+
+    // Open dispute
+    let challenger = Address::generate(&env);
+    let dispute_id = att_client.open_dispute(
+        &challenger,
+        &business,
+        &period,
+        &DisputeType::DataIntegrity,
+        &String::from_str(&env, "bad"),
+    );
+
+    // Resolve dispute as Upheld
+    att_client.resolve_dispute(
+        &dispute_id,
+        &admin,
+        &DisputeOutcome::Upheld,
+        &String::from_str(&env, "upheld"),
+    );
+
+    // Assert slash
+    let stake_info = staking.get_stake(&attestor);
+    assert_eq!(stake_info.unwrap().amount, 0i128);
 }
 
 // ════════════════════════════════════════════════════════════════════
