@@ -109,3 +109,12 @@ The primary contract tests cover:
 - overwrite behavior before finalization,
 - write rejection after finalization,
 - unique business counting and ordering behavior.
+
+## Restore idempotency
+
+`restore_commit` records a SHA-256 identifier for the exact committed batch and
+rejects a sequential replay with `AlreadyRestored` (contract error code `1`).
+The identifier covers every `RestoreEntry` field, so payload substitution after
+dry-run validation fails the hash check. `get_last_restore_id()` exposes the
+last successful identifier for operator reconciliation without exposing private
+data.

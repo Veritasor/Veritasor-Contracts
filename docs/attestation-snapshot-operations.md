@@ -218,3 +218,22 @@ cargo test -p veritasor-attestation-snapshot -- --nocapture
 ```
 
 If the coverage tool is unavailable in a given CI environment, document explicit risk acceptance and list untested branches in the PR.
+
+## Restore replay protection
+
+Every successful `restore_commit` stores the exact batch fingerprint as
+`LastRestoreId`. A later attempt to commit that same batch is rejected with the
+typed contract error `SnapshotError::AlreadyRestored` (code `1`), even if the
+administrator obtains a fresh dry-run token. Operators should treat that error
+as confirmation that the restore was already applied and must not retry it.
+
+The identifier hashes the contract-value serialization of every restore entry,
+including the business, period, revenue, anomaly count, attestation count, and
+recorded timestamp. Consequently, changing any restored value invalidates the
+dry-run token rather than silently reusing its identifier. A genuinely different
+validated batch receives a different identifier and may be committed normally.
+
+The marker is written in the same atomic Soroban invocation as the restored
+records. A failed invocation changes neither snapshot state nor `LastRestoreId`.
+Use `get_last_restore_id()` to reconcile an operator job after an uncertain RPC
+response before deciding whether another restore should be attempted.

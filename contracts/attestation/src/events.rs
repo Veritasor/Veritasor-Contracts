@@ -27,9 +27,12 @@
 //! | `AttestationMigrated`       | `att_mig`      | `business`        |
 //! | `RoleGranted`               | `role_gr`      | `account`         |
 //! | `RoleRevoked`               | `role_rv`      | `account`         |
+//! | `AdminSwapped`              | `adm_sw`       | *(none)*          |
 //! | `ContractPaused`            | `paused`       | *(none)*          |
 //! | `ContractUnpaused`          | `unpaus`       | *(none)*          |
 //! | `FeeConfigChanged`          | `fee_cfg`      | *(none)*          |
+//! | `FeeConfigProposed`         | `fee_prop`     | *(none)*          |
+//! | `FeeConfigCommitted`        | `fee_com`      | *(none)*          |
 //! | `RateLimitConfigChanged`    | `rate_lm`      | *(none)*          |
 //! | `KeyRotationProposed`       | `kr_prop`      | *(none)*          |
 //! | `KeyRotationConfirmed`      | `kr_conf`      | *(none)*          |
@@ -39,6 +42,10 @@
 //! | `BusinessApproved`          | `biz_apr`      | `business`        |
 //! | `BusinessSuspended`         | `biz_sus`      | `business`        |
 //! | `BusinessReactivated`       | `biz_rea`      | `business`        |
+//! | `ApprovalRevoked`           | `appr_rv`      | `proposal_id`     |
+//! | `EpochCheckpoint`           | `ep_ckpt`      | *(none)*          |
+//! | `EpochAdvanced`             | `ep_adv`       | *(none)*          |
+//! | `BackfillCheckpoint`        | `bkf_chk`      | *(none)*          |
 //!
 //! ## Indexer Compatibility Contract
 //!
@@ -68,6 +75,7 @@
 //! - No private keys, raw signatures, or personal data are included in any
 //!   event payload.
 
+use crate::multisig::ProposalAction;
 use soroban_sdk::{contracttype, symbol_short, Address, BytesN, Env, String, Symbol};
 
 // ════════════════════════════════════════════════════════════════════
@@ -100,14 +108,24 @@ pub const TOPIC_ATTESTATION_CLEANED_UP: Symbol = symbol_short!("att_cl");
 pub const TOPIC_ROLE_GRANTED: Symbol = symbol_short!("role_gr");
 /// Topic: role revoked from an address
 pub const TOPIC_ROLE_REVOKED: Symbol = symbol_short!("role_rv");
+/// Topic: admin atomically swapped (revoke old + grant new)
+pub const TOPIC_ADMIN_SWAPPED: Symbol = symbol_short!("adm_sw");
 /// Topic: contract paused
 pub const TOPIC_PAUSED: Symbol = symbol_short!("paused");
 /// Topic: contract unpaused
 pub const TOPIC_UNPAUSED: Symbol = symbol_short!("unpaus");
 /// Topic: fee configuration updated
 pub const TOPIC_FEE_CONFIG: Symbol = symbol_short!("fee_cfg");
+/// Topic: fee configuration proposed (time-locked)
+pub const TOPIC_FEE_CONFIG_PROPOSED: Symbol = symbol_short!("fee_prop");
+/// Topic: fee configuration committed after timelock
+pub const TOPIC_FEE_CONFIG_COMMITTED: Symbol = symbol_short!("fee_com");
 /// Topic: flat fee configuration updated
 pub const TOPIC_FLAT_FEE_CONFIG: Symbol = symbol_short!("ff_cfg");
+/// Topic: collector rotation proposed
+pub const TOPIC_COLLECTOR_ROTATION_PROPOSED: Symbol = symbol_short!("cr_prop");
+/// Topic: collector rotation accepted
+pub const TOPIC_COLLECTOR_ROTATION_ACCEPTED: Symbol = symbol_short!("cr_acc");
 /// Topic: rate-limit configuration updated
 pub const TOPIC_RATE_LIMIT: Symbol = symbol_short!("rate_lm");
 /// Topic: key rotation proposed (time-locked)
@@ -118,6 +136,8 @@ pub const TOPIC_KEY_ROTATION_CONFIRMED: Symbol = symbol_short!("kr_conf");
 pub const TOPIC_KEY_ROTATION_CANCELLED: Symbol = symbol_short!("kr_canc");
 /// Topic: emergency key rotation executed
 pub const TOPIC_KEY_ROTATION_EMERGENCY: Symbol = symbol_short!("kr_emer");
+/// Topic: emergency pause triggered (dual-key bypass)
+pub const TOPIC_EMERGENCY_PAUSE_TRIGGERED: Symbol = symbol_short!("emer_pause");
 /// Topic: business registered
 pub const TOPIC_BIZ_REGISTERED: Symbol = symbol_short!("biz_reg");
 /// Topic: business approved
@@ -128,6 +148,22 @@ pub const TOPIC_BIZ_SUSPENDED: Symbol = symbol_short!("biz_sus");
 pub const TOPIC_BIZ_REACTIVATE: Symbol = symbol_short!("biz_rea");
 /// Topic: proof hash updated
 pub const TOPIC_PROOF_HASH_UPDATED: Symbol = symbol_short!("ph_upd");
+/// Topic: fee bucket epoch advanced
+pub const TOPIC_EPOCH_ADVANCED: Symbol = symbol_short!("ep_adv");
+/// Topic: revocation proposed (grace window started)
+pub const TOPIC_REVOCATION_PROPOSED: Symbol = symbol_short!("rv_prop");
+/// Topic: revocation proposal cancelled (appeal succeeded)
+pub const TOPIC_REVOCATION_CANCELLED: Symbol = symbol_short!("rv_canc");
+/// Topic: revocation committed (grace window elapsed, revocation finalised)
+pub const TOPIC_REVOCATION_COMMITTED: Symbol = symbol_short!("rv_cmmt");
+/// Topic: multisig approval revoked before quorum reached
+pub const TOPIC_APPROVAL_REVOKED: Symbol = symbol_short!("appr_rv");
+/// Topic: epoch checkpoint emitted after each submission (per-period)
+pub const TOPIC_EPOCH_CHECKPOINT: Symbol = symbol_short!("ep_ckpt");
+/// Topic: epoch advanced on fee-bucket window rollover
+pub const TOPIC_EPOCH_ADVANCED: Symbol = symbol_short!("ep_adv");
+/// Topic: backfill checkpoint emitted every N submissions (global counter)
+pub const TOPIC_BACKFILL_CHECKPOINT: Symbol = symbol_short!("bkf_chk");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -171,10 +207,122 @@ pub struct AttestationSubmittedEvent {
     pub expiry_timestamp: Option<u64>,
 }
 
+// ── Revocation reason code ────────────────────────────────────────
+
+/// Machine-readable classification of why an attestation was revoked.
+///
+/// ## Mapping contract
+///
+/// The `revoke_attestation` entrypoint accepts a free-text `reason` string.
+/// The contract maps well-known lowercase reason strings to the corresponding
+/// variant at emit time:
+///
+/// | Reason string (case-insensitive prefix match) | Variant          |
+/// |----------------------------------------------|------------------|
+/// | `"dispute"`                                   | `Dispute`        |
+/// | `"fraud"`                                     | `Fraud`          |
+/// | `"attestor_slash"` / `"attestorslash"`        | `AttestorSlash`  |
+/// | `"admin"`                                     | `Admin`          |
+/// | *(anything else)*                             | `Other`          |
+///
+/// ## Security Notes
+///
+/// - The classification is performed by the contract, not the caller; callers
+///   cannot inject a fabricated variant value.
+/// - `Other` is the safe default for any unrecognised string, preventing new
+///   free-text values from causing panics or unexpected behaviour.
+/// - This enum is `#[contracttype]` and XDR-serialised; variant order is
+///   stable and part of the indexer compatibility contract.
+///
+/// ## Indexer Usage
+///
+/// Indexers should match on `reason_code` for programmatic classification and
+/// retain `reason` for the human-readable audit trail.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum RevocationReason {
+    /// Revocation triggered by a resolved or upheld dispute.
+    Dispute,
+    /// Revocation triggered by detected fraud.
+    Fraud,
+    /// Revocation triggered by an attestor slash event.
+    AttestorSlash,
+    /// Administrative revocation by a contract admin.
+    Admin,
+    /// Any reason that does not match the well-known variants above.
+    Other,
+}
+
+impl RevocationReason {
+    /// Derive a `RevocationReason` from a free-text reason string.
+    ///
+    /// Matching is case-insensitive and prefix-based so callers using
+    /// slightly different casing or suffixes still get the right variant.
+    ///
+    /// Returns `RevocationReason::Other` for any unrecognised string.
+    pub fn from_reason_str(reason: &String) -> Self {
+        // We need to compare strings in no_std Soroban environment.
+        // Use byte-level prefix matching via a helper that works with
+        // soroban_sdk::String (which is XDR bytes under the hood).
+        let len = reason.len();
+
+        // "dispute" – 7 bytes
+        if len >= 7 && Self::starts_with_ci(reason, b"dispute") {
+            return RevocationReason::Dispute;
+        }
+        // "fraud" – 5 bytes
+        if len >= 5 && Self::starts_with_ci(reason, b"fraud") {
+            return RevocationReason::Fraud;
+        }
+        // "attestor_slash" – 14 bytes  /  "attestorslash" – 13 bytes
+        if len >= 13 && Self::starts_with_ci(reason, b"attestor") {
+            return RevocationReason::AttestorSlash;
+        }
+        // "admin" – 5 bytes
+        if len >= 5 && Self::starts_with_ci(reason, b"admin") {
+            return RevocationReason::Admin;
+        }
+
+        RevocationReason::Other
+    }
+
+    /// Returns `true` if `s` starts with `prefix` in a case-insensitive manner.
+    ///
+    /// Works with Soroban's `String` by iterating over individual bytes.
+    /// Only ASCII lowercase/uppercase is handled; non-ASCII bytes are compared
+    /// literally, which is fine since all known prefixes are ASCII.
+    fn starts_with_ci(s: &String, prefix: &[u8]) -> bool {
+        let n = prefix.len() as u32;
+        if s.len() < n {
+            return false;
+        }
+        let mut buf = [0u8; 16]; // prefix is at most 16 bytes
+        s.copy_into_slice(&mut buf[..n as usize]);
+        for (i, &p) in prefix.iter().enumerate() {
+            let b = buf[i];
+            // Lowercase both bytes (ASCII only).
+            let bl = if b.is_ascii_uppercase() { b + 32 } else { b };
+            if bl != p {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 /// Normalized payload for `AttestationRevoked` events.
 ///
 /// Emitted once per successful `revoke_attestation` call.  The
 /// `reason` field is a free-form string supplied by the revoker.
+/// `reason_code` is a machine-readable enumerated classification that
+/// indexers can use to filter or aggregate revocations without parsing
+/// free-text.
+///
+/// ## Backwards Compatibility
+///
+/// `reason_code` was appended as the last field.  Per the append-only
+/// compatibility policy, this is a non-breaking change and does NOT
+/// increment `EVENT_SCHEMA_VERSION`.
 ///
 /// This struct is an indexer-facing wire contract; field order and types are
 /// part of compatibility guarantees.
@@ -189,6 +337,12 @@ pub struct AttestationRevokedEvent {
     pub revoked_by: Address,
     /// Human-readable revocation reason for audit trail.
     pub reason: String,
+    /// Machine-readable reason code for programmatic classification.
+    ///
+    /// Derived from the free-text `reason` by the contract at emit time.
+    /// Callers that pass a well-known reason string receive the corresponding
+    /// variant; any unrecognised string maps to `RevocationReason::Other`.
+    pub reason_code: RevocationReason,
 }
 
 /// Normalized payload for `AttestationMigrated` events.
@@ -248,6 +402,21 @@ pub struct RoleChangedEvent {
     pub changed_by: Address,
 }
 
+/// Normalized payload for `AdminSwapped` events.
+///
+/// Emitted when an admin is atomically replaced by another address.
+/// Ensures the admin allowlist is never left without a member.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AdminSwappedEvent {
+    /// Address whose ADMIN role was revoked.
+    pub old_admin: Address,
+    /// Address that received the ADMIN role.
+    pub new_admin: Address,
+    /// Address that authorized the swap (must hold ADMIN role).
+    pub swapped_by: Address,
+}
+
 // ── Pause / unpause ───────────────────────────────────────────────
 
 /// Normalized payload for `ContractPaused` and `ContractUnpaused` events.
@@ -256,6 +425,34 @@ pub struct RoleChangedEvent {
 pub struct PauseChangedEvent {
     /// Address that triggered the pause state change.
     pub changed_by: Address,
+}
+
+/// Normalized payload for `PauseScheduled` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PauseScheduledEvent {
+    /// Address that scheduled the pause.
+    pub caller: Address,
+    /// Timestamp at which the pause becomes effective.
+    pub effective_at: u64,
+}
+
+/// Normalized payload for `PauseScheduledCancelled` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PauseScheduledCancelledEvent {
+    /// Address that cancelled the scheduled pause.
+    pub caller: Address,
+}
+
+/// Normalized payload for `EmergencyPauseTriggered` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EmergencyPauseTriggeredEvent {
+    /// First hardware key signer.
+    pub signer1: Address,
+    /// Second hardware key signer (distinct from signer1).
+    pub signer2: Address,
 }
 
 // ── Fee configuration ─────────────────────────────────────────────
@@ -290,6 +487,56 @@ pub struct FlatFeeConfigChangedEvent {
     pub enabled: bool,
     /// Address that made the configuration change.
     pub changed_by: Address,
+}
+
+/// Normalized payload for `FeeConfigProposed` events.
+///
+/// Emitted when a fee configuration change is proposed and enters the
+/// time-locked pending state.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeConfigProposedEvent {
+    /// Proposed token contract for fee collection.
+    pub token: Address,
+    /// Proposed destination address for fee collection.
+    pub collector: Address,
+    /// Proposed base fee amount.
+    pub base_fee: i128,
+    /// Proposed enabled state.
+    pub enabled: bool,
+    /// Address that proposed the change.
+    pub proposed_by: Address,
+    /// Ledger timestamp after which the change may be committed.
+    pub effective_at: u64,
+}
+
+/// Normalized payload for `FeeConfigCommitted` events.
+///
+/// Emitted when a previously proposed fee configuration is applied
+/// after the timelock has expired.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeConfigCommittedEvent {
+    /// Token contract now used for fee collection.
+    pub token: Address,
+    /// Destination address now receiving fees.
+    pub collector: Address,
+    /// Base fee amount now in effect.
+    pub base_fee: i128,
+    /// Whether fee collection is now enabled.
+    pub enabled: bool,
+    /// Address that committed the change.
+    pub committed_by: Address,
+}
+
+/// Normalized payload for `FeeConfigCancelled` events.
+///
+/// Emitted when a pending fee configuration proposal is cancelled.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeConfigCancelledEvent {
+    /// Address that cancelled the proposal.
+    pub cancelled_by: Address,
 }
 
 // ── Rate limiting ─────────────────────────────────────────────────
@@ -417,6 +664,24 @@ pub struct BusinessReactivatedEvent {
     pub reactivated_by: Address,
 }
 
+/// Normalized payload for `EpochAdvanced` events.
+///
+/// Emitted once per fee-bucket window rollover. Indexers use `epoch` as a
+/// monotonic cursor to align analytics windows with on-chain state.
+///
+/// ## Security
+/// - `epoch` is strictly monotonic: it only ever increases.
+/// - `at_ts` is the ledger timestamp at the moment of the rollover.
+/// - Multiple rollovers in a single transaction each produce a separate event.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EpochAdvancedEvent {
+    /// New epoch number (1-based, monotonically non-decreasing).
+    pub epoch: u64,
+    /// Ledger timestamp when the epoch was advanced.
+    pub at_ts: u64,
+}
+
 /// Normalized payload for `ProofHashUpdated` events.
 ///
 /// Emitted when an attestation's proof hash is updated by an admin.
@@ -435,13 +700,55 @@ pub struct ProofHashUpdatedEvent {
     pub updated_by: Address,
 }
 
-// ════════════════════════════════════════════════════════════════════
-//  Event Emission Functions
-//
-//  Naming: emit_<snake_case_event_name>
-//  Topic:  always (TOPIC_CONSTANT, …secondary_key?) – never raw strings
-//  Data:   always a typed struct – never a raw tuple
-// ════════════════════════════════════════════════════════════════════
+/// Normalized payload for `ProposalCleaned` events.
+///
+/// Emitted when an expired proposal is removed from storage after the
+/// admin-configurable grace period has elapsed.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ProposalCleanedEvent {
+    /// Unique identifier of the cleaned proposal.
+    pub proposal_id: u64,
+    /// The action that the proposal carried.
+    pub action: ProposalAction,
+    /// Ledger sequence number when the cleanup occurred
+    pub cleaned_at: u32,
+}
+
+/// Normalized payload for `SlashTriggered` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct SlashTriggeredEvent {
+    pub attestor: Address,
+    pub amount: i128,
+    pub dispute_id: u64,
+}
+
+/// Normalized payload for `RelayerGasReported` events.
+///
+/// Emitted when a delegated submission (attestor or batch attestor) reports
+/// the gas consumed to the relayer's accumulator.
+///
+/// This provides a clean billing surface for relayer operators to track
+/// their infrastructure costs.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RelayerGasReportedEvent {
+    /// Relayer address that submitted the attestation on behalf of a business.
+    pub relayer: Address,
+    /// Business on whose behalf the submission was made.
+    pub business: Address,
+    /// Period identifier of the submitted attestation.
+    pub period: String,
+    /// CPU instructions consumed by the delegated submission.
+    pub cpu_instructions: u64,
+    /// Memory bytes consumed by the delegated submission.
+    pub memory_bytes: u64,
+    /// Total accumulated CPU instructions for this relayer.
+    pub total_cpu_instructions: u64,
+    /// Total accumulated memory bytes for this relayer.
+    pub total_memory_bytes: u64,
+}
 
 // ── Attestation lifecycle ─────────────────────────────────────────
 
@@ -499,11 +806,12 @@ pub fn emit_attestation_submitted(
 ///
 /// # Arguments
 ///
-/// * `env`        – Soroban execution environment.
-/// * `business`   – Business whose attestation was revoked.
-/// * `period`     – Period identifier.
-/// * `revoked_by` – Address that performed the revocation.
-/// * `reason`     – Free-form revocation reason.
+/// * `env`         – Soroban execution environment.
+/// * `business`    – Business whose attestation was revoked.
+/// * `period`      – Period identifier.
+/// * `revoked_by`  – Address that performed the revocation.
+/// * `reason`      – Free-form revocation reason.
+/// * `reason_code` – Machine-readable classification derived by the caller.
 ///
 /// # Events
 ///
@@ -514,12 +822,14 @@ pub fn emit_attestation_revoked(
     period: &String,
     revoked_by: &Address,
     reason: &String,
+    reason_code: RevocationReason,
 ) {
     let event = AttestationRevokedEvent {
         business: business.clone(),
         period: period.clone(),
         revoked_by: revoked_by.clone(),
         reason: reason.clone(),
+        reason_code,
     };
     env.events()
         .publish((TOPIC_ATTESTATION_REVOKED, business.clone()), event);
@@ -590,6 +900,64 @@ pub fn emit_attestation_cleaned_up(env: &Env, business: &Address, period: &Strin
     };
     env.events()
         .publish((TOPIC_ATTESTATION_CLEANED_UP, business.clone()), event);
+}
+
+/// Emit a `SlashTriggered` event.
+pub fn emit_slash_triggered(
+    env: &Env,
+    attestor: &Address,
+    amount: i128,
+    dispute_id: u64,
+) {
+    let event = SlashTriggeredEvent {
+        attestor: attestor.clone(),
+        amount,
+        dispute_id,
+    };
+    env.events()
+        .publish((TOPIC_SLASH_TRIGGERED, attestor.clone()), event);
+}
+
+/// Emit a `RelayerGasReported` event.
+///
+/// Call this after a delegated submission (attestor or batch attestor) to
+/// attribute the gas cost to the relayer's accumulator.
+///
+/// # Arguments
+///
+/// * `env`                 – Soroban execution environment.
+/// * `relayer`             – Relayer address that submitted the attestation.
+/// * `business`            – Business on whose behalf the submission was made.
+/// * `period`              – Period identifier of the submitted attestation.
+/// * `cpu_instructions`    – CPU instructions consumed by this submission.
+/// * `memory_bytes`        – Memory bytes consumed by this submission.
+/// * `total_cpu_instructions` – Total accumulated CPU instructions for this relayer.
+/// * `total_memory_bytes`     – Total accumulated memory bytes for this relayer.
+///
+/// # Events
+///
+/// Publishes `(rl_gas, relayer)` → `RelayerGasReportedEvent`.
+pub fn emit_relayer_gas_reported(
+    env: &Env,
+    relayer: &Address,
+    business: &Address,
+    period: &String,
+    cpu_instructions: u64,
+    memory_bytes: u64,
+    total_cpu_instructions: u64,
+    total_memory_bytes: u64,
+) {
+    let event = RelayerGasReportedEvent {
+        relayer: relayer.clone(),
+        business: business.clone(),
+        period: period.clone(),
+        cpu_instructions,
+        memory_bytes,
+        total_cpu_instructions,
+        total_memory_bytes,
+    };
+    env.events()
+        .publish((TOPIC_RELAYER_GAS_REPORTED, relayer.clone()), event);
 }
 
 /// Normalized payload for `AttestationExpiryExtended` events.
@@ -723,6 +1091,36 @@ pub fn emit_role_revoked(env: &Env, account: &Address, role: u32, changed_by: &A
         .publish((TOPIC_ROLE_REVOKED, account.clone()), event);
 }
 
+/// Emit an `AdminSwapped` event.
+///
+/// Call this after an atomic admin swap has been durably stored.
+/// Combines the revoke and grant into a single event for indexer
+/// efficiency and audit clarity.
+///
+/// # Arguments
+///
+/// * `env`         – Soroban execution environment.
+/// * `old_admin`   – Address whose ADMIN role was revoked.
+/// * `new_admin`   – Address that received the ADMIN role.
+/// * `swapped_by`  – Address that authorized the swap.
+///
+/// # Events
+///
+/// Publishes `(adm_sw,)` → `AdminSwappedEvent`.
+pub fn emit_admin_swapped(
+    env: &Env,
+    old_admin: &Address,
+    new_admin: &Address,
+    swapped_by: &Address,
+) {
+    let event = AdminSwappedEvent {
+        old_admin: old_admin.clone(),
+        new_admin: new_admin.clone(),
+        swapped_by: swapped_by.clone(),
+    };
+    env.events().publish((TOPIC_ADMIN_SWAPPED,), event);
+}
+
 // ── Pause / unpause ───────────────────────────────────────────────
 
 /// Emit a `ContractPaused` event.
@@ -757,6 +1155,61 @@ pub fn emit_unpaused(env: &Env, changed_by: &Address) {
         changed_by: changed_by.clone(),
     };
     env.events().publish((TOPIC_UNPAUSED,), event);
+}
+
+/// Emit a `PauseScheduled` event.
+///
+/// # Arguments
+///
+/// * `env`          – Soroban execution environment.
+/// * `caller`       – Address that scheduled the pause.
+/// * `effective_at` – Timestamp when the pause becomes effective.
+///
+/// # Events
+///
+/// Publishes `(p_sch,)` → `PauseScheduledEvent`.
+pub fn emit_pause_scheduled(env: &Env, caller: &Address, effective_at: u64) {
+    let event = PauseScheduledEvent {
+        caller: caller.clone(),
+        effective_at,
+    };
+    env.events().publish((TOPIC_PAUSE_SCHEDULED,), event);
+}
+
+/// Emit a `PauseScheduledCancelled` event.
+///
+/// # Arguments
+///
+/// * `env`    – Soroban execution environment.
+/// * `caller` – Address that cancelled the scheduled pause.
+///
+/// # Events
+///
+/// Publishes `(p_canc,)` → `PauseScheduledCancelledEvent`.
+pub fn emit_pause_scheduled_cancelled(env: &Env, caller: &Address) {
+    let event = PauseScheduledCancelledEvent {
+        caller: caller.clone(),
+    };
+    env.events().publish((TOPIC_PAUSE_SCHEDULED_CANCELLED,), event);
+}
+
+/// Emit an `EmergencyPauseTriggered` event.
+///
+/// # Arguments
+///
+/// * `env`      – Soroban execution environment.
+/// * `signer1`  – First hardware key signer.
+/// * `signer2`  – Second hardware key signer (must be distinct from signer1).
+///
+/// # Events
+///
+/// Publishes `(emer_pause,)` → `EmergencyPauseTriggeredEvent`.
+pub fn emit_emergency_pause_triggered(env: &Env, signer1: &Address, signer2: &Address) {
+    let event = EmergencyPauseTriggeredEvent {
+        signer1: signer1.clone(),
+        signer2: signer2.clone(),
+    };
+    env.events().publish((TOPIC_EMERGENCY_PAUSE_TRIGGERED,), event);
 }
 
 // ── Fee configuration ─────────────────────────────────────────────
@@ -797,6 +1250,100 @@ pub fn emit_flat_fee_config_changed(
         changed_by: changed_by.clone(),
     };
     env.events().publish((TOPIC_FLAT_FEE_CONFIG,), event);
+}
+
+/// Emit a `FeeConfigProposed` event.
+///
+/// Call this after a fee configuration change has been stored in the
+/// pending state with its timelock timestamp.
+///
+/// # Arguments
+///
+/// * `env`         – Soroban execution environment.
+/// * `token`       – Proposed token contract.
+/// * `collector`   – Proposed destination address.
+/// * `base_fee`    – Proposed base fee amount.
+/// * `enabled`     – Proposed enabled state.
+/// * `proposed_by` – Address that proposed the change.
+/// * `effective_at` – Timestamp after which the change may be committed.
+///
+/// # Events
+///
+/// Publishes `(fee_prop,)` → `FeeConfigProposedEvent`.
+pub fn emit_fee_config_proposed(
+    env: &Env,
+    token: &Address,
+    collector: &Address,
+    base_fee: i128,
+    enabled: bool,
+    proposed_by: &Address,
+    effective_at: u64,
+) {
+    let event = FeeConfigProposedEvent {
+        token: token.clone(),
+        collector: collector.clone(),
+        base_fee,
+        enabled,
+        proposed_by: proposed_by.clone(),
+        effective_at,
+    };
+    env.events().publish((TOPIC_FEE_CONFIG_PROPOSED,), event);
+}
+
+/// Emit a `FeeConfigCommitted` event.
+///
+/// Call this after a previously proposed fee configuration has been
+/// applied following timelock expiry.
+///
+/// # Arguments
+///
+/// * `env`          – Soroban execution environment.
+/// * `token`        – Token contract now in effect.
+/// * `collector`    – Destination address now in effect.
+/// * `base_fee`     – Base fee now in effect.
+/// * `enabled`      – Enabled state now in effect.
+/// * `committed_by` – Address that committed the change.
+///
+/// # Events
+///
+/// Publishes `(fee_com,)` → `FeeConfigCommittedEvent`.
+pub fn emit_fee_config_committed(
+    env: &Env,
+    token: &Address,
+    collector: &Address,
+    base_fee: i128,
+    enabled: bool,
+    committed_by: &Address,
+) {
+    let event = FeeConfigCommittedEvent {
+        token: token.clone(),
+        collector: collector.clone(),
+        base_fee,
+        enabled,
+        committed_by: committed_by.clone(),
+    };
+    env.events().publish((TOPIC_FEE_CONFIG_COMMITTED,), event);
+}
+
+/// Emit a `FeeConfigCancelled` event.
+///
+/// Call this after a pending fee configuration proposal has been cancelled.
+///
+/// # Arguments
+///
+/// * `env`          – Soroban execution environment.
+/// * `cancelled_by` – Address that cancelled the proposal.
+///
+/// # Events
+///
+/// Publishes `(fee_cfg, )` → `FeeConfigCancelledEvent` is not used;
+/// instead this emits on the same `TOPIC_FEE_CONFIG` for consistency.
+pub fn emit_fee_config_cancelled(env: &Env, cancelled_by: &Address) {
+    let event = FeeConfigCancelledEvent {
+        cancelled_by: cancelled_by.clone(),
+    };
+    env.events()
+        .publish((TOPIC_FEE_CONFIG_PROPOSED, cancelled_by.clone()), event);
 }
 
 // ── Rate limiting ─────────────────────────────────────────────────
@@ -1062,4 +1609,375 @@ pub fn emit_proof_hash_updated(
     };
     env.events()
         .publish((TOPIC_PROOF_HASH_UPDATED, business.clone()), event);
+}
+
+/// Emit an `EpochAdvanced` event.
+///
+/// Call this after the fee bucket window has rolled over and the epoch counter
+/// has been incremented. Each rollover window produces one event, so multiple
+/// rollovers in a single transaction emit multiple events.
+// ── Time-locked revocation (grace-window appeal) ──────────────────
+
+/// Normalized payload for `RevocationProposed` events.
+///
+/// Emitted when a revocation proposal is registered and the grace window begins.
+/// Off-chain observers (businesses, integrators) should monitor this event to
+/// know when they have a window to appeal.
+///
+/// | Event Catalog | Topic   | Secondary topic |
+/// |---------------|---------|-----------------|
+/// | RevocationProposed | `rv_prop` | `business` |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RevocationProposedEvent {
+    /// Business whose attestation has been proposed for revocation.
+    pub business: Address,
+    /// Period identifier of the targeted attestation.
+    pub period: String,
+    /// Address that submitted the proposal (business owner or admin).
+    pub proposer: Address,
+    /// Ledger timestamp when the proposal was registered.
+    pub proposed_at: u64,
+    /// Duration of the appeal window in seconds.
+    pub grace_seconds: u64,
+    /// Human-readable revocation reason.
+    pub reason: String,
+}
+
+/// Normalized payload for `RevocationCancelled` events.
+///
+/// Emitted when a pending revocation proposal is cancelled within the grace
+/// window — the attestation remains active.
+///
+/// | Event Catalog | Topic   | Secondary topic |
+/// |---------------|---------|-----------------|
+/// | RevocationCancelled | `rv_canc` | `business` |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RevocationCancelledEvent {
+    /// Business whose attestation is no longer being revoked.
+    pub business: Address,
+    /// Period identifier of the protected attestation.
+    pub period: String,
+    /// Address that cancelled the proposal (business owner or admin).
+    pub cancelled_by: Address,
+}
+
+/// Normalized payload for `RevocationCommitted` events.
+///
+/// Emitted when the grace window has elapsed and the revocation is finalised.
+/// The attestation is now revoked.
+///
+/// | Event Catalog | Topic   | Secondary topic |
+/// |---------------|---------|-----------------|
+/// | RevocationCommitted | `rv_cmmt` | `business` |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RevocationCommittedEvent {
+    /// Business whose attestation has been revoked.
+    pub business: Address,
+    /// Period identifier of the revoked attestation.
+    pub period: String,
+    /// Address that originally proposed the revocation.
+    pub proposer: Address,
+    /// Address that called `commit_revoke` to finalise it.
+    pub committed_by: Address,
+    /// Ledger timestamp when the revocation was committed.
+    pub committed_at: u64,
+    /// Human-readable revocation reason.
+    pub reason: String,
+}
+
+/// Emit a `RevocationProposed` event.
+///
+/// # Arguments
+///
+/// * `env`           – Soroban execution environment.
+/// * `business`      – Business whose attestation is proposed for revocation.
+/// * `period`        – Period identifier.
+/// * `proposer`      – Address that raised the proposal.
+/// * `proposed_at`   – Ledger timestamp of the proposal.
+/// * `grace_seconds` – Duration of the appeal window in seconds.
+/// * `reason`        – Revocation reason.
+///
+/// # Events
+///
+/// Publishes `(rv_prop, business)` → `RevocationProposedEvent`.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_revocation_proposed(
+    env: &Env,
+    business: &Address,
+    period: &String,
+    proposer: &Address,
+    proposed_at: u64,
+    grace_seconds: u64,
+    reason: &String,
+) {
+    let event = RevocationProposedEvent {
+        business: business.clone(),
+        period: period.clone(),
+        proposer: proposer.clone(),
+        proposed_at,
+        grace_seconds,
+        reason: reason.clone(),
+    };
+    env.events()
+        .publish((TOPIC_REVOCATION_PROPOSED, business.clone()), event);
+}
+
+/// Emit a `RevocationCancelled` event.
+///
+/// # Arguments
+///
+/// * `env`          – Soroban execution environment.
+/// * `business`     – Business whose revocation proposal was cancelled.
+/// * `period`       – Period identifier.
+/// * `cancelled_by` – Address that cancelled the proposal.
+///
+/// # Events
+///
+/// Publishes `(rv_canc, business)` → `RevocationCancelledEvent`.
+pub fn emit_revocation_cancelled(
+    env: &Env,
+    business: &Address,
+    period: &String,
+    cancelled_by: &Address,
+) {
+    let event = RevocationCancelledEvent {
+        business: business.clone(),
+        period: period.clone(),
+        cancelled_by: cancelled_by.clone(),
+    };
+    env.events()
+        .publish((TOPIC_REVOCATION_CANCELLED, business.clone()), event);
+}
+
+/// Emit a `RevocationCommitted` event.
+///
+/// # Arguments
+///
+/// * `env`          – Soroban execution environment.
+/// * `business`     – Business whose attestation was revoked.
+/// * `period`       – Period identifier.
+/// * `proposer`     – Address that originally proposed the revocation.
+/// * `committed_by` – Address that called `commit_revoke`.
+/// * `committed_at` – Ledger timestamp of commitment.
+/// * `reason`       – Revocation reason.
+///
+/// # Events
+///
+/// Publishes `(rv_cmmt, business)` → `RevocationCommittedEvent`.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_revocation_committed(
+    env: &Env,
+    business: &Address,
+    period: &String,
+    proposer: &Address,
+    committed_by: &Address,
+    committed_at: u64,
+    reason: &String,
+) {
+    let event = RevocationCommittedEvent {
+        business: business.clone(),
+        period: period.clone(),
+        proposer: proposer.clone(),
+        committed_by: committed_by.clone(),
+        committed_at,
+        reason: reason.clone(),
+    };
+    env.events()
+        .publish((TOPIC_REVOCATION_COMMITTED, business.clone()), event);
+}
+
+// ── Multisig approvals ────────────────────────────────────────────
+
+/// Normalized payload for `ApprovalRevoked` events.
+///
+/// Emitted when an approver withdraws their approval from a pending
+/// multisig proposal before quorum has been reached (and before execution).
+///
+/// | Event Catalog | Topic   | Secondary topic |
+/// |---------------|---------|-----------------|
+/// | ApprovalRevoked | `appr_rv` | `proposal_id` |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ApprovalRevokedEvent {
+    /// Unique identifier of the proposal.
+    pub proposal_id: u64,
+    /// Address that revoked their approval.
+    pub approver: Address,
+}
+
+/// Emit an `ApprovalRevoked` event.
+///
+/// Call this after an approver's vote has been removed from a pending
+/// multisig proposal (swap-and-pop from the approvals list, count
+/// decremented). Idempotent revocations (approval didn't exist) should
+/// not call this — only emit on an actual state change.
+///
+/// # Arguments
+///
+/// * `env`         – Soroban execution environment.
+/// * `proposal_id` – Unique identifier of the proposal.
+/// * `approver`    – Address that revoked their approval.
+///
+/// # Events
+///
+/// Publishes `(appr_rv, proposal_id)` → `ApprovalRevokedEvent`.
+pub fn emit_approval_revoked(env: &Env, proposal_id: u64, approver: &Address) {
+    let event = ApprovalRevokedEvent {
+        proposal_id,
+        approver: approver.clone(),
+    };
+    env.events()
+        .publish((TOPIC_APPROVAL_REVOKED, proposal_id), event);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Epoch & Backfill Checkpoints
+// ════════════════════════════════════════════════════════════════════
+
+/// Normalized payload for `EpochCheckpoint` events.
+///
+/// Emitted after every attestation submission to provide a per-period
+/// checkpoint that includes a running count of submissions in the current
+/// epoch, total fees collected, and the latest Merkle root (state root).
+///
+/// | Event Catalog | Topic | Secondary topic |
+/// |---|---|--|
+/// | EpochCheckpoint | `ep_ckpt` | *(none)* |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EpochCheckpointEvent {
+    /// Period identifier (e.g., `"2026-02"`).
+    pub period: String,
+    /// Merkle root of the current submission (state root for the checkpoint).
+    pub state_root: BytesN<32>,
+    /// Running submission count for this period within the current epoch.
+    pub submissions_count: u64,
+    /// Total fees collected for this period within the current epoch.
+    pub fees_collected: i128,
+    /// Ledger timestamp at checkpoint emission.
+    pub checkpoint_timestamp: u64,
+}
+
+/// Normalized payload for `EpochAdvanced` events.
+///
+/// Emitted when the fee-bucket window rolls over, incrementing the
+/// monotonic epoch counter. One event is emitted per elapsed window.
+///
+/// | Event Catalog | Topic | Secondary topic |
+/// |---|---|--|
+/// | EpochAdvanced | `ep_adv` | *(none)* |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EpochAdvancedEvent {
+    /// New epoch value after the rollover.
+    pub epoch: u64,
+    /// Ledger timestamp at which the rollover was detected.
+    pub at_ts: u64,
+}
+
+/// Normalized payload for `BackfillCheckpoint` events.
+///
+/// Emitted every `BACKFILL_CHECKPOINT_INTERVAL` (global) submissions to
+/// provide a resumable checkpoint for off-chain indexers.  The
+/// `state_commitment` is a deterministic SHA-256 hash of the current
+/// submission count and the latest Merkle root, allowing indexers to
+/// verify integrity when resuming from this checkpoint.
+///
+/// | Event Catalog | Topic | Secondary topic |
+/// |---|---|--|
+/// | BackfillCheckpoint | `bkf_chk` | *(none)* |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct BackfillCheckpointEvent {
+    /// Global running submission count at this checkpoint.
+    pub submission_count: u64,
+    /// Deterministic commitment: SHA-256( submission_count ‖ latest_merkle_root ).
+    pub state_commitment: BytesN<32>,
+}
+
+/// Emit an `EpochCheckpoint` event.
+///
+/// Called after each attestation submission to record a per-period
+/// checkpoint. The `checkpoint_timestamp` is populated from the ledger
+/// at emission time.
+///
+/// # Arguments
+///
+/// * `env`               – Soroban execution environment.
+/// * `period`            – Period identifier.
+/// * `state_root`        – Merkle root included in the checkpoint.
+/// * `submissions_count` – Running submission count for this period.
+/// * `fees_collected`    – Total fees accumulated for this period.
+///
+/// # Events
+///
+/// Publishes `(ep_ckpt,)` → `EpochCheckpointEvent`.
+pub fn emit_epoch_checkpoint(
+    env: &Env,
+    period: &String,
+    state_root: &BytesN<32>,
+    submissions_count: u64,
+    fees_collected: i128,
+) {
+    let event = EpochCheckpointEvent {
+        period: period.clone(),
+        state_root: state_root.clone(),
+        submissions_count,
+        fees_collected,
+        checkpoint_timestamp: env.ledger().timestamp(),
+    };
+    env.events().publish((TOPIC_EPOCH_CHECKPOINT,), event);
+}
+
+/// Emit an `EpochAdvanced` event.
+///
+/// Called when the fee-bucket window rolls over and the epoch counter
+/// increments. Each elapsed window produces one event.
+///
+/// # Arguments
+///
+/// * `env`   – Soroban execution environment.
+/// * `epoch` – The new epoch number (monotonically non-decreasing).
+/// * `epoch` – New epoch value.
+/// * `at_ts` – Ledger timestamp at emission.
+///
+/// # Events
+///
+/// Publishes `(ep_adv,)` → `EpochAdvancedEvent`.
+pub fn emit_epoch_advanced(env: &Env, epoch: u64) {
+    let event = EpochAdvancedEvent {
+        epoch,
+        at_ts: env.ledger().timestamp(),
+    };
+    env.events().publish((TOPIC_EPOCH_ADVANCED,), event);
+}
+
+/// Emit a `BackfillCheckpoint` event.
+///
+/// Called when the global submission counter reaches a multiple of
+/// `BACKFILL_CHECKPOINT_INTERVAL`.  Indexers can use these events to
+/// resume processing without a full replay.
+///
+/// # Arguments
+///
+/// * `env`               – Soroban execution environment.
+/// * `submission_count`  – Global running submission count.
+/// * `state_commitment`  – Deterministic SHA-256 commitment.
+///
+/// # Events
+///
+/// Publishes `(bkf_chk,)` → `BackfillCheckpointEvent`.
+pub fn emit_backfill_checkpoint(
+    env: &Env,
+    submission_count: u64,
+    state_commitment: &BytesN<32>,
+) {
+    let event = BackfillCheckpointEvent {
+        submission_count,
+        state_commitment: state_commitment.clone(),
+    };
+    env.events().publish((TOPIC_BACKFILL_CHECKPOINT,), event);
 }

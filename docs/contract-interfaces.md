@@ -114,6 +114,73 @@ Set volume discount brackets.
 
 **Constraints:**
 - `thresholds` and `discounts` must be equal length
+- Thresholds must be strictly ascending
+
+---
+
+#### `configure_flat_fee(token: Address, collector: Address, amount: i128, enabled: bool)`
+
+Configure or update the flat fee collector and amount.
+
+**Parameters:**
+| Name | Type | Description |
+|------|------|-------------|
+| `token` | `Address` | Token contract address for flat fee payment |
+| `collector` | `Address` | Address that receives flat fee collections |
+| `amount` | `i128` | Flat fee amount in token smallest units |
+| `enabled` | `bool` | Master switch for flat fee collection |
+
+**Authorization:** Requires admin role
+
+**Events Emitted:** `FlatFeeConfigChanged`
+
+---
+
+#### `propose_collector_rotation(caller: Address, new_collector: Address)`
+
+Propose a collector rotation, escrowing any accumulated flat fee balance held by the current collector.
+
+**Parameters:**
+| Name | Type | Description |
+|------|------|-------------|
+| `caller` | `Address` | Current collector address proposing rotation |
+| `new_collector` | `Address` | Proposed new collector address |
+
+**Authorization:** Caller must be the current flat fee collector
+
+**Events Emitted:** `CollectorRotationProposed`
+
+---
+
+#### `accept_collector_rotation(caller: Address)`
+
+Accept a pending collector rotation and transfer escrowed flat fees to the new collector.
+
+**Parameters:**
+| Name | Type | Description |
+|------|------|-------------|
+| `caller` | `Address` | Proposed new collector address accepting rotation |
+
+**Authorization:** Caller must be the proposed new collector
+
+**Events Emitted:** `CollectorRotationAccepted`
+
+---
+
+#### `get_pending_collector_rotation() -> Option<CollectorRotationProposal>`
+
+Read the pending collector rotation proposal, if any.
+
+**Returns:**
+- `Some(CollectorRotationProposal)` when a rotation is pending
+- `None` when no proposal exists
+
+| `discounts` | `Vec<u32>` | Discount in basis points for each threshold |
+
+**Authorization:** Requires admin role
+
+**Constraints:**
+- `thresholds` and `discounts` must be equal length
 - Thresholds must be in strictly ascending order
 
 ---

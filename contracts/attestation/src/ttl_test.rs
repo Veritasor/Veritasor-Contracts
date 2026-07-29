@@ -85,3 +85,91 @@ fn test_repeated_submissions_keep_ttl_fresh() {
         );
     }
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  bump_range_ttl tests (issue #475)
+// ════════════════════════════════════════════════════════════════════
+
+/// Helper: submit a multi-period range and return the business address.
+fn submit_range(
+    env: &Env,
+    client: &AttestationContractClient<'static>,
+    expiry: Option<u64>,
+) -> Address {
+    let business = Address::generate(env);
+    let merkle_root = BytesN::from_array(env, &[0xABu8; 32]);
+    client.submit_multi_period_attestation(
+        &business,
+        &202401,
+        &202412,
+        &merkle_root,
+        &1000u64,
+        &1u32,
+        &None,
+        &expiry,
+    );
+    business
+}
+
+#[test]
+fn test_bump_range_ttl_success() {
+    let (_env, client, admin) = setup();
+    let business = submit_range(&_env, &client, None);
+
+    // Admin bumps TTL for range 0 — should succeed
+    client.bump_range_ttl(&admin, &business, &0u32);
+}
+
+#[test]
+fn test_bump_range_ttl_business_owner_success() {
+    let (_env, client, _admin) = setup();
+    let business = submit_range(&_env, &client, None);
+
+    // Business owner bumps their own range — should succeed
+    client.bump_range_ttl(&business, &business, &0u32);
+}
+
+#[test]
+#[should_panic(expected = "no ranges found")]
+fn test_bump_range_ttl_no_ranges() {
+    let (_env, client, admin) = setup();
+    let business = Address::generate(&_env);
+
+    // No ranges submitted — should panic
+    client.bump_range_ttl(&admin, &business, &0u32);
+}
+
+#[test]
+#[should_panic(expected = "range_id out of bounds")]
+fn test_bump_range_ttl_out_of_bounds() {
+    let (_env, client, admin) = setup();
+    let business = submit_range(&_env, &client, None);
+
+    // Only one range at index 0; index 99 should panic
+    client.bump_range_ttl(&admin, &business, &99u32);
+}
+
+#[test]
+#[should_panic(expected = "range is revoked")]
+fn test_bump_range_ttl_revoked() {
+    let (_env, client, admin) = setup();
+    let business = submit_range(&_env, &client, None);
+    let merkle_root = BytesN::from_array(&_env, &[0xABu8; 32]);
+
+    // Revoke the range first
+    client.revoke_multi_period_attestation(&business, &merkle_root);
+
+    // Now bump should fail because range is revoked
+    client.bump_range_ttl(&admin, &business, &0u32);
+}
+
+#[test]
+#[should_panic(expected = "not admin or business owner")]
+fn test_bump_range_ttl_unauthorized() {
+    let (_env, client, _admin) = setup();
+    let business = submit_range(&_env, &client, None);
+    let outsider = Address::generate(&_env);
+
+    // Outsider is neither admin nor business owner — should panic
+    client.bump_range_ttl(&outsider, &business, &0u32);
+}

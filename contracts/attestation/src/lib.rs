@@ -1434,6 +1434,10 @@ impl AttestationContract {
         Self::dispatch_multisig_action(&env, &executor, &action);
     }
 
+    pub fn preview_proposal(env: Env, proposal_id: u64) -> ProposalEffect {
+        multisig::preview_proposal(&env, proposal_id)
+    }
+
     pub fn get_proposal(env: Env, proposal_id: u64) -> Option<Proposal> {
         multisig::get_proposal(&env, proposal_id)
     }

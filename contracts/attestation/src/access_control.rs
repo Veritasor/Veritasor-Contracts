@@ -25,13 +25,35 @@
 //! | BUSINESS   | Can submit own attestations, view own data            |
 //! | OPERATOR   | Can perform routine operations (pause, unpause)       |
 //!
+//! ## Weighted Admin Quorum
+//!
+//! Each admin member carries a `u32` voting weight stored in the `AdminWeight`
+//! map.  Quorum evaluation uses the **sum of weights** rather than a raw member
+//! count, enabling role asymmetry (e.g. a Founder key with weight 3 vs. an Ops
+//! key with weight 1).
+//!
+//! | Constant              | Value | Purpose                                  |
+//! |-----------------------|-------|------------------------------------------|
+//! | `MAX_ADMIN_WEIGHT`    | 1 000 | Per-member cap; prevents u64 overflow    |
+//! | `DEFAULT_ADMIN_WEIGHT`| 1     | Implicit weight for un-configured admins |
+//!
+//! ### Invariants
+//! - Weight 0 is rejected (`set_admin_weight` panics) — use role revocation instead.
+//! - Only addresses that currently hold `ROLE_ADMIN` contribute to `admin_quorum_weight`.
+//! - Removing the admin role from an address implicitly removes it from the quorum sum,
+//!   even if a non-zero weight entry remains in storage.
+//! - Every weight change emits an `AdminWeightChanged` event for off-chain auditing.
+//!
 //! ## Invariants
 //! - ADMIN role cannot be granted to zero address
 //! - Role bitmaps must only use defined bits (0b1111 = 0xF)
 //! - Nonce sequences must be monotonically increasing per account
-//! - Admin must always exist (at least one address holds ADMIN role)
+//! - At least `MIN_ADMIN_COUNT` addresses always hold ADMIN role.
+//! - Admin removals are separated by `ADMIN_REMOVAL_COOLDOWN_SECS`.
 
 use soroban_sdk::{contracttype, Address, Env, Vec};
+
+use crate::dispute;
 
 /// Role identifiers as bit flags for efficient storage
 /// SECURITY: Only the first 4 bits are valid (0b1111 = 0xF)
@@ -47,6 +69,27 @@ pub const ROLE_OPERATOR: u32 = 1 << 3; // 0b1000
 /// and the reference implementation in the proptests (`contracts/attestation/src/property_test.rs`).
 pub const ROLE_VALID_MASK: u32 = ROLE_ADMIN | ROLE_ATTESTOR | ROLE_BUSINESS | ROLE_OPERATOR;
 
+/// Maximum allowed weight for a single admin member.
+///
+/// Capping individual weights at 1 000 prevents u64 overflow when summing
+/// across up to u32::MAX admins (1 000 × 2^32 ≈ 4 × 10^12, safely within u64).
+/// Any `set_admin_weight` call with a value above this constant is rejected.
+pub const MAX_ADMIN_WEIGHT: u32 = 1_000;
+
+/// Default weight assigned to an admin that has never had an explicit weight set.
+///
+/// Using 1 preserves backward compatibility: all existing admins participate
+/// in quorum with equal unit weight, matching the previous count-based model.
+pub const DEFAULT_ADMIN_WEIGHT: u32 = 1;
+
+/// Minimum number of admins that must remain after an admin-role removal.
+/// A value of one prevents the contract from becoming permanently unmanaged.
+pub const MIN_ADMIN_COUNT: u32 = 1;
+
+/// Minimum elapsed ledger time between successful admin-role removals.
+/// One day limits the blast radius of an erroneous batch removal.
+pub const ADMIN_REMOVAL_COOLDOWN_SECS: u64 = 24 * 60 * 60;
+
 /// Storage keys for access control
 #[contracttype]
 #[derive(Clone)]
@@ -57,9 +100,18 @@ pub enum AccessControlKey {
     RoleHolders,
     /// Contract paused state
     Paused,
+    /// Pending pause effective-at timestamp (time-locked pause)
+    PendingPauseEffectiveAt,
     /// Last used nonce per account for replay prevention
     /// Key format: (account_address, nonce_channel_id)
     LastNonce((Address, u32)),
+    /// Per-admin voting weight for weighted quorum evaluation.
+    ///
+    /// Key: admin `Address` → Value: `u32` weight (1 ≤ weight ≤ MAX_ADMIN_WEIGHT).
+    /// Missing entries default to `DEFAULT_ADMIN_WEIGHT` (= 1).
+    AdminWeight(Address),
+    /// Timestamp of the most recent successful admin-role removal.
+    LastAdminRemovedAt,
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -161,12 +213,58 @@ pub fn revoke_role(env: &Env, account: &Address, role: u32, changed_by: &Address
     }
 
     let current = get_roles(env, account);
+    let removes_admin = (role & ROLE_ADMIN) != 0 && (current & ROLE_ADMIN) != 0;
+
+    if removes_admin {
+        require_admin_removal_allowed(env);
+    }
+
     set_roles(env, account, current & !role);
+
+    if removes_admin {
+        env.storage().instance().set(
+            &AccessControlKey::LastAdminRemovedAt,
+            &env.ledger().timestamp(),
+        );
+    }
 
     // Emit event for audit trail
     crate::events::emit_role_revoked(env, account, role, changed_by);
 }
 
+/// Return the number of addresses that currently hold `ROLE_ADMIN`.
+pub fn admin_count(env: &Env) -> u32 {
+    let holders = get_role_holders(env);
+    let mut count = 0;
+    for i in 0..holders.len() {
+        if has_role(env, &holders.get(i).unwrap(), ROLE_ADMIN) {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// Validate the minimum-count and cooldown protections before removing an admin.
+/// This shared guard also covers removals executed by governance proposals.
+fn require_admin_removal_allowed(env: &Env) {
+    assert!(
+        admin_count(env) > MIN_ADMIN_COUNT,
+        "admin removal would violate MIN_ADMIN_COUNT"
+    );
+
+    if let Some(last_removed_at) = env
+        .storage()
+        .instance()
+        .get::<_, u64>(&AccessControlKey::LastAdminRemovedAt)
+    {
+        let now = env.ledger().timestamp();
+        assert!(
+            now >= last_removed_at
+                && now - last_removed_at >= ADMIN_REMOVAL_COOLDOWN_SECS,
+            "admin removal cooldown not elapsed"
+        );
+    }
+}
 /// Grant a role by admin.
 pub fn grant_role_by_admin(env: &Env, admin: &Address, account: &Address, role: u32) {
     require_admin(env, admin);
@@ -179,12 +277,166 @@ pub fn revoke_role_by_admin(env: &Env, admin: &Address, account: &Address, role:
     revoke_role(env, account, role, admin);
 }
 
+/// Atomically swap one admin for another.
+///
+/// Revokes `ROLE_ADMIN` from `old_admin` and grants it to `new_admin`
+/// in a single operation, emitting a combined `AdminSwapped` event.
+///
+/// # Invariant
+///
+/// After the swap, at least one address must hold `ROLE_ADMIN`. This is
+/// enforced by requiring that either `new_admin` already holds the admin
+/// role, or at least one *other* admin exists besides `old_admin`.
+///
+/// # Security
+///
+/// - Caller must hold `ROLE_ADMIN` and authorize via `require_auth()`.
+/// - `old_admin` must currently hold `ROLE_ADMIN`.
+/// - The admin-always-exists invariant is checked before any state change.
+///
+/// # Edge Cases
+///
+/// - If `old_admin == new_admin`, this is a no-op (revoke clears the bit,
+///   grant sets it back; idempotent on the bitmap).
+/// - If `new_admin` already has `ROLE_ADMIN`, only the event is emitted
+///   (the revoke + grant are idempotent on the bitmap).
+pub fn swap_admin(env: &Env, old_admin: &Address, new_admin: &Address, swapped_by: &Address) {
+    require_admin(env, swapped_by);
+
+    assert!(
+        has_role(env, old_admin, ROLE_ADMIN),
+        "old_admin does not have ADMIN role"
+    );
+
+    // Enforce the invariant: at least one admin must remain after the swap.
+    // If new_admin already has ADMIN, the count won't decrease.
+    // Otherwise, there must be another admin besides old_admin.
+    if !has_role(env, new_admin, ROLE_ADMIN) {
+        let holders = get_role_holders(env);
+        let mut admin_count: u32 = 0;
+        for i in 0..holders.len() {
+            if has_role(env, &holders.get(i).unwrap(), ROLE_ADMIN) {
+                admin_count += 1;
+            }
+        }
+        assert!(admin_count >= 2, "swap would leave no admin remaining");
+    }
+
+    // A swap preserves the admin count, so it is not subject to the removal cooldown.
+    let current = get_roles(env, old_admin);
+    set_roles(env, old_admin, current & !ROLE_ADMIN);
+    crate::events::emit_role_revoked(env, old_admin, ROLE_ADMIN, swapped_by);
+    grant_role(env, new_admin, ROLE_ADMIN, swapped_by);
+
+    crate::events::emit_admin_swapped(env, old_admin, new_admin, swapped_by);
+}
+
+/// Swap an admin after an authenticated key-rotation flow has verified the
+/// replacement identity. This is crate-visible only so contract entry points
+/// cannot bypass normal admin authorization.
+pub(crate) fn swap_admin_after_verified_rotation(
+    env: &Env,
+    old_admin: &Address,
+    new_admin: &Address,
+    swapped_by: &Address,
+) {
+    assert!(
+        has_role(env, old_admin, ROLE_ADMIN),
+        "old_admin does not have ADMIN role"
+    );
+
+    if !has_role(env, new_admin, ROLE_ADMIN) {
+        assert!(admin_count(env) >= 2, "swap would leave no admin remaining");
+    }
+
+    let current = get_roles(env, old_admin);
+    set_roles(env, old_admin, current & !ROLE_ADMIN);
+    crate::events::emit_role_revoked(env, old_admin, ROLE_ADMIN, swapped_by);
+    grant_role(env, new_admin, ROLE_ADMIN, swapped_by);
+    crate::events::emit_admin_swapped(env, old_admin, new_admin, swapped_by);
+}
 /// Get all addresses that hold any role.
 pub fn get_role_holders(env: &Env) -> Vec<Address> {
     env.storage()
         .instance()
         .get(&AccessControlKey::RoleHolders)
         .unwrap_or_else(|| Vec::new(env))
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Weighted Admin Quorum
+// ════════════════════════════════════════════════════════════════════
+
+/// Get the voting weight of an admin address.
+///
+/// Returns the explicitly stored weight, or `DEFAULT_ADMIN_WEIGHT` (1) if none
+/// has been set.  Non-admin addresses are allowed to have a stored weight, but
+/// it is ignored by `admin_quorum_weight`; only addresses that currently hold
+/// `ROLE_ADMIN` contribute to the quorum sum.
+pub fn get_admin_weight(env: &Env, account: &Address) -> u32 {
+    env.storage()
+        .instance()
+        .get(&AccessControlKey::AdminWeight(account.clone()))
+        .unwrap_or(DEFAULT_ADMIN_WEIGHT)
+}
+
+/// Set the voting weight for an admin address.
+///
+/// # Security Requirements
+///
+/// - Caller must hold `ROLE_ADMIN` (enforced by the public `set_admin_weight`
+///   contract method before reaching this helper).
+/// - `weight` must be in `1 ..= MAX_ADMIN_WEIGHT`; zero is rejected to prevent
+///   an admin silently losing all quorum influence without an explicit role
+///   revocation.
+/// - Emits `AdminWeightChanged` for an auditable on-chain trail.
+///
+/// # Panics
+///
+/// - `"admin weight cannot be zero"` – caller supplied `weight == 0`.
+/// - `"admin weight exceeds MAX_ADMIN_WEIGHT"` – caller supplied a value above
+///   the cap (currently 1 000).
+/// - `"account does not hold ROLE_ADMIN"` – target address is not an admin.
+pub fn set_admin_weight(env: &Env, account: &Address, weight: u32, changed_by: &Address) {
+    if weight == 0 {
+        panic!("admin weight cannot be zero");
+    }
+    if weight > MAX_ADMIN_WEIGHT {
+        panic!("admin weight exceeds MAX_ADMIN_WEIGHT");
+    }
+    if !has_role(env, account, ROLE_ADMIN) {
+        panic!("account does not hold ROLE_ADMIN");
+    }
+
+    let old_weight = get_admin_weight(env, account);
+    env.storage()
+        .instance()
+        .set(&AccessControlKey::AdminWeight(account.clone()), &weight);
+
+    crate::events::emit_admin_weight_changed(env, account, old_weight, weight, changed_by);
+}
+
+/// Compute the total quorum weight of all current admin members.
+///
+/// Iterates the `RoleHolders` list and sums the weight of every address that
+/// currently holds `ROLE_ADMIN`.  Addresses with no explicit weight entry
+/// contribute `DEFAULT_ADMIN_WEIGHT` (= 1), preserving backward compatibility
+/// with the previous count-based model.
+///
+/// # Returns
+///
+/// `u64` — sum of weights of all active admins.  Returns `0` if no admins
+/// exist (which should be an unreachable state in a well-initialized contract).
+pub fn admin_quorum_weight(env: &Env) -> u64 {
+    let holders = get_role_holders(env);
+    let mut total: u64 = 0;
+    for i in 0..holders.len() {
+        let holder = holders.get(i).unwrap();
+        if has_role(env, &holder, ROLE_ADMIN) {
+            total += get_admin_weight(env, &holder) as u64;
+        }
+    }
+    total
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -242,16 +494,21 @@ pub fn require_admin(env: &Env, caller: &Address) {
     );
 }
 
-/// Require that the caller has the ATTESTOR role.
-/// Panics if the caller is not an attestor.
+/// Require that the caller has the ATTESTOR role and is not locked.
+/// Panics if the caller is not an attestor or is locked due to an active dispute.
 ///
 /// # Security
 /// - Authentication precedes authorization check
-pub fn require_attestor(env: &Env, caller: &Address) {
+/// - Lock status prevents attestors from submitting during active disputes
+pub fn require_attestor_not_locked(env: &Env, caller: &Address) {
     caller.require_auth();
     assert!(
         has_role(env, caller, ROLE_ATTESTOR),
         "caller does not have ATTESTOR role"
+    );
+    assert!(
+        !dispute::is_attestor_locked(env, caller),
+        "attestor is locked due to an active dispute"
     );
 }
 
@@ -332,9 +589,72 @@ pub fn set_paused(env: &Env, paused: bool) {
         .set(&AccessControlKey::Paused, &paused);
 }
 
+// ── Time-locked (scheduled) pause ─────────────────────────────────
+
+/// Returns the effective-at timestamp of a pending scheduled pause, if any.
+pub fn get_pending_pause_effective_at(env: &Env) -> Option<u64> {
+    env.storage()
+        .instance()
+        .get(&AccessControlKey::PendingPauseEffectiveAt)
+}
+
+/// Emergency pause execution function.
+///
+/// This function is called by emergency_pause to directly pause the contract
+/// without requiring multisig approval. It bypasses time-lock mechanisms
+/// for immediate emergency response.
+///
+/// # Arguments
+/// * `env` – Soroban execution environment.
+/// * `signer1` – First hardware key signer (already verified).
+/// * `signer2` – Second hardware key signer (already verified).
+///
+/// # Panics
+/// - Contract is already paused.
+pub fn emergency_pause_execute(env: &Env, signer1: &Address, signer2: &Address) {
+    // Verify contract is not already paused (should have been checked by caller)
+    assert!(!is_paused(env), "contract already paused");
+
+    // Apply pause using the existing set_paused function
+    set_paused(env, true);
+
+    // Emit the emergency pause triggered event
+    events::emit_emergency_pause_triggered(env, signer1, signer2);
+}
+
+/// Stores a pending pause effective-at timestamp.
+pub fn set_pending_pause_effective_at(env: &Env, effective_at: u64) {
+    env.storage()
+        .instance()
+        .set(&AccessControlKey::PendingPauseEffectiveAt, &effective_at);
+}
+
+/// Removes any pending pause.
+pub fn clear_pending_pause(env: &Env) {
+    env.storage()
+        .instance()
+        .remove(&AccessControlKey::PendingPauseEffectiveAt);
+}
+
+/// If a scheduled pause's effective-at timestamp has been reached,
+/// automatically apply the pause and clear the pending state.
+pub fn check_and_apply_pending_pause(env: &Env) {
+    if let Some(effective_at) = get_pending_pause_effective_at(env) {
+        if env.ledger().timestamp() >= effective_at {
+            set_paused(env, true);
+            clear_pending_pause(env);
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+
 /// Require that the contract is not paused.
 /// Panics if the contract is paused.
+///
+/// Automatically applies any overdue scheduled pause before checking.
 pub fn require_not_paused(env: &Env) {
+    check_and_apply_pending_pause(env);
     assert!(!is_paused(env), "contract is paused");
 }
 
@@ -383,6 +703,7 @@ pub fn role_from_name(name: &str) -> u32 {
 
 /// Emit an event when a role is granted.
 /// SECURITY: Provides audit trail for all role changes
+#[allow(dead_code)]
 fn emit_role_granted(env: &Env, account: &Address, role: u32) {
     // Use Soroban's diagnostic event system for off-chain monitoring
     // Event topics: ["role_granted", account, role_value]
@@ -391,6 +712,7 @@ fn emit_role_granted(env: &Env, account: &Address, role: u32) {
 
 /// Emit an event when a role is revoked.
 /// SECURITY: Provides audit trail even for non-existent role revocations
+#[allow(dead_code)]
 fn emit_role_revoked(env: &Env, account: &Address, role: u32) {
     soroban_sdk::log!(env, "role_revoked: account={:?}, role={}", account, role);
 }

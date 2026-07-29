@@ -168,7 +168,7 @@ impl RevenueSettlementContract {
     /// repayment based on summed thresholds and caps, and distributes settlement
     /// records.
     pub fn settle_multi(env: Env, agreement_id: u64, periods: Vec<String>, revenues: Vec<i128>) {
-        assert!(periods.len() > 0, "periods cannot be empty");
+        assert!(!periods.is_empty(), "periods cannot be empty");
         assert_eq!(
             periods.len(),
             revenues.len(),

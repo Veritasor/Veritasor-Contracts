@@ -62,6 +62,10 @@ impl TestEnv {
         self.client.get_revocation_info(&business, &period)
     }
 
+    pub fn cleanup_revocation_index(&self, business: Address) -> u32 {
+        self.client.cleanup_revocation_index(&business)
+    }
+
     pub fn get_attestation(
         &self,
         business: Address,
@@ -109,6 +113,17 @@ impl TestEnv {
             &new_merkle_root,
             &new_version,
         );
+    }
+
+    pub fn revoke_and_cleanup(
+        &self,
+        caller: Address,
+        business: Address,
+        period: String,
+        reason: String,
+    ) {
+        self.client
+            .revoke_and_cleanup(&caller, &business, &period, &reason, &0u64);
     }
 }
 use crate::{DisputeOutcome, DisputeStatus, DisputeType, OptionalResolution};
@@ -400,7 +415,7 @@ fn test_revocation_when_paused() {
         1,
     );
 
-    test.pause(test.admin.clone(), 0u64);
+    test.pause(test.admin.clone());
 
     test.revoke_attestation(
         test.admin.clone(),
@@ -1233,8 +1248,6 @@ fn test_closed_dispute_no_reopen_after_revoke() {
 //   8. Revocation of a non-existent attestation is rejected cleanly.
 
 use super::*;
-use soroban_sdk::{Address, BytesN, Env, String};
-
 /// Minimal test harness: registered contract + mock auths + initialized admin.
 fn setup_index_env() -> (Env, AttestationContractClient<'static>, Address) {
     let env = Env::default();
@@ -1748,4 +1761,805 @@ fn test_global_sequence_spans_multiple_businesses() {
         &0u64,
     );
     assert_eq!(client.get_revocation_sequence(), 2u64);
+}
+
+// ============================================================================
+// GRACE-WINDOW (PROPOSE / COMMIT / CANCEL) TESTS
+// ============================================================================
+//
+// These tests exercise the time-locked revocation path introduced by the
+// feat/revoke-grace-window work:
+//
+//   propose_revoke  → starts the appeal window
+//   cancel_revoke_proposal → appeal succeeds; attestation stays active
+//   commit_revoke   → grace elapsed; revocation is finalised
+//
+// The emergency path (revoke_attestation) is tested separately above and
+// remains completely unaffected.
+
+use crate::events::{
+    TOPIC_REVOCATION_CANCELLED, TOPIC_REVOCATION_COMMITTED, TOPIC_REVOCATION_PROPOSED,
+};
+use crate::{DEFAULT_REVOKE_GRACE_SECONDS, RevokeProposal};
+
+/// Build a minimal env with a deployed, initialized contract and one submitted
+/// attestation ready for the grace-window tests.
+fn grace_setup() -> (
+    Env,
+    AttestationContractClient<'static>,
+    Address, // admin
+    Address, // business
+    String,  // period
+    BytesN<32>, // root
+) {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &0u64);
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-01");
+    let root = BytesN::from_array(&env, &[42u8; 32]);
+    client.submit_attestation(
+        &business, &period, &root,
+        &1_700_000_000u64, &1u32, &0i128, &None, &None,
+    );
+    (env, client, admin, business, period, root)
+}
+
+// ── 1. Happy path: propose → wait → commit ───────────────────────────────────
+
+#[test]
+fn test_grace_propose_then_commit_after_window() {
+    let (env, client, _admin, business, period, root) = grace_setup();
+
+    // No proposal yet.
+    assert!(client.get_revoke_proposal(&business, &period).is_none());
+
+    let reason = String::from_str(&env, "grace window test");
+    client.propose_revoke(&business, &business, &period, &reason);
+
+    // Proposal exists; attestation still active.
+    let proposal = client.get_revoke_proposal(&business, &period).unwrap();
+    assert_eq!(proposal.proposer, business);
+    assert_eq!(proposal.reason, reason);
+    assert!(!client.is_revoked(&business, &period));
+    assert!(client.verify_attestation(&business, &period, &root));
+
+    // Advance ledger timestamp past the grace window.
+    let grace = client.get_revoke_grace_seconds();
+    env.ledger().with_mut(|l| l.timestamp += grace + 1);
+
+    // Now anyone can commit.
+    let committer = Address::generate(&env);
+    client.commit_revoke(&committer, &business, &period);
+
+    // Attestation is now revoked; proposal consumed.
+    assert!(client.is_revoked(&business, &period));
+    assert!(!client.verify_attestation(&business, &period, &root));
+    assert!(client.get_revoke_proposal(&business, &period).is_none());
+
+    // Revocation info should record the original proposer.
+    let (revoked_by, _, stored_reason) =
+        client.get_revocation_info(&business, &period).unwrap();
+    assert_eq!(revoked_by, business);
+    assert_eq!(stored_reason, reason);
+}
+
+// ── 2. Happy path: propose → appeal (cancel within window) ───────────────────
+
+#[test]
+fn test_grace_cancel_within_window_preserves_attestation() {
+    let (env, client, _admin, business, period, root) = grace_setup();
+
+    let reason = String::from_str(&env, "appeal test");
+    client.propose_revoke(&business, &business, &period, &reason);
+
+    // Advance to halfway through the grace window (still open).
+    let grace = client.get_revoke_grace_seconds();
+    env.ledger().with_mut(|l| l.timestamp += grace / 2);
+
+    client.cancel_revoke_proposal(&business, &business, &period);
+
+    // Attestation still active; proposal gone.
+    assert!(!client.is_revoked(&business, &period));
+    assert!(client.verify_attestation(&business, &period, &root));
+    assert!(client.get_revoke_proposal(&business, &period).is_none());
+}
+
+// ── 3. Commit before grace elapses is rejected ───────────────────────────────
+
+#[test]
+#[should_panic(expected = "grace window has not elapsed")]
+fn test_grace_commit_before_window_rejected() {
+    let (env, client, _admin, business, period, _root) = grace_setup();
+
+    client.propose_revoke(
+        &business, &business, &period,
+        &String::from_str(&env, "too early"),
+    );
+
+    // Advance to one second before the window ends.
+    let grace = client.get_revoke_grace_seconds();
+    env.ledger().with_mut(|l| l.timestamp += grace - 1);
+
+    // Should panic.
+    client.commit_revoke(&business, &business, &period);
+}
+
+
+// ── 4. Cancel after grace window is rejected ─────────────────────────────────
+
+#[test]
+#[should_panic(expected = "grace window has elapsed")]
+fn test_grace_cancel_after_window_rejected() {
+    let (env, client, _admin, business, period, _root) = grace_setup();
+
+    client.propose_revoke(
+        &business, &business, &period,
+        &String::from_str(&env, "too late to cancel"),
+    );
+
+    // Advance past the window.
+    let grace = client.get_revoke_grace_seconds();
+    env.ledger().with_mut(|l| l.timestamp += grace + 1);
+
+    // Cancel should now panic.
+    client.cancel_revoke_proposal(&business, &business, &period);
+}
+
+// ── 5. Admin can propose and cancel on behalf of business ────────────────────
+
+#[test]
+fn test_grace_admin_can_propose_and_cancel() {
+    let (env, client, admin, business, period, _root) = grace_setup();
+
+    // Admin proposes.
+    client.propose_revoke(
+        &admin, &business, &period,
+        &String::from_str(&env, "admin-initiated"),
+    );
+    let proposal = client.get_revoke_proposal(&business, &period).unwrap();
+    assert_eq!(proposal.proposer, admin);
+
+    // Admin cancels.
+    client.cancel_revoke_proposal(&admin, &business, &period);
+    assert!(client.get_revoke_proposal(&business, &period).is_none());
+}
+
+// ── 6. Unauthorized caller cannot propose/cancel ──────────────────────────────
+
+#[test]
+#[should_panic(expected = "caller must be ADMIN or the business owner")]
+fn test_grace_unauthorized_propose_rejected() {
+    let (_env, client, _admin, business, period, _root) = grace_setup();
+    let attacker = Address::generate(&client.env);
+    client.propose_revoke(
+        &attacker, &business, &period,
+        &String::from_str(&client.env, "unauthorized"),
+    );
+}
+
+#[test]
+#[should_panic(expected = "caller must be ADMIN or the business owner")]
+fn test_grace_unauthorized_cancel_rejected() {
+    let (env, client, _admin, business, period, _root) = grace_setup();
+    client.propose_revoke(
+        &business, &business, &period,
+        &String::from_str(&env, "valid"),
+    );
+    let attacker = Address::generate(&env);
+    client.cancel_revoke_proposal(&attacker, &business, &period);
+}
+
+// ── 7. Double proposal is rejected ────────────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "revocation already proposed")]
+fn test_grace_duplicate_proposal_rejected() {
+    let (env, client, _admin, business, period, _root) = grace_setup();
+    let reason = String::from_str(&env, "first");
+    client.propose_revoke(&business, &business, &period, &reason);
+    // Second proposal should panic.
+    client.propose_revoke(&business, &business, &period, &reason);
+}
+
+// ── 8. Events are emitted correctly ───────────────────────────────────────────
+
+#[test]
+fn test_grace_events_emitted() {
+    let (env, client, _admin, business, period, _root) = grace_setup();
+
+    let reason = String::from_str(&env, "event test");
+    client.propose_revoke(&business, &business, &period, &reason);
+
+    let events = env.events().all();
+    let proposed_topic = (TOPIC_REVOCATION_PROPOSED, business.clone()).into_val(&env);
+    assert!(events.iter().any(|e| e.1 == proposed_topic));
+
+    // Advance and commit.
+    let grace = client.get_revoke_grace_seconds();
+    env.ledger().with_mut(|l| l.timestamp += grace + 1);
+    let committer = Address::generate(&env);
+    client.commit_revoke(&committer, &business, &period);
+
+    let events_after = env.events().all();
+    let committed_topic = (TOPIC_REVOCATION_COMMITTED, business.clone()).into_val(&env);
+    assert!(events_after.iter().any(|e| e.1 == committed_topic));
+}
+
+#[test]
+fn test_grace_cancel_emits_event() {
+    let (env, client, _admin, business, period, _root) = grace_setup();
+    client.propose_revoke(
+        &business, &business, &period,
+        &String::from_str(&env, "cancel event"),
+    );
+    client.cancel_revoke_proposal(&business, &business, &period);
+
+    let events = env.events().all();
+    let cancelled_topic = (TOPIC_REVOCATION_CANCELLED, business).into_val(&env);
+    assert!(events.iter().any(|e| e.1 == cancelled_topic));
+}
+
+
+// ── 9. Propose on non-existent attestation is rejected ───────────────────────
+
+#[test]
+#[should_panic(expected = "attestation not found")]
+fn test_grace_propose_nonexistent_rejected() {
+    let (_env, client, _admin, business, _period, _root) = grace_setup();
+    let ghost = String::from_str(&client.env, "2099-99");
+    client.propose_revoke(
+        &business, &business, &ghost,
+        &String::from_str(&client.env, "ghost"),
+    );
+}
+
+// ── 10. Propose on already-revoked attestation is rejected ───────────────────
+
+#[test]
+#[should_panic(expected = "attestation already revoked")]
+fn test_grace_propose_already_revoked_rejected() {
+    let (env, client, admin, business, period, _root) = grace_setup();
+    // Emergency-revoke first.
+    client.revoke_attestation(
+        &admin, &business, &period,
+        &String::from_str(&env, "emergency"), &0u64,
+    );
+    // Now a grace-window proposal must be rejected.
+    client.propose_revoke(
+        &business, &business, &period,
+        &String::from_str(&env, "already gone"),
+    );
+}
+
+// ── 11. Admin can configure custom grace window ───────────────────────────────
+
+#[test]
+fn test_grace_custom_grace_seconds() {
+    let (env, client, admin, business, period, _root) = grace_setup();
+
+    // Default is 86400.
+    assert_eq!(client.get_revoke_grace_seconds(), DEFAULT_REVOKE_GRACE_SECONDS);
+
+    // Admin sets a shorter window (60 s).
+    client.set_revoke_grace_seconds(&admin, &60u64);
+    assert_eq!(client.get_revoke_grace_seconds(), 60u64);
+
+    client.propose_revoke(
+        &business, &business, &period,
+        &String::from_str(&env, "short window"),
+    );
+
+    // Advance 60 s — window now elapsed.
+    env.ledger().with_mut(|l| l.timestamp += 61);
+    client.commit_revoke(&business, &business, &period);
+    assert!(client.is_revoked(&business, &period));
+}
+
+// ── 12. Zero grace window allows immediate commit ─────────────────────────────
+
+#[test]
+fn test_grace_zero_allows_immediate_commit() {
+    let (env, client, admin, business, period, _root) = grace_setup();
+    client.set_revoke_grace_seconds(&admin, &0u64);
+
+    client.propose_revoke(
+        &business, &business, &period,
+        &String::from_str(&env, "zero grace"),
+    );
+
+    // No time advance needed — grace = 0.
+    client.commit_revoke(&business, &business, &period);
+    assert!(client.is_revoked(&business, &period));
+}
+
+// ── 13. Paused contract rejects propose, commit, and cancel ──────────────────
+
+#[test]
+#[should_panic(expected = "contract is paused")]
+fn test_grace_propose_while_paused_rejected() {
+    let (env, client, admin, business, period, _root) = grace_setup();
+    client.pause(&admin, &1u64);
+    client.propose_revoke(
+        &business, &business, &period,
+        &String::from_str(&env, "paused"),
+    );
+}
+
+#[test]
+#[should_panic(expected = "contract is paused")]
+fn test_grace_commit_while_paused_rejected() {
+    let (env, client, admin, business, period, _root) = grace_setup();
+    client.propose_revoke(
+        &business, &business, &period,
+        &String::from_str(&env, "before pause"),
+    );
+    let grace = client.get_revoke_grace_seconds();
+    env.ledger().with_mut(|l| l.timestamp += grace + 1);
+    client.pause(&admin, &1u64);
+    client.commit_revoke(&business, &business, &period);
+}
+
+#[test]
+#[should_panic(expected = "contract is paused")]
+fn test_grace_cancel_while_paused_rejected() {
+    let (env, client, admin, business, period, _root) = grace_setup();
+    client.propose_revoke(
+        &business, &business, &period,
+        &String::from_str(&env, "before pause"),
+    );
+    client.pause(&admin, &1u64);
+    client.cancel_revoke_proposal(&business, &business, &period);
+}
+
+// ── 14. Grace-window and emergency revoke are independent ─────────────────────
+
+#[test]
+fn test_grace_emergency_revoke_unaffected() {
+    let (env, client, admin, business, period, _root) = grace_setup();
+
+    // Admin emergency-revokes immediately — no proposal involved.
+    client.revoke_attestation(
+        &admin, &business, &period,
+        &String::from_str(&env, "emergency"), &0u64,
+    );
+
+    assert!(client.is_revoked(&business, &period));
+    // No proposal was created.
+    assert!(client.get_revoke_proposal(&business, &period).is_none());
+}
+
+// ── 15. Different periods are independent proposals ───────────────────────────
+
+#[test]
+fn test_grace_proposals_are_per_period() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &0u64);
+
+    let business = Address::generate(&env);
+    let period_a = String::from_str(&env, "2026-01");
+    let period_b = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[77u8; 32]);
+
+    client.submit_attestation(&business, &period_a, &root, &1_700_000_000u64, &1u32, &0i128, &None, &None);
+    client.submit_attestation(&business, &period_b, &BytesN::from_array(&env, &[78u8; 32]), &1_700_000_001u64, &1u32, &0i128, &None, &None);
+
+    client.propose_revoke(&business, &business, &period_a, &String::from_str(&env, "period A"));
+
+    // period_b has no proposal.
+    assert!(client.get_revoke_proposal(&business, &period_b).is_none());
+
+    // Cancelling period_a does not affect period_b.
+    client.cancel_revoke_proposal(&business, &business, &period_a);
+    assert!(!client.is_revoked(&business, &period_a));
+    assert!(!client.is_revoked(&business, &period_b));
+}
+
+
+// ── 16. commit_revoke increments revocation sequence ─────────────────────────
+
+#[test]
+fn test_grace_commit_increments_sequence() {
+    let (env, client, _admin, business, period, _root) = grace_setup();
+
+    let seq_before = client.get_revocation_sequence();
+    client.propose_revoke(
+        &business, &business, &period,
+        &String::from_str(&env, "seq test"),
+    );
+
+    let grace = client.get_revoke_grace_seconds();
+    env.ledger().with_mut(|l| l.timestamp += grace + 1);
+    client.commit_revoke(&business, &business, &period);
+
+    assert_eq!(client.get_revocation_sequence(), seq_before + 1);
+}
+
+// ── 17. commit_revoke updates revoked-periods index ──────────────────────────
+
+#[test]
+fn test_grace_commit_updates_revocation_index() {
+    let (env, client, _admin, business, period, _root) = grace_setup();
+
+    assert_eq!(client.get_revoked_periods(&business).len(), 0u32);
+
+    client.propose_revoke(
+        &business, &business, &period,
+        &String::from_str(&env, "index test"),
+    );
+    let grace = client.get_revoke_grace_seconds();
+    env.ledger().with_mut(|l| l.timestamp += grace + 1);
+    client.commit_revoke(&business, &business, &period);
+
+    let index = client.get_revoked_periods(&business);
+    assert_eq!(index.len(), 1u32);
+    assert_eq!(index.get(0).unwrap(), period);
+}
+
+// ── 18. After cancel a fresh propose can succeed ─────────────────────────────
+
+#[test]
+fn test_grace_re_propose_after_cancel_succeeds() {
+    let (env, client, _admin, business, period, _root) = grace_setup();
+
+    // First proposal.
+    client.propose_revoke(
+        &business, &business, &period,
+        &String::from_str(&env, "first attempt"),
+    );
+
+    // Cancel (appeal).
+    client.cancel_revoke_proposal(&business, &business, &period);
+    assert!(client.get_revoke_proposal(&business, &period).is_none());
+
+    // New proposal allowed.
+    client.propose_revoke(
+        &business, &business, &period,
+        &String::from_str(&env, "second attempt"),
+    );
+    assert!(client.get_revoke_proposal(&business, &period).is_some());
+}
+
+// ── 19. commit_revoke with no pending proposal panics cleanly ─────────────────
+
+#[test]
+#[should_panic(expected = "no pending revocation proposal")]
+fn test_grace_commit_without_proposal_rejected() {
+    let (_env, client, _admin, business, period, _root) = grace_setup();
+    client.commit_revoke(&business, &business, &period);
+}
+
+// ── 20. cancel_revoke_proposal with no pending proposal panics cleanly ────────
+
+#[test]
+#[should_panic(expected = "no pending revocation proposal")]
+fn test_grace_cancel_without_proposal_rejected() {
+    let (_env, client, _admin, business, period, _root) = grace_setup();
+    client.cancel_revoke_proposal(&business, &business, &period);
+}
+
+// ── 21. Resubmit blocked after committed revocation ──────────────────────────
+
+#[test]
+fn test_grace_resubmit_blocked_after_commit() {
+    let (env, client, _admin, business, period, root) = grace_setup();
+
+    client.propose_revoke(
+        &business, &business, &period,
+        &String::from_str(&env, "then commit"),
+    );
+    let grace = client.get_revoke_grace_seconds();
+    env.ledger().with_mut(|l| l.timestamp += grace + 1);
+    client.commit_revoke(&business, &business, &period);
+
+    // Attestation record still present, so resubmit is blocked.
+    let result = client.try_submit_attestation(
+        &business, &period, &root,
+        &1_700_000_002u64, &2u32, &0i128, &None, &None,
+    );
+    assert!(result.is_err(), "resubmit after grace-path revocation must be blocked");
+}
+
+// ── 22. propose_revoke only allowed by admin if not the business owner ────────
+
+#[test]
+fn test_grace_admin_proposes_different_business() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &0u64);
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-05");
+    let root = BytesN::from_array(&env, &[55u8; 32]);
+    client.submit_attestation(&business, &period, &root, &1_700_000_000u64, &1u32, &0i128, &None, &None);
+
+    // Admin (who is not the business) proposes.
+    client.propose_revoke(
+        &admin, &business, &period,
+        &String::from_str(&env, "admin-override"),
+    );
+    let proposal = client.get_revoke_proposal(&business, &period).unwrap();
+    assert_eq!(proposal.proposer, admin);
+
+    // Admin then cancels it.
+    client.cancel_revoke_proposal(&admin, &business, &period);
+    assert!(client.get_revoke_proposal(&business, &period).is_none());
+}
+
+// ============================================================================
+// ATOMIC REVOKE-AND-CLEANUP TESTS
+// ============================================================================
+//
+// These tests verify the `revoke_and_cleanup` operation that atomically revokes
+// an attestation and removes its active storage entries.
+
+use crate::events::TOPIC_ATTESTATION_CLEANED_UP;
+
+/// Setup helper: registered contract + initialized admin + one submitted attestation.
+fn rnc_setup() -> (
+    TestEnv,
+    Address, // business
+    String,  // period
+    BytesN<32>, // root
+) {
+    let test = TestEnv::new();
+    let business = Address::generate(&test.env);
+    let period = String::from_str(&test.env, "2026-01");
+    let root = BytesN::from_array(&test.env, &[100u8; 32]);
+    test.submit_attestation(business.clone(), period.clone(), root.clone(), 1_700_000_000, 1);
+    (test, business, period, root)
+}
+
+// ── 1. Happy path ────────────────────────────────────────────────────────────
+
+#[test]
+fn test_revoke_and_cleanup_happy_path() {
+    let (test, business, period, root) = rnc_setup();
+    let reason = String::from_str(&test.env, "atomic revoke + cleanup");
+
+    // Pre-state: attestation exists and is not revoked.
+    assert!(test.get_attestation(business.clone(), period.clone()).is_some());
+    assert!(!test.is_revoked(business.clone(), period.clone()));
+    assert!(test.verify_attestation(business.clone(), period.clone(), root.clone()));
+
+    // Revoke and cleanup atomically.
+    test.revoke_and_cleanup(test.admin.clone(), business.clone(), period.clone(), reason.clone());
+
+    // Post-state: attestation data is gone.
+    assert!(test.get_attestation(business.clone(), period.clone()).is_none());
+    // verify_attestation returns false when attestation does not exist.
+    assert!(!test.verify_attestation(business.clone(), period.clone(), root.clone()));
+
+    // Revocation data is also gone (since we cleaned the Revoked key).
+    assert!(test.get_revocation_info(business.clone(), period.clone()).is_none());
+
+    // Revoked periods index should not contain the cleaned period.
+    let revoked_periods = test.client.get_revoked_periods(&business);
+    assert_eq!(revoked_periods.len(), 0);
+}
+
+// ── 2. Already-revoked edge case ─────────────────────────────────────────────
+
+#[test]
+fn test_revoke_and_cleanup_already_revoked() {
+    let (test, business, period, root) = rnc_setup();
+    let reason = String::from_str(&test.env, "post-revoke cleanup");
+
+    // First: standard revoke (marks as revoked but keeps storage).
+    let revoke_reason = String::from_str(&test.env, "initial revocation");
+    test.revoke_attestation(test.admin.clone(), business.clone(), period.clone(), revoke_reason.clone());
+
+    // Verify revoked state.
+    assert!(test.is_revoked(business.clone(), period.clone()));
+    assert!(test.get_attestation(business.clone(), period.clone()).is_some());
+    let (revoked_by, _, stored_reason) =
+        test.get_revocation_info(business.clone(), period.clone()).unwrap();
+    assert_eq!(stored_reason, revoke_reason);
+    assert_eq!(revoked_by, test.admin);
+
+    // Now call revoke_and_cleanup on the already-revoked attestation.
+    // This must NOT panic and should clean up storage.
+    test.revoke_and_cleanup(test.admin.clone(), business.clone(), period.clone(), reason);
+
+    // Post-state: attestation data is gone.
+    assert!(test.get_attestation(business.clone(), period.clone()).is_none());
+    // Revocation key should also be gone since we cleaned it.
+    assert!(test.get_revocation_info(business.clone(), period.clone()).is_none());
+
+    // Revoked periods index should be empty.
+    let revoked_periods = test.client.get_revoked_periods(&business);
+    assert_eq!(revoked_periods.len(), 0);
+}
+
+// ── 3. Unauthorized caller rejected ──────────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "caller must be ADMIN or the business owner")]
+fn test_revoke_and_cleanup_unauthorized() {
+    let (test, business, period, _root) = rnc_setup();
+    let attacker = Address::generate(&test.env);
+    test.revoke_and_cleanup(
+        attacker,
+        business,
+        period,
+        String::from_str(&test.env, "unauthorized"),
+    );
+}
+
+// ── 4. Nonexistent attestation rejected ───────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "attestation not found")]
+fn test_revoke_and_cleanup_nonexistent() {
+    let test = TestEnv::new();
+    let business = Address::generate(&test.env);
+    test.revoke_and_cleanup(
+        test.admin.clone(),
+        business,
+        String::from_str(&test.env, "2026-99"),
+        String::from_str(&test.env, "ghost cleanup"),
+    );
+}
+
+// ── 5. Storage entries are 100% deleted post-transaction ─────────────────────
+
+#[test]
+fn test_revoke_and_cleanup_storage_fully_cleared() {
+    let (test, business, period, root) = rnc_setup();
+
+    // Submit attestation with metadata.
+    test.client.submit_attestation_with_metadata(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &String::from_str(&test.env, "USD"),
+        &true,
+    );
+
+    let reason = String::from_str(&test.env, "full cleanup check");
+
+    // Confirm attestation exists before cleanup.
+    assert!(test.get_attestation(business.clone(), period.clone()).is_some());
+    assert!(!test.is_revoked(business.clone(), period.clone()));
+
+    // Execute atomic revoke + cleanup.
+    test.revoke_and_cleanup(test.admin.clone(), business.clone(), period.clone(), reason);
+
+    // Assert attestation data is deleted.
+    assert!(
+        test.get_attestation(business.clone(), period.clone()).is_none(),
+        "Attestation data should be deleted"
+    );
+
+    // Assert revocation record is gone.
+    assert!(
+        test.get_revocation_info(business.clone(), period.clone()).is_none(),
+        "Revocation record should be deleted"
+    );
+
+    // Assert is_revoked returns false (since the Revoked key was cleaned).
+    assert!(
+        !test.is_revoked(business.clone(), period.clone()),
+        "Revoked flag should be cleaned"
+    );
+
+    // Assert verify_attestation returns false (no data to verify).
+    assert!(
+        !test.verify_attestation(business.clone(), period.clone(), root),
+        "verify_attestation should return false after cleanup"
+    );
+
+    // Assert business attestations no longer returns this period.
+    let periods_vec = soroban_sdk::vec![&test.env, period.clone()];
+    let results = test.get_business_attestations(business.clone(), periods_vec);
+    assert_eq!(results.len(), 1);
+    let (_returned_period, attestation_opt, revocation_opt) = results.get(0).unwrap();
+    assert!(attestation_opt.is_none(), "Attestation in listing should be None");
+    assert!(revocation_opt.is_none(), "Revocation in listing should be None");
+
+    // Assert the revoked periods index does not contain this period.
+    let revoked_periods = test.client.get_revoked_periods(&business);
+    assert_eq!(revoked_periods.len(), 0);
+}
+
+// ── 6. Events are emitted correctly (Revoked + Cleaned) ─────────────────────
+
+#[test]
+fn test_revoke_and_cleanup_events_emitted() {
+    let (test, business, period, _root) = rnc_setup();
+    let reason = String::from_str(&test.env, "event verification");
+
+    test.revoke_and_cleanup(test.admin.clone(), business.clone(), period.clone(), reason);
+
+    let events = test.env.events().all();
+
+    // Check Revoked event was emitted.
+    let revoked_topics = (TOPIC_ATTESTATION_REVOKED, business.clone()).into_val(&test.env);
+    assert!(
+        events.iter().any(|event| event.1 == revoked_topics),
+        "Revoked event must be emitted"
+    );
+
+    // Check Cleaned event was emitted.
+    let cleaned_topics = (TOPIC_ATTESTATION_CLEANED_UP, business).into_val(&test.env);
+    assert!(
+        events.iter().any(|event| event.1 == cleaned_topics),
+        "Cleaned event must be emitted"
+    );
+}
+
+// ── 7. Already-revoked case still emits Cleaned event ────────────────────────
+
+#[test]
+fn test_revoke_and_cleanup_already_revoked_emits_cleaned() {
+    let (test, business, period, _root) = rnc_setup();
+
+    // Standard revoke first.
+    test.revoke_attestation(
+        test.admin.clone(),
+        business.clone(),
+        period.clone(),
+        String::from_str(&test.env, "first revoke"),
+    );
+
+    // Clear events so we only capture the revoke_and_cleanup events.
+    // Soroban test env accumulates events; we can check that Cleaned is present.
+    test.revoke_and_cleanup(
+        test.admin.clone(),
+        business.clone(),
+        period.clone(),
+        String::from_str(&test.env, "cleanup after revoke"),
+    );
+
+    let events = test.env.events().all();
+
+    // Cleaned event MUST be present (the attestation was deleted).
+    let cleaned_topics = (TOPIC_ATTESTATION_CLEANED_UP, business).into_val(&test.env);
+    assert!(
+        events.iter().any(|event| event.1 == cleaned_topics),
+        "Cleaned event must be emitted even when already revoked"
+    );
+}
+
+// ── 8. Paused contract rejects revoke_and_cleanup ────────────────────────────
+
+#[test]
+#[should_panic(expected = "contract is paused")]
+fn test_revoke_and_cleanup_paused() {
+    let (test, business, period, _root) = rnc_setup();
+    test.pause(test.admin.clone());
+    test.revoke_and_cleanup(
+        test.admin.clone(),
+        business,
+        period,
+        String::from_str(&test.env, "paused"),
+    );
+}
+
+// ── 9. Business owner can revoke_and_cleanup ─────────────────────────────────
+
+#[test]
+fn test_revoke_and_cleanup_by_business_owner() {
+    let (test, business, period, root) = rnc_setup();
+    let reason = String::from_str(&test.env, "owner cleanup");
+
+    test.revoke_and_cleanup(business.clone(), business.clone(), period.clone(), reason.clone());
+
+    // Attestation data must be gone.
+    assert!(test.get_attestation(business.clone(), period.clone()).is_none());
+    // Revocation info must be gone.
+    assert!(test.get_revocation_info(business, period).is_none());
 }
