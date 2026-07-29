@@ -12,7 +12,7 @@
 //!   - Ordering and determinism guarantees
 
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env};
 
 use crate::replay_protection::{
     get_nonce, get_nonces_for_channels, is_custom_channel, is_well_known_channel, peek_next_nonce,
@@ -29,6 +29,46 @@ impl ReplayProtectionTestContract {
         // Simple function to satisfy contract requirement
         42
     }
+
+    /// Schedules a WASM replacement for this contract after the invocation
+    /// commits. The test below uses this entrypoint to exercise the same
+    /// upgrade mechanism used on-chain.
+    pub fn upgrade(env: Env, wasm_hash: BytesN<32>) {
+        env.deployer().update_current_contract_wasm(wasm_hash);
+    }
+}
+
+// A small, valid Soroban contract WASM fixture (the SDK's `add` fixture),
+// encoded as base64 so the upgrade test is self-contained and does not depend
+// on a build artifact or a developer's Cargo registry path.
+const UPGRADE_WASM_BASE64: &str = "AGFzbQEAAAABFARgAX4BfmACf34AYAJ+fgF+YAAAAg0CAWkBMAAAAWkBXwAAAwYFAQIDAwMFAwEAEAYZA38BQYCAwAALfwBBgIDAAAt/AEGAgMAACwcvBQZtZW1vcnkCAANhZGQAAwFfAAYKX19kYXRhX2VuZAMBC19faGVhcF9iYXNlAwIKjAIFXQIBfwF+AkACQCABp0H/AXEiAkHAAEYNAAJAIAJBBkYNAEIBIQNCg5CAgIABIQEMAgsgAUIIiCEBQgAhAwwBC0IAIQMgARCAgICAACEBCyAAIAE3AwggACADNwMAC5kBAQF/I4CAgIAAQSBrIgIkgICAgAAgAkEQaiAAEIKAgIAAAkACQCACKAIQDQAgAikDGCEAIAIgARCCgICAACACKQMApw0AIAAgAikDCHwiASAAVA0BAkACQCABQv//////////AFYNACABQgiGQgaEIQAMAQsgARCBgICAACEACyACQSBqJICAgIAAIAAPCwAACxCEgICAAAALCQAQhYCAgAAACwQAAAALAgALAEsOY29udHJhY3RzcGVjdjAAAAAAAAAAAAAAAANhZGQAAAAAAgAAAAAAAAABYQAAAAAAAAYAAAAAAAAAAWIAAAAAAAAGAAAAAQAAAAYAHhFjb250cmFjdGVudm1ldGF2MAAAAAAAAAAVAAAAAAB7DmNvbnRyYWN0bWV0YXYwAAAAAAAAAAVyc3ZlcgAAAAAAAAYxLjc0LjAAAAAAAAAAAAAIcnNzZGt2ZXIAAAA5MjEuMC4xLXByZXZpZXcuMSMxMTZjMzViYzllMDNmNGIxYjVlNjViNWVlODMxYWUwZjg2YWE5MmZkAAAA";
+
+fn decode_base64(input: &str) -> std::vec::Vec<u8> {
+    let mut decoded = std::vec::Vec::new();
+    let mut accumulator = 0u32;
+    let mut bits = 0u32;
+
+    for byte in input.bytes() {
+        if byte == b'=' {
+            break;
+        }
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => continue,
+        };
+        accumulator = (accumulator << 6) | u32::from(value);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            decoded.push((accumulator >> bits) as u8);
+        }
+    }
+
+    decoded
 }
 
 /// Second contract type used for cross-contract isolation tests.
@@ -68,6 +108,60 @@ fn nonce_starts_at_zero_and_increments() {
         // Next call uses nonce = 1.
         verify_and_increment_nonce(&env, &actor, channel, 1);
         assert_eq!(get_nonce(&env, &actor, channel), 2);
+    });
+}
+
+#[test]
+fn replay_nonce_state_survives_wasm_upgrade() {
+    const SEEDED_CHANNEL: u32 = 77;
+    const CHANNEL_ADDED_AFTER_UPGRADE: u32 = 78;
+    const SEEDED_NONCE: u64 = 3;
+
+    let env = Env::default();
+    let contract_id = env.register(ReplayProtectionTestContract, ());
+    let contract = ReplayProtectionTestContractClient::new(&env, &contract_id);
+    let actor = Address::generate(&env);
+
+    // Seed the nonce at N before the executable changes. N-1 must remain
+    // unusable after the upgrade; otherwise a previously valid submission
+    // could be replayed against the new implementation.
+    env.as_contract(&contract_id, || {
+        for nonce in 0..SEEDED_NONCE {
+            verify_and_increment_nonce(&env, &actor, SEEDED_CHANNEL, nonce);
+        }
+        assert_eq!(get_nonce(&env, &actor, SEEDED_CHANNEL), SEEDED_NONCE);
+    });
+
+    let wasm = decode_base64(UPGRADE_WASM_BASE64);
+    let wasm_hash = env
+        .deployer()
+        .upload_contract_wasm(Bytes::from_slice(&env, &wasm));
+    contract.upgrade(&wasm_hash);
+
+    // The updated executable uses the same contract instance storage. A
+    // channel introduced after the update must still begin independently at 0.
+    env.as_contract(&contract_id, || {
+        assert_eq!(get_nonce(&env, &actor, SEEDED_CHANNEL), SEEDED_NONCE);
+        assert_eq!(get_nonce(&env, &actor, CHANNEL_ADDED_AFTER_UPGRADE), 0);
+        verify_and_increment_nonce(&env, &actor, CHANNEL_ADDED_AFTER_UPGRADE, 0);
+        assert_eq!(get_nonce(&env, &actor, CHANNEL_ADDED_AFTER_UPGRADE), 1);
+    });
+
+    // Re-submit nonce N-1 after the WASM upgrade. The rejection proves the
+    // old replay state was retained rather than reset by the replacement.
+    let replay = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        env.as_contract(&contract_id, || {
+            verify_and_increment_nonce(&env, &actor, SEEDED_CHANNEL, SEEDED_NONCE - 1);
+        });
+    }));
+    assert!(
+        replay.is_err(),
+        "a seeded nonce must remain stale after upgrade"
+    );
+
+    env.as_contract(&contract_id, || {
+        assert_eq!(get_nonce(&env, &actor, SEEDED_CHANNEL), SEEDED_NONCE);
+        assert_eq!(get_nonce(&env, &actor, CHANNEL_ADDED_AFTER_UPGRADE), 1);
     });
 }
 
@@ -2444,4 +2538,436 @@ fn concurrent_batches_nonce_isolation() {
             "business_a and business_b nonces must diverge after different numbers of batches"
         );
     });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Block 9 — Proptest State Machine: Nonce Monotonicity Proof
+//
+// This section implements a formal property-based state machine using
+// `proptest_state_machine::ReferenceStateMachine` to prove that the replay
+// protection nonce counter is strictly monotonic — it can only increase,
+// never decrease or stay the same after a successful submission.
+//
+// Model: A `BTreeMap<u64, u64>` tracks `channel_id → last_observed_nonce`.
+// Commands: `SubmitNonce` drives the real `verify_and_increment_nonce`, while
+// `SkipNonce` tests that skipping or replaying a nonce is always rejected.
+// Invariant: After any successful `SubmitNonce`, the newly stored nonce is
+// strictly greater than the prior recorded value for that channel. Any
+// failed submission leaves the stored state unchanged.
+//
+// The state machine generates interleaved sequences across well-known
+// administration channels, business operation ranges, and edge-case
+// boundary channels (0, 255, 256, u32::MAX), exercising collision domains
+// and nonce isolation boundaries.
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod proptest_nonce_monotonicity {
+    use std::collections::BTreeMap;
+
+    use proptest::prelude::*;
+    use proptest_state_machine::{ReferenceStateMachine, proptest_state_machine};
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::{Address, Env};
+
+    use crate::replay_protection::{
+        get_nonce, verify_and_increment_nonce, CHANNEL_ADMIN, CHANNEL_BUSINESS,
+        CHANNEL_CUSTOM_START, CHANNEL_GOVERNANCE, CHANNEL_MULTISIG, CHANNEL_PROTOCOL,
+    };
+    use super::ReplayProtectionTestContract;
+
+    // ── 1. Model State ────────────────────────────────────────────────────────
+
+    /// Reference model state: `channel_id → last_observed_nonce`.
+    ///
+    /// This is the minimal abstract state that captures the monotonicity
+    /// invariant. The real contract stores nonces indexed by `(actor, channel)`;
+    /// here we fix a single actor and track per-channel nonces to isolate the
+    /// channel-dimension monotonicity property.
+    #[derive(Clone, Debug)]
+    pub struct ModelState {
+        pub channels: BTreeMap<u64, u64>,
+    }
+
+    // ── 2. Transition Command Enum ───────────────────────────────────────────
+
+    /// Commands that drive the nonce engine.
+    #[derive(Clone, Debug)]
+    pub enum NonceCommand {
+        /// Submit a specific nonce value for a given channel.
+        ///
+        /// Succeeds iff `nonce == current_nonce(channel)`. On success the
+        /// counter advances by exactly 1.
+        SubmitNonce {
+            channel_id: u64,
+            nonce: u64,
+        },
+        /// Submit a deliberately mismatched nonce for a channel.
+        ///
+        /// Always fails in the real system. The model state is unchanged.
+        SkipNonce {
+            channel_id: u64,
+        },
+    }
+
+    // ── 3. ReferenceStateMachine Implementation ──────────────────────────────
+
+    /// State machine for nonce monotonicity.
+    pub struct NonceStateMachine;
+
+    impl ReferenceStateMachine for NonceStateMachine {
+        type State = ModelState;
+        type Transition = NonceCommand;
+
+        /// Initial state: all channels start at nonce 0 (empty map implies 0).
+        fn init_state() -> BoxedStrategy<Self::State> {
+            Just(ModelState {
+                channels: BTreeMap::new(),
+            })
+            .boxed()
+        }
+
+        /// Generate transitions based on current model state.
+        ///
+        /// Channels are drawn from a mix of well-known constants (admin,
+        /// business, multisig, governance, protocol), boundary values
+        /// (0, 255, 256/custom_start, u32::MAX), and a mid-range value.
+        ///
+        /// For `SubmitNonce`:
+        ///   - ~37 % chance: the **correct** current nonce (should succeed).
+        ///   - ~37 % chance: a **stale** nonce below current (should panic).
+        ///   - ~13 % chance: an **arbitrary** wrong nonce (should panic).
+        ///
+        /// For `SkipNonce`: ~13 % chance (always panics).
+        fn transitions(state: &Self::State) -> BoxedStrategy<Self::Transition> {
+            // Weighted channel pool: well-known channels get higher weight
+            // to exercise realistic multi-stream interleaving.
+            let channel = prop_oneof![
+                3 => Just(CHANNEL_ADMIN as u64),
+                3 => Just(CHANNEL_BUSINESS as u64),
+                2 => Just(CHANNEL_MULTISIG as u64),
+                1 => Just(CHANNEL_GOVERNANCE as u64),
+                1 => Just(CHANNEL_PROTOCOL as u64),
+                1 => Just(0u64),
+                1 => Just(255u64),
+                1 => Just(CHANNEL_CUSTOM_START as u64),
+                1 => Just(1000u64),
+                1 => Just(u32::MAX as u64),
+            ];
+
+            // Correct nonce submission: use the exact current nonce.
+            let correct_submit = channel
+                .clone()
+                .prop_flat_map(move |ch| {
+                    let current = state.channels.get(&ch).copied().unwrap_or(0);
+                    Just(NonceCommand::SubmitNonce {
+                        channel_id: ch,
+                        nonce: current,
+                    })
+                });
+
+            // Stale nonce: a value below the current nonce for the channel.
+            // If current = 0, there is no stale value below 0, so generate
+            // an arbitrary wrong value instead.
+            let stale_submit = channel
+                .clone()
+                .prop_flat_map(move |ch| {
+                    let current = state.channels.get(&ch).copied().unwrap_or(0);
+                    if current > 0 {
+                        (0..current)
+                            .prop_map(move |stale| NonceCommand::SubmitNonce {
+                                channel_id: ch,
+                                nonce: stale,
+                            })
+                            .boxed()
+                    } else {
+                        prop_oneof![
+                            Just(1u64),
+                            Just(42u64),
+                            Just(u64::MAX),
+                        ]
+                        .prop_map(move |n| NonceCommand::SubmitNonce {
+                            channel_id: ch,
+                            nonce: n,
+                        })
+                        .boxed()
+                    }
+                });
+
+            // Arbitrary wrong nonce: small values unlikely to match current.
+            let arbitrary_wrong = (channel.clone(), 0u64..5)
+                .prop_map(|(ch, n)| NonceCommand::SubmitNonce {
+                    channel_id: ch,
+                    nonce: n,
+                });
+
+            // SkipNonce: always fails (guaranteed wrong nonce in the real system).
+            let skip = channel
+                .prop_map(|ch| NonceCommand::SkipNonce { channel_id: ch });
+
+            prop_oneof![
+                3 => correct_submit.boxed(),
+                3 => stale_submit.boxed(),
+                1 => arbitrary_wrong.boxed(),
+                1 => skip.boxed(),
+            ]
+            .boxed()
+        }
+
+        /// Apply a transition to the model state.
+        ///
+        /// - `SubmitNonce` with matching nonce → increment counter.
+        /// - `SubmitNonce` with non-matching nonce → state unchanged (panic in real).
+        /// - `SkipNonce` → state unchanged (panic in real).
+        fn apply(mut state: Self::State, transition: &Self::Transition) -> Self::State {
+            match *transition {
+                NonceCommand::SubmitNonce {
+                    channel_id,
+                    nonce,
+                } => {
+                    let current = state.channels.get(&channel_id).copied().unwrap_or(0);
+                    if nonce == current {
+                        // Correct nonce: advance the counter by 1.
+                        // Monotonicity invariant: new == old + 1 > old, strictly.
+                        state.channels.insert(channel_id, current + 1);
+                    }
+                    // Wrong nonce: no state mutation (mirrors contract panic).
+                }
+                NonceCommand::SkipNonce { .. } => {
+                    // Skip always panics in the real contract; model unchanged.
+                }
+            }
+            state
+        }
+
+        /// All transitions are always worth attempting — the model handles
+        /// both valid and invalid nonces gracefully.
+        fn preconditions(_state: &Self::State, _transition: &Self::Transition) -> bool {
+            true
+        }
+    }
+
+    // ── 4. Model-Only Test (Generated State Machine Sequence) ─────────────────
+
+    /// Proves that the reference model itself is internally consistent:
+    /// sequences of arbitrary transitions never violate the model's
+    /// monotonicity constraints.
+    proptest_state_machine! {
+        /// Pure model verification: generates transition sequences up to 30
+        /// steps and checks that `apply` never panics and invariants hold.
+        #[proptest_config(ProptestConfig { cases: 256, .. ProptestConfig::default() })]
+        fn proptest_nonce_model_monotonicity(sequential in 1..30usize, NonceStateMachine);
+    }
+
+    // ── 5. Contract-Interacting Proptest ─────────────────────────────────────
+
+    /// Stateful proptest that drives the **actual contract** with generated
+    /// command sequences, cross-referencing every state mutation against the
+    /// model and asserting the monotonicity invariant on-chain.
+    ///
+    /// For each command in the sequence:
+    /// 1. Compare the provided nonce against the model's current value.
+    /// 2. If matching: expect success, verify stored nonce advances by 1
+    ///    (**on-chain monotonicity: `stored == current + 1 > current`**).
+    /// 3. If mismatching: expect panic (`"nonce mismatch"`), verify stored
+    ///    nonce is **unchanged** (no storage corruption from failed calls).
+    /// 4. After every step, cross-check every touched channel's on-chain
+    ///    nonce against the model for full state consistency.
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 256,
+            .. ProptestConfig::default()
+        })]
+
+        #[test]
+        fn proptest_contract_nonce_monotonicity(
+            // The sequential strategy yields a tuple
+            // `(initial_state, Vec<NonceCommand>)`. We discard the initial
+            // state since we track our own model internally.
+            (_init_state, commands)
+                in NonceStateMachine::sequential_strategy(1..25),
+        ) {
+            // Fresh sandbox per test case — each proptest iteration gets
+            // its own isolated Env and contract instance.
+            let env = Env::default();
+            let contract_id = env.register(ReplayProtectionTestContract, ());
+            let actor = Address::generate(&env);
+
+            // Start the model from empty state (all channels at nonce 0).
+            let mut model = ModelState {
+                channels: BTreeMap::new(),
+            };
+
+            for cmd in &commands {
+                match *cmd {
+                    NonceCommand::SubmitNonce {
+                        channel_id,
+                        nonce,
+                    } => {
+                        let channel_u32 = channel_id as u32;
+                        let current =
+                            model.channels.get(&channel_id).copied().unwrap_or(0);
+
+                        // ── Pre-invariant: model must match on-chain state ──
+                        env.as_contract(&contract_id, || {
+                            let stored =
+                                get_nonce(&env, &actor, channel_u32);
+                            assert_eq!(
+                                stored, current,
+                                "Pre-condition mismatch: contract nonce {} != model nonce {} \
+                                 for channel {}",
+                                stored, current, channel_id
+                            );
+                        });
+
+                        if nonce == current {
+                            // ── CORRECT NONCE — must succeed ──
+                            env.as_contract(&contract_id, || {
+                                verify_and_increment_nonce(
+                                    &env,
+                                    &actor,
+                                    channel_u32,
+                                    nonce,
+                                );
+                            });
+
+                            // Advance model: monotonicity dictates new = old + 1.
+                            let new_nonce = current + 1;
+                            model.channels.insert(channel_id, new_nonce);
+
+                            // ── STRICT MONOTONICITY ASSERTION ──
+                            // new_nonce > old_nonce is the core invariant.
+                            assert!(
+                                new_nonce > current,
+                                "MONOTONICITY VIOLATION: channel {} new_nonce {} \
+                                 is not > old_nonce {}",
+                                channel_id, new_nonce, current
+                            );
+
+                            // ── Post-invariant: contract must match model ──
+                            env.as_contract(&contract_id, || {
+                                let stored =
+                                    get_nonce(&env, &actor, channel_u32);
+                                assert_eq!(
+                                    stored, new_nonce,
+                                    "Post-success mismatch: contract nonce {} != \
+                                     model nonce {} for channel {} after successful \
+                                     SubmitNonce(nce={})",
+                                    stored, new_nonce, channel_id, nonce
+                                );
+                            });
+                        } else {
+                            // ── WRONG NONCE — must panic ──
+                            let result = std::panic::catch_unwind(
+                                std::panic::AssertUnwindSafe(|| {
+                                    env.as_contract(&contract_id, || {
+                                        verify_and_increment_nonce(
+                                            &env,
+                                            &actor,
+                                            channel_u32,
+                                            nonce,
+                                        );
+                                    });
+                                }),
+                            );
+                            assert!(
+                                result.is_err(),
+                                "SubmitNonce(ch={}, nce={}) with current={} should \
+                                 have panicked with 'nonce mismatch' but succeeded",
+                                channel_id, nonce, current
+                            );
+
+                            // ── INVARIANT: no state mutation after failed call ──
+                            env.as_contract(&contract_id, || {
+                                let stored =
+                                    get_nonce(&env, &actor, channel_u32);
+                                assert_eq!(
+                                    stored, current,
+                                    "State changed after failed SubmitNonce(ch={}, \
+                                     nce={}): expected {}, got {}",
+                                    channel_id, nonce, current, stored
+                                );
+                            });
+                        }
+                    }
+
+                    NonceCommand::SkipNonce { channel_id } => {
+                        let channel_u32 = channel_id as u32;
+                        let current =
+                            model.channels.get(&channel_id).copied().unwrap_or(0);
+
+                        // ── Pre-invariant ──
+                        env.as_contract(&contract_id, || {
+                            let stored =
+                                get_nonce(&env, &actor, channel_u32);
+                            assert_eq!(
+                                stored, current,
+                                "Pre-condition mismatch before SkipNonce: \
+                                 contract nonce {} != model {} for channel {}",
+                                stored, current, channel_id
+                            );
+                        });
+
+                        // Compute a guaranteed-wrong nonce.
+                        // If current = 0, use 1; otherwise use current - 1.
+                        let wrong_nonce = if current == 0 {
+                            1u64
+                        } else {
+                            current.wrapping_sub(1)
+                        };
+
+                        let result = std::panic::catch_unwind(
+                            std::panic::AssertUnwindSafe(|| {
+                                env.as_contract(&contract_id, || {
+                                    verify_and_increment_nonce(
+                                        &env,
+                                        &actor,
+                                        channel_u32,
+                                        wrong_nonce,
+                                    );
+                                });
+                            }),
+                        );
+                        assert!(
+                            result.is_err(),
+                            "SkipNonce(ch={}) with wrong_nonce={} (current={}) \
+                             should have panicked but succeeded",
+                            channel_id, wrong_nonce, current
+                        );
+
+                        // ── INVARIANT: no state mutation after failed call ──
+                        env.as_contract(&contract_id, || {
+                            let stored =
+                                get_nonce(&env, &actor, channel_u32);
+                            assert_eq!(
+                                stored, current,
+                                "State changed after failed SkipNonce(ch={}): \
+                                 expected {}, got {}",
+                                channel_id, current, stored
+                            );
+                        });
+                    }
+                }
+            }
+
+            // ── FINAL STATE CONSISTENCY ──
+            // After the full command sequence, verify every channel in the
+            // model matches the contract exactly.
+            for (&channel_id, &expected_nonce) in &model.channels {
+                let channel_u32 = channel_id as u32;
+                env.as_contract(&contract_id, || {
+                    let stored = get_nonce(&env, &actor, channel_u32);
+                    assert_eq!(
+                        stored,
+                        expected_nonce,
+                        "Final state mismatch for channel {}: \
+                         contract nonce {} != model nonce {}",
+                        channel_id,
+                        stored,
+                        expected_nonce
+                    );
+                });
+            }
+        }
+    }
 }

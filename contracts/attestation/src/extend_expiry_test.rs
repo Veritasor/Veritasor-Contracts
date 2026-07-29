@@ -370,3 +370,99 @@ proptest! {
         }
     }
 }
+
+/// Property-based fuzz test for extend_expiry with arbitrary i64 delta values.
+/// Property: Either the new expiry strictly exceeds the previous expiry (success),
+/// or the call errors without any state mutation (failure).
+/// Covers negative deltas, zero, positive deltas, and near-i64::MAX values with overflow handling.
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(200))]
+
+    #[test]
+    fn prop_extend_expiry_arbitrary_deltas(
+        timestamp in 0..=u64::MAX,
+        old_expiry in 0..=u64::MAX,
+        delta in i64::MIN..=i64::MAX,
+    ) {
+        let env = Env::default();
+        let client = AttestationContractClient::new(&env, &env.register(crate::AttestationContract, ()));
+        client.initialize(&Address::generate(&env), &0u64);
+
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "fuzz-delta-period");
+        let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
+
+        env.ledger().set_timestamp(0);
+        env.mock_all_auths();
+
+        // Inject attestation directly into storage to bypass submission validations
+        env.as_contract(&client.address, || {
+            let key = crate::dynamic_fees::DataKey::Attestation(business.clone(), period.clone());
+            let data: crate::AttestationData = (
+                merkle_root.clone(),
+                timestamp,
+                1u32,
+                0i128,
+                None,
+                Some(old_expiry),
+            );
+            env.storage().instance().set(&key, &data);
+        });
+
+        // Capture state before the call for mutation detection
+        let state_before = env.as_contract(&client.address, || {
+            let key = crate::dynamic_fees::DataKey::Attestation(business.clone(), period.clone());
+            env.storage().instance().get::<_, crate::AttestationData>(&key)
+        });
+
+        // Compute new_expiry from old_expiry + delta with overflow handling
+        let new_expiry: u64 = if delta >= 0 {
+            old_expiry.saturating_add(delta as u64)
+        } else {
+            old_expiry.saturating_sub((-delta) as u64)
+        };
+
+        // Try extending the expiry
+        let result = client.try_extend_expiry(&business, &period, &new_expiry);
+
+        // Capture state after the call
+        let state_after = env.as_contract(&client.address, || {
+            let key = crate::dynamic_fees::DataKey::Attestation(business.clone(), period.clone());
+            env.storage().instance().get::<_, crate::AttestationData>(&key)
+        });
+
+        let is_valid = new_expiry > old_expiry && new_expiry > timestamp;
+
+        if is_valid {
+            // Valid extension must succeed
+            prop_assert!(result.is_ok(), "Expected success for valid extension: timestamp={}, old_expiry={}, delta={}, new_expiry={}", timestamp, old_expiry, delta, new_expiry);
+
+            // Assert correct storage update
+            let (_, _, _, _, _, stored_expiry) = client.get_attestation(&business, &period).unwrap();
+            prop_assert_eq!(stored_expiry, Some(new_expiry), "Storage did not reflect new_expiry");
+
+            // Assert event emission
+            let events = env.events().all();
+            let mut event_found = false;
+            for event in events.iter() {
+                let topic0 = event.1.get(0).unwrap();
+                let topic_sym: Symbol = topic0.clone().try_into_val(&env).unwrap();
+                if topic_sym == crate::events::TOPIC_ATTESTATION_EXPIRY_EXTENDED {
+                    let payload: AttestationExpiryExtendedEvent = event.2.clone().try_into_val(&env).unwrap();
+                    if payload.business == business && payload.period == period {
+                        prop_assert_eq!(payload.old_expiry, Some(old_expiry));
+                        prop_assert_eq!(payload.new_expiry, new_expiry);
+                        event_found = true;
+                    }
+                }
+            }
+            prop_assert!(event_found, "AttestationExpiryExtendedEvent not emitted");
+        } else {
+            // Invalid extension must fail
+            prop_assert!(result.is_err(), "Expected error for invalid extension: timestamp={}, old_expiry={}, delta={}, new_expiry={}", timestamp, old_expiry, delta, new_expiry);
+
+            // Assert state unchanged (no mutation on failure)
+            prop_assert_eq!(state_before, state_after, "State mutated on failed extension");
+        }
+    }
+}

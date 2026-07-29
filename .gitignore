@@ -9,3 +9,4 @@
 
 # Test snapshots
 **/test_snapshots/
+.keys/private.pem

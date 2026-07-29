@@ -1,0 +1,25 @@
+[package]
+name = "schema-hash"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Computes a canonical SHA-256 hash of every #[contracttype] struct/enum across the Veritasor contracts source tree, to detect accidental storage-layout drift between upgrade candidates."
+
+# Standalone tool; deliberately not a member of the contracts workspace so
+# its dependency graph never touches soroban-sdk (this parses source text
+# rather than linking the contracts).
+[workspace]
+
+[[bin]]
+name = "schema-hash"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = { version = "0.10", features = [] }
+hex = "0.4"
+walkdir = "2"
+
+[dev-dependencies]
+tempfile = "3"

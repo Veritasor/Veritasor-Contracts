@@ -1,9 +1,12 @@
 #![no_std]
+// Tests rely on `std` (e.g. `vec!`, `.collect()`); pull it in only when
+// building the test harness so the contract crate remains `no_std`.
+#[cfg(test)]
+extern crate std;
+
 //! # Attestation Registry Contract
 //!
 //! Provides a stable registry pattern for upgradeable attestation implementations.
-//! This contract separates contract address discovery from contract implementation,
-//! enabling controlled upgrades while maintaining a stable interface.
 //!
 //! ## Architecture
 //!
@@ -48,6 +51,8 @@ use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, Env, Str
 
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod registry_batch_consistency_test;
 
 // ════════════════════════════════════════════════════════════════════
 //  Storage types

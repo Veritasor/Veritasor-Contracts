@@ -1,5 +1,6 @@
-//! Tests for MAX_TIER enforcement in set_business_tier and set_tier_discount.
+//! Tests for tier bounds enforcement in set_business_tier and set_tier_discount.
 //! Issue #318: validate tier and discount bounds at write time.
+//! Issue #498: regression test for zero discount at MIN_TIER.
 
 extern crate std;
 
@@ -162,4 +163,50 @@ fn test_set_tier_discount_overwritten() {
     // Overwriting the discount works
     t.client.set_tier_discount(&1, &5_000);
     assert_eq!(dynamic_fees::get_tier_discount(&t.env, 1), 5_000);
+}
+
+// ── MIN_TIER zero-discount regression (#498) ───────────────────────
+
+/// At MIN_TIER the discount must be exactly zero.
+///
+/// This is a regression guard: a future refactor must not silently apply a
+/// nonzero discount to the base tier.  The test combines the tier with
+/// zero volume to isolate the tier factor.
+#[test]
+fn test_tier_min_zero_discount() {
+    let t = setup();
+    let base_fee: i128 = 1_000_000;
+
+    // 1. Unconfigured MIN_TIER discount must be 0 bps.
+    let discount = dynamic_fees::get_tier_discount(&t.env, dynamic_fees::MIN_TIER);
+    assert_eq!(
+        discount, 0,
+        "MIN_TIER (tier {}) discount must be 0, got {}",
+        dynamic_fees::MIN_TIER, discount
+    );
+
+    // 2. Explicitly setting MIN_TIER discount to 0 persists correctly.
+    t.client.set_tier_discount(&dynamic_fees::MIN_TIER, &0);
+    let discount = dynamic_fees::get_tier_discount(&t.env, dynamic_fees::MIN_TIER);
+    assert_eq!(
+        discount, 0,
+        "MIN_TIER (tier {}) discount must be 0 after explicit set, got {}",
+        dynamic_fees::MIN_TIER, discount
+    );
+
+    // 3. compute_fee at MIN_TIER with zero volume discount must equal base_fee.
+    let fee = dynamic_fees::compute_fee(base_fee, 0, 0);
+    assert_eq!(
+        fee, base_fee,
+        "compute_fee(base_fee={}, tier_discount=0, vol_discount=0) must equal base_fee, got {}",
+        base_fee, fee
+    );
+
+    // 4. Combined edge: zero tier discount + zero volume discount with zero base.
+    let fee_zero = dynamic_fees::compute_fee(0, 0, 0);
+    assert_eq!(
+        fee_zero, 0,
+        "compute_fee(base_fee=0, tier_discount=0, vol_discount=0) must be 0, got {}",
+        fee_zero
+    );
 }
