@@ -138,6 +138,8 @@ pub const TOPIC_KEY_ROTATION_CONFIRMED: Symbol = symbol_short!("kr_conf");
 pub const TOPIC_KEY_ROTATION_CANCELLED: Symbol = symbol_short!("kr_canc");
 /// Topic: emergency key rotation executed
 pub const TOPIC_KEY_ROTATION_EMERGENCY: Symbol = symbol_short!("kr_emer");
+/// Topic: analytics rotation completed
+pub const TOPIC_ANALYTICS_ROTATION_COMPLETED: Symbol = symbol_short!("anly_cm");
 /// Topic: emergency pause triggered (dual-key bypass)
 pub const TOPIC_EMERGENCY_PAUSE_TRIGGERED: Symbol = symbol_short!("emr_pse");
 /// Topic: business registered
@@ -1546,6 +1548,29 @@ pub fn emit_key_rotation_cancelled(
         proposed_new_admin: proposed_new_admin.clone(),
     };
     env.events().publish((TOPIC_KEY_ROTATION_CANCELLED,), event);
+}
+
+/// Emit an `AnalyticsRotationCompleted` event.
+///
+/// # Arguments
+///
+/// * `env` - Soroban execution environment.
+/// * `old_analytics` - Address being rotated out of the certified analytics set.
+/// * `new_analytics` - Address being rotated into the certified analytics set.
+///
+/// # Events
+///
+/// Publishes `(anly_cm,)` → `AnalyticsRotationCompletedEvent`.
+pub fn emit_analytics_rotation_completed(
+    env: &Env,
+    old_analytics: &Address,
+    new_analytics: &Address,
+) {
+    let event = AnalyticsRotationCompletedEvent {
+        old_analytics: old_analytics.clone(),
+        new_analytics: new_analytics.clone(),
+    };
+    env.events().publish((TOPIC_ANALYTICS_ROTATION_COMPLETED,), event);
 }
 
 /// Emit a `KeyRotationEmergency` event.

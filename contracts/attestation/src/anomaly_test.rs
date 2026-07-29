@@ -232,3 +232,65 @@ fn set_anomaly_independent_per_period() {
     assert_eq!(client.get_anomaly(&business, &period_a), Some(20u32));
     assert_eq!(client.get_anomaly(&business, &period_b), Some(80u32));
 }
+
+#[test]
+fn test_analytics_rotation_preserves_old_authorizer_until_commit() {
+    let env = Env::default();
+    let (admin, client) = setup(&env);
+    let old_analytics = Address::generate(&env);
+    let new_analytics = Address::generate(&env);
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "202601");
+
+    client.add_authorized_analytics(&admin, &old_analytics);
+    client.propose_analytics_rotation(&admin, &old_analytics, &new_analytics);
+
+    // Old analytics remains authorized until the commit occurs.
+    client.set_anomaly(&old_analytics, &business, &period, &25u32);
+    assert_eq!(client.get_anomaly(&business, &period), Some(25u32));
+
+    // New analytics is not authorized until commit.
+    let unauthorized_result = std::panic::catch_unwind(|| {
+        client.set_anomaly(&new_analytics, &business, &period, &50u32);
+    });
+    assert!(unauthorized_result.is_err());
+}
+
+#[test]
+fn test_analytics_rotation_commit_replaces_authorized_address() {
+    let env = Env::default();
+    let (admin, client) = setup(&env);
+    let old_analytics = Address::generate(&env);
+    let new_analytics = Address::generate(&env);
+
+    client.add_authorized_analytics(&admin, &old_analytics);
+    client.propose_analytics_rotation(&admin, &old_analytics, &new_analytics);
+
+    assert!(client.has_pending_analytics_rotation());
+    assert!(client.is_authorized_analytics(&old_analytics));
+    assert!(!client.is_authorized_analytics(&new_analytics));
+
+    client.commit_analytics_rotation(&admin, &new_analytics);
+
+    assert!(!client.has_pending_analytics_rotation());
+    assert!(!client.is_authorized_analytics(&old_analytics));
+    assert!(client.is_authorized_analytics(&new_analytics));
+}
+
+#[test]
+fn test_cancel_analytics_rotation_preserves_previous_authorization() {
+    let env = Env::default();
+    let (admin, client) = setup(&env);
+    let old_analytics = Address::generate(&env);
+    let new_analytics = Address::generate(&env);
+
+    client.add_authorized_analytics(&admin, &old_analytics);
+    client.propose_analytics_rotation(&admin, &old_analytics, &new_analytics);
+    assert!(client.has_pending_analytics_rotation());
+
+    client.cancel_analytics_rotation(&admin);
+
+    assert!(!client.has_pending_analytics_rotation());
+    assert!(client.is_authorized_analytics(&old_analytics));
+    assert!(!client.is_authorized_analytics(&new_analytics));
+}

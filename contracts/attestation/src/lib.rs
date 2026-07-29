@@ -22,6 +22,19 @@ pub const NONCE_CHANNEL_PERMIT: u32 = 2;
 const ANOMALY_KEY_TAG: (u32,) = (3,);
 const AUTHORIZED_KEY_TAG: (u32,) = (4,);
 
+#[contracttype]
+#[derive(Clone)]
+pub enum AnalyticsRotationKey {
+    PendingRotation,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AnalyticsRotationProposal {
+    pub old_analytics: Address,
+    pub new_analytics: Address,
+}
+
 /// TTL threshold: if the instance's TTL is below this threshold, we bump it
 pub const INSTANCE_TTL_THRESHOLD: u32 = 100000;
 /// TTL bump amount: how much to bump the instance's TTL
@@ -64,12 +77,12 @@ pub use dynamic_fees::{add_relayer_gas, compute_fee, DataKey, FeeConfig, get_rel
 pub use dynamic_fees::{RevokeProposal, DEFAULT_REVOKE_GRACE_SECONDS};
 pub use dynamic_fees::{PendingStakingContract};
 pub use events::{
-    AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
+    AnalyticsRotationCompletedEvent, AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
     AttestationSubmittedEvent, PermitCancelledEvent, ProofHashUpdatedEvent,
     RelayerGasReportedEvent,
     RevocationCancelledEvent, RevocationCommittedEvent, RevocationProposedEvent,
     StakingContractProposedEvent, StakingContractCommittedEvent, StakingContractCancelledEvent,
-    TOPIC_STAKING_CONTRACT_PROPOSED, TOPIC_STAKING_CONTRACT_COMMITTED, TOPIC_STAKING_CONTRACT_CANCELLED,
+    TOPIC_ANALYTICS_ROTATION_COMPLETED, TOPIC_STAKING_CONTRACT_PROPOSED, TOPIC_STAKING_CONTRACT_COMMITTED, TOPIC_STAKING_CONTRACT_CANCELLED,
 };
 pub use fees::{collect_flat_fee, CollectorRotationProposal, FlatFeeConfig};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
@@ -1954,8 +1967,15 @@ impl AttestationContract {
     }
 
     pub fn set_anomaly(env: Env, caller: Address, business: Address, period: String, score: u32) {
-        access_control::require_admin(&env, &caller);
+        caller.require_auth();
         assert!(score <= ANOMALY_SCORE_MAX, "score too high");
+        assert!(
+            access_control::has_role(&env, &caller, ROLE_ADMIN)
+                || env.storage()
+                    .instance()
+                    .has(&(AUTHORIZED_KEY_TAG, caller.clone())),
+            "caller is not authorized analytics or admin"
+        );
         let key = (ANOMALY_KEY_TAG, business.clone(), period.clone());
         env.storage().instance().set(&key, &score);
     }
@@ -1963,6 +1983,111 @@ impl AttestationContract {
     pub fn get_anomaly(env: Env, business: Address, period: String) -> Option<u32> {
         let key = (ANOMALY_KEY_TAG, business, period);
         env.storage().instance().get(&key)
+    }
+
+    pub fn is_authorized_analytics(env: Env, analytics: Address) -> bool {
+        let key = (AUTHORIZED_KEY_TAG, analytics);
+        env.storage().instance().has(&key)
+    }
+
+    pub fn has_pending_analytics_rotation(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .has(&AnalyticsRotationKey::PendingRotation)
+    }
+
+    pub fn get_pending_analytics_rotation(
+        env: Env,
+    ) -> Option<AnalyticsRotationProposal> {
+        env.storage()
+            .instance()
+            .get(&AnalyticsRotationKey::PendingRotation)
+    }
+
+    pub fn propose_analytics_rotation(
+        env: Env,
+        caller: Address,
+        old_analytics: Address,
+        new_analytics: Address,
+    ) {
+        access_control::require_admin(&env, &caller);
+        assert!(old_analytics != new_analytics, "new analytics must differ");
+        assert!(
+            env.storage()
+                .instance()
+                .has(&(AUTHORIZED_KEY_TAG, old_analytics.clone())),
+            "old analytics is not authorized"
+        );
+        assert!(
+            !env.storage()
+                .instance()
+                .has(&(AUTHORIZED_KEY_TAG, new_analytics.clone())),
+            "new analytics is already authorized"
+        );
+        assert!(
+            !env.storage()
+                .instance()
+                .has(&AnalyticsRotationKey::PendingRotation),
+            "analytics rotation already pending"
+        );
+
+        let proposal = AnalyticsRotationProposal {
+            old_analytics: old_analytics.clone(),
+            new_analytics: new_analytics.clone(),
+        };
+        env.storage()
+            .instance()
+            .set(&AnalyticsRotationKey::PendingRotation, &proposal);
+    }
+
+    pub fn commit_analytics_rotation(env: Env, caller: Address, new_analytics: Address) {
+        access_control::require_admin(&env, &caller);
+        let proposal: AnalyticsRotationProposal = env
+            .storage()
+            .instance()
+            .get(&AnalyticsRotationKey::PendingRotation)
+            .expect("no pending analytics rotation");
+        assert!(
+            proposal.new_analytics == new_analytics,
+            "pending analytics rotation does not match"
+        );
+        assert!(
+            env.storage()
+                .instance()
+                .has(&(AUTHORIZED_KEY_TAG, proposal.old_analytics.clone())),
+            "old analytics is no longer authorized"
+        );
+
+        env.storage().instance().remove(&(
+            AUTHORIZED_KEY_TAG,
+            proposal.old_analytics.clone(),
+        ));
+        env.storage()
+            .instance()
+            .set(&(
+                AUTHORIZED_KEY_TAG,
+                proposal.new_analytics.clone(),
+            ),
+            &true);
+        env.storage()
+            .instance()
+            .remove(&AnalyticsRotationKey::PendingRotation);
+        events::emit_analytics_rotation_completed(
+            &env,
+            &proposal.old_analytics,
+            &proposal.new_analytics,
+        );
+    }
+
+    pub fn cancel_analytics_rotation(env: Env, caller: Address) {
+        access_control::require_admin(&env, &caller);
+        env.storage()
+            .instance()
+            .get::<_, AnalyticsRotationProposal>(&AnalyticsRotationKey::PendingRotation)
+            .expect("no pending analytics rotation");
+        env.storage()
+            .instance()
+            .remove(&AnalyticsRotationKey::PendingRotation);
     }
 
     pub fn revoke_multi_period_attestation(env: Env, business: Address, merkle_root: BytesN<32>) {
