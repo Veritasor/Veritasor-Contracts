@@ -16,6 +16,7 @@ use veritasor_common::replay_protection;
 // Nonce channels
 pub const NONCE_CHANNEL_ADMIN: u32 = 0;
 pub const NONCE_CHANNEL_BUSINESS: u32 = 1;
+pub const NONCE_CHANNEL_PERMIT: u32 = 2;
 
 // Key Tags
 const ANOMALY_KEY_TAG: (u32,) = (3,);
@@ -63,7 +64,7 @@ pub use dynamic_fees::{add_relayer_gas, compute_fee, DataKey, FeeConfig, get_rel
 pub use dynamic_fees::{RevokeProposal, DEFAULT_REVOKE_GRACE_SECONDS};
 pub use events::{
     AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
-    AttestationSubmittedEvent, ProofHashUpdatedEvent,
+    AttestationSubmittedEvent, PermitCancelledEvent, ProofHashUpdatedEvent,
     RelayerGasReportedEvent,
     RevocationCancelledEvent, RevocationCommittedEvent, RevocationProposedEvent,
 };
@@ -103,6 +104,19 @@ pub struct BatchAttestationItem {
     pub version: u32,
     pub proof_hash: Option<BytesN<32>>,
     pub expiry_timestamp: Option<u64>,
+}
+
+/// Off-chain signed payload that authorises cancelling one outstanding
+/// delegated-submission permit by burning its nonce.
+///
+/// The business signs this struct (by including it in a Soroban function call
+/// that authenticates via `require_auth`) to invalidate any pending permit
+/// created with the same nonce value on `NONCE_CHANNEL_PERMIT`.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CancelPermit {
+    pub business: Address,
+    pub nonce: u64,
 }
 
 /// Maximum number of items allowed in a single batch submission.
@@ -518,6 +532,31 @@ impl AttestationContract {
 
     pub fn get_replay_nonce(env: Env, actor: Address, channel: u32) -> u64 {
         replay_protection::get_nonce(&env, &actor, channel)
+    }
+
+    /// Revoke an outstanding delegated-submission permit by burning its nonce.
+    ///
+    /// The business authorises this cancellation by signing a Soroban
+    /// transaction that calls this function with `cancel_permit`.  After
+    /// the nonce is consumed, any pre-signed delegated-submission permit
+    /// using the same nonce is permanently invalid.
+    ///
+    /// # Events
+    ///
+    /// Publishes `(perm_canc, business)` → `PermitCancelledEvent`.
+    ///
+    /// # Panics
+    /// - `cancel_permit.business` auth is missing or invalid
+    /// - Nonce mismatch or replay (via `verify_and_increment_nonce`)
+    pub fn cancel_delegated_permit(env: Env, cancel_permit: CancelPermit) {
+        cancel_permit.business.require_auth();
+        replay_protection::verify_and_increment_nonce(
+            &env,
+            &cancel_permit.business,
+            NONCE_CHANNEL_PERMIT,
+            cancel_permit.nonce,
+        );
+        events::emit_permit_cancelled(&env, &cancel_permit.business, cancel_permit.nonce);
     }
 
     pub fn submit_attestation(
@@ -2866,6 +2905,8 @@ mod multisig_e2e_test;
 mod multisig_test;
 #[cfg(test)]
 mod pause_test;
+#[cfg(test)]
+mod permit_test;
 #[cfg(test)]
 mod timelock_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
