@@ -52,6 +52,7 @@
 //! - Admin removals are separated by `ADMIN_REMOVAL_COOLDOWN_SECS`.
 
 use soroban_sdk::{contracttype, Address, Env, Vec};
+
 use crate::dispute;
 
 /// Role identifiers as bit flags for efficient storage
