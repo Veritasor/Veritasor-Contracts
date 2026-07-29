@@ -53,6 +53,12 @@ use soroban_sdk::{contracttype, token, Address, Env, Symbol, Val, Vec};
 //  Tier bounds
 // ════════════════════════════════════════════════════════════════════
 
+/// Minimum supported business tier index (inclusive).
+///
+/// Tier 0 is the default (Standard) tier. At this tier the discount must be
+/// exactly zero so that businesses pay the full base fee.
+pub const MIN_TIER: u32 = 0;
+
 /// Maximum supported business tier index (inclusive).
 ///
 /// Tiers are 0-indexed: 0 = Standard, 1 = Pro, 2 = Enterprise, …, MAX_TIER = top tier.
@@ -125,6 +131,11 @@ pub enum DataKey {
     SubmissionTimestamps(Address),
     IsPaused,
 
+    // ── Relayer gas metering ───────────────────────────────────
+    /// Per-relayer gas accumulation counter (CPU instructions).
+    /// Keyed by relayer address.
+    RelayerGasAccumulator(Address),
+
     // ── Time-locked revocation (grace-window appeal path) ──────
     /// Pending revocation proposal keyed by (business, period).
     ///
@@ -138,6 +149,14 @@ pub enum DataKey {
     /// the revocation.  Defaults to [`DEFAULT_REVOKE_GRACE_SECONDS`] when
     /// not explicitly configured.
     RevokeGraceSeconds,
+
+    // ── Epoch / backfill checkpoint tracking ────────────────────
+    /// Per-period submission count within the current epoch.
+    EpochSubmissions(soroban_sdk::String),
+    /// Per-period accumulated fees within the current epoch.
+    EpochFees(soroban_sdk::String),
+    /// Global running submission count for backfill checkpointing.
+    BackfillSubmissionCount,
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -617,4 +636,27 @@ pub fn get_archive_pointer(
     env.storage()
         .instance()
         .get(&DataKey::ArchivePointer(business.clone(), period.clone()))
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Relayer Gas Metering
+// ════════════════════════════════════════════════════════════════════
+
+/// Get the accumulated gas (CPU instructions) for a relayer.
+/// Returns 0 if the relayer has no prior activity.
+pub fn get_relayer_gas(env: &Env, relayer: &Address) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::RelayerGasAccumulator(relayer.clone()))
+        .unwrap_or(0)
+}
+
+/// Add gas (CPU instructions) to a relayer's accumulator.
+/// This is called after a delegated submission to attribute the gas cost to the relayer.
+pub fn add_relayer_gas(env: &Env, relayer: &Address, gas: u64) {
+    let current = get_relayer_gas(env, relayer);
+    let new_total = current.saturating_add(gas);
+    env.storage()
+        .instance()
+        .set(&DataKey::RelayerGasAccumulator(relayer.clone()), &new_total);
 }
