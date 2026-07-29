@@ -59,11 +59,12 @@ pub use access_control::{ROLE_ADMIN, ROLE_ATTESTOR, ROLE_BUSINESS, ROLE_OPERATOR
 pub use dispute::{
     Dispute, DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType, OptionalResolution,
 };
-pub use dynamic_fees::{compute_fee, DataKey, FeeConfig};
+pub use dynamic_fees::{add_relayer_gas, compute_fee, DataKey, FeeConfig, get_relayer_gas};
 pub use dynamic_fees::{RevokeProposal, DEFAULT_REVOKE_GRACE_SECONDS};
 pub use events::{
     AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
-    AttestationSubmittedEvent, BackfillCheckpointEvent, ProofHashUpdatedEvent,
+    AttestationSubmittedEvent, ProofHashUpdatedEvent,
+    RelayerGasReportedEvent,
     RevocationCancelledEvent, RevocationCommittedEvent, RevocationProposedEvent,
 };
 pub use fees::{collect_flat_fee, CollectorRotationProposal, FlatFeeConfig};
@@ -148,20 +149,7 @@ fn compute_backfill_commitment(
 #[soroban_sdk::contractclient(name = "AttestorStakingClient")]
 pub trait AttestorStakingContractTrait {
     fn is_eligible(env: Env, attestor: Address) -> bool;
-    fn slash(env: Env, attestor: Address, amount: i128, dispute_id: u64) -> u32;
-}
-
-#[soroban_sdk::contractclient(name = "AuditLogClient")]
-pub trait AuditLogContractTrait {
-    fn append(
-        env: Env,
-        nonce: u64,
-        actor: Address,
-        source_contract: Address,
-        action: String,
-        payload: String,
-    ) -> u64;
-    fn get_replay_nonce(env: Env, actor: Address, channel: u32) -> u64;
+    fn slash(env: Env, attestor: Address, amount: i128, dispute_id: u64);
 }
 
 #[contract]
@@ -547,6 +535,7 @@ impl AttestationContract {
         Self::execute_submission(
             &env,
             &business,
+            None,
             &business,
             &period,
             &merkle_root,
@@ -580,6 +569,7 @@ impl AttestationContract {
         Self::execute_submission(
             &env,
             &attestor,
+            Some(&attestor),
             &business,
             &period,
             &merkle_root,
@@ -641,6 +631,7 @@ impl AttestationContract {
     fn execute_submission(
         env: &Env,
         payer: &Address,
+        attestor: Option<&Address>,
         business: &Address,
         period: &String,
         merkle_root: &BytesN<32>,
@@ -649,6 +640,15 @@ impl AttestationContract {
         proof_hash: &Option<BytesN<32>>,
         expiry_timestamp: Option<u64>,
     ) {
+        // Capture budget before execution for delegated submissions (relayer gas metering)
+        let is_delegated = payer != business;
+        let (cpu_before, mem_before) = if is_delegated {
+            let budget = env.budget();
+            (budget.cpu_instruction_cost(), budget.memory_bytes_cost())
+        } else {
+            (0, 0)
+        };
+
         access_control::require_not_paused(env);
 
         if registry::get_status(env, business) == Some(BusinessStatus::Suspended) {
@@ -666,6 +666,12 @@ impl AttestationContract {
         }
         Self::validate_expiry(env, timestamp, expiry_timestamp);
         Self::validate_proof_hash(proof_hash);
+
+        // Store attestor if present
+        if let Some(attestor) = attestor {
+            let attestor_key = DataKey::Attestor(business.clone(), period.clone());
+            env.storage().instance().set(&attestor_key, attestor);
+        }
 
         let dynamic_fee = dynamic_fees::collect_fee_from(env, payer, business);
         let flat_fee = fees::collect_flat_fee(env, payer);
@@ -717,6 +723,33 @@ impl AttestationContract {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+
+        // Track relayer gas for delegated submissions
+        if is_delegated {
+            let budget = env.budget();
+            let cpu_after = budget.cpu_instruction_cost();
+            let mem_after = budget.memory_bytes_cost();
+            let cpu_delta = cpu_after.saturating_sub(cpu_before);
+            let mem_delta = mem_after.saturating_sub(mem_before);
+
+            // Add to relayer's accumulator
+            dynamic_fees::add_relayer_gas(env, payer, cpu_delta);
+
+            // Get total accumulated gas for the relayer
+            let total_cpu = dynamic_fees::get_relayer_gas(env, payer);
+            let total_mem = mem_delta; // Note: we only track CPU in storage, mem is per-transaction
+
+            events::emit_relayer_gas_reported(
+                env,
+                payer,
+                business,
+                period,
+                cpu_delta,
+                mem_delta,
+                total_cpu,
+                total_mem,
+            );
+        }
     }
 
     fn execute_batch_submission(
@@ -725,6 +758,16 @@ impl AttestationContract {
         items: &Vec<BatchAttestationItem>,
         require_business_auth: bool,
     ) {
+        // Capture budget before execution for delegated submissions (relayer gas metering)
+        let is_delegated = payer.is_some();
+        let (cpu_before, mem_before) = if is_delegated {
+            let budget = env.budget();
+            (budget.cpu_instruction_cost(), budget.memory_bytes_cost())
+        } else {
+            (0, 0)
+        };
+        let relayer = payer.cloned(); // Store the relayer address if delegated
+
         access_control::require_not_paused(env);
         if items.is_empty() {
             panic!("batch cannot be empty");
@@ -773,7 +816,12 @@ impl AttestationContract {
 
             dynamic_fees::increment_business_count(env, &item.business);
 
-            let _key = DataKey::Attestation(item.business.clone(), item.period.clone());
+            // Store attestor if payer is an attestor
+            if let Some(p) = payer {
+                let attestor_key = DataKey::Attestor(item.business.clone(), item.period.clone());
+                env.storage().instance().set(&attestor_key, p);
+            }
+
             let data: AttestationData = (
                 item.merkle_root.clone(),
                 item.timestamp,
@@ -822,6 +870,38 @@ impl AttestationContract {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+
+        // Track relayer gas for delegated submissions
+        if is_delegated {
+            let budget = env.budget();
+            let cpu_after = budget.cpu_instruction_cost();
+            let mem_after = budget.memory_bytes_cost();
+            let cpu_delta = cpu_after.saturating_sub(cpu_before);
+            let mem_delta = mem_after.saturating_sub(mem_before);
+
+            if let Some(ref relayer_addr) = relayer {
+                // Add to relayer's accumulator
+                dynamic_fees::add_relayer_gas(env, relayer_addr, cpu_delta);
+
+                // Get total accumulated gas for the relayer
+                let total_cpu = dynamic_fees::get_relayer_gas(env, relayer_addr);
+                let total_mem = mem_delta; // Note: we only track CPU in storage, mem is per-transaction
+
+                // For batch submissions, we use the first item's period and business for the event
+                // (as a representative; actual per-item details are in attestation_submitted events)
+                let first_item = items.get(0).unwrap();
+                events::emit_relayer_gas_reported(
+                    env,
+                    relayer_addr,
+                    &first_item.business,
+                    &first_item.period,
+                    cpu_delta,
+                    mem_delta,
+                    total_cpu,
+                    total_mem,
+                );
+            }
+        }
     }
 
     pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
@@ -1858,8 +1938,7 @@ impl AttestationContract {
         assert!(caller == pending.new_admin, "not new admin");
         veritasor_common::key_rotation::confirm_rotation(&env, &pending.new_admin);
         dynamic_fees::set_admin(&env, &pending.new_admin);
-        access_control::revoke_role(&env, &old_admin, ROLE_ADMIN, &caller);
-        access_control::grant_role(&env, &pending.new_admin, ROLE_ADMIN, &caller);
+        access_control::swap_admin_after_verified_rotation(&env, &old_admin, &pending.new_admin, &caller);
     }
 
     pub fn cancel_key_rotation(env: Env) {
@@ -1903,11 +1982,16 @@ impl AttestationContract {
         challenger.require_auth();
         dispute::validate_dispute_eligibility(&env, &challenger, &business, &period)
             .expect("not eligible");
+        
+        let attestor_key = DataKey::Attestor(business.clone(), period.clone());
+        let attestor: Address = env.storage().instance().get(&attestor_key).unwrap_or(business.clone());
+
         let id = dispute::generate_dispute_id(&env);
         let d = Dispute {
             id,
             challenger,
             business: business.clone(),
+            attestor,
             period: period.clone(),
             status: DisputeStatus::Open,
             dispute_type,
@@ -1947,6 +2031,11 @@ impl AttestationContract {
             d.resolution = OptionalResolution::Some(resolution);
             dispute::store_dispute(&env, &d);
 
+            if outcome == DisputeOutcome::Upheld {
+                let staking_addr = Self::get_attestor_staking_contract(env.clone())
+                    .expect("staking contract not configured");
+                let staking_client = AttestorStakingClient::new(&env, &staking_addr);
+                staking_client.slash(&d.attestor, &1000i128, &dispute_id);
             if let Some(attestor) =
                 dispute::get_attestor_for_attestation(&env, &d.business, &d.period)
             {
@@ -2065,6 +2154,100 @@ impl AttestationContract {
         dispute::record_revocation(&env, &business, &period, &revocation);
         let reason_code = events::RevocationReason::from_reason_str(&reason);
         events::emit_attestation_revoked(&env, &business, &period, &caller, &reason, reason_code);
+    }
+
+    /// Atomically revoke an attestation and clean up its storage entries.
+    ///
+    /// Combines the standard revocation flow with active-storage cleanup:
+    ///
+    /// 1. **Authorization** — caller must be the business owner or hold ADMIN
+    ///    role, and the contract must not be paused.
+    /// 2. **Revocation** — if the attestation has not already been revoked, a
+    ///    revocation record is written and an `AttestationRevoked` event is
+    ///    emitted.
+    /// 3. **Cleanup** — the attestation data, extended metadata, and the
+    ///    per-business revocation-index entry are all removed.  After this
+    ///    call, `get_attestation` returns `None`.
+    /// 4. **Events** — both `Revoked` (if not already revoked) and `Cleaned`
+    ///    events are emitted on success.
+    ///
+    /// This method is idempotent with respect to the **already-revoked** edge
+    /// case: if the attestation was independently marked as revoked but its
+    /// storage entries were never purged, the function still performs the
+    /// cleanup seamlessly without panicking or corrupting state.
+    ///
+    /// # Panics
+    ///
+    /// - Caller does not hold ADMIN or business-owner authorisation.
+    /// - Contract is paused.
+    /// - Attestation does not exist for `(business, period)`.
+    pub fn revoke_and_cleanup(
+        env: Env,
+        caller: Address,
+        business: Address,
+        period: String,
+        reason: String,
+        _nonce: u64,
+    ) {
+        // 1. Pause check — cheapest guard first.
+        access_control::require_not_paused(&env);
+        // 2. Caller must authorize.
+        caller.require_auth();
+
+        // 3. Attestation must exist.
+        let key = DataKey::Attestation(business.clone(), period.clone());
+        assert!(
+            env.storage().instance().has(&key),
+            "attestation not found"
+        );
+
+        // 4. Role / ownership check.
+        let caller_is_admin = caller == dynamic_fees::get_admin(&env)
+            || access_control::has_role(&env, &caller, ROLE_ADMIN);
+        assert!(
+            caller_is_admin || caller == business,
+            "caller must be ADMIN or the business owner"
+        );
+
+        // 5. If not already revoked, record the revocation and emit Revoked.
+        if !dispute::is_attestation_revoked(&env, &business, &period) {
+            let revocation: RevocationData =
+                (caller.clone(), env.ledger().timestamp(), reason.clone());
+            dispute::record_revocation(&env, &business, &period, &revocation);
+            let reason_code = events::RevocationReason::from_reason_str(&reason);
+            events::emit_attestation_revoked(
+                &env,
+                &business,
+                &period,
+                &caller,
+                &reason,
+                reason_code,
+            );
+        }
+
+        // 6. Remove attestation data from active storage.
+        env.storage().instance().remove(&key);
+
+        // 7. Remove extended metadata.
+        extended_metadata::remove_metadata(&env, &business, &period);
+
+        // 8. Remove this period from the per-business revocation index.
+        let revoked_periods = dispute::get_revoked_periods(&env, &business);
+        let mut new_periods: Vec<String> = Vec::new(&env);
+        for p in revoked_periods.iter() {
+            if p != period {
+                new_periods.push_back(p);
+            }
+        }
+        dispute::set_revoked_periods(&env, &business, &new_periods);
+
+        // 9. Emit cleaned event.
+        events::emit_attestation_cleaned_up(&env, &business, &period);
+
+        // 10. Bump TTL after storage modifications.
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
     }
 
     /// Return `true` when the attestation has been revoked.
@@ -2478,8 +2661,7 @@ impl AttestationContract {
                 let old_admin = dynamic_fees::get_admin(env);
                 veritasor_common::key_rotation::emergency_rotate(env, &old_admin, new_admin);
                 dynamic_fees::set_admin(env, new_admin);
-                access_control::revoke_role(env, &old_admin, ROLE_ADMIN, executor);
-                access_control::grant_role(env, new_admin, ROLE_ADMIN, executor);
+                access_control::swap_admin(env, &old_admin, new_admin, executor);
                 events::emit_key_rotation_emergency(env, &old_admin, new_admin);
             }
         }
@@ -2645,3 +2827,265 @@ mod verify_attestation_test;
 mod verify_attestations_batch_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod revoke_reason_test;
+
+#[cfg(test)]
+mod relayer_gas_attribution_test {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::{token, Address, BytesN, Env, String};
+
+    /// Setup contract with fee configuration for testing
+    fn setup_with_fees() -> (
+        Env,
+        AttestationContractClient<'static>,
+        Address,
+        Address,
+        token::StellarAssetClient<'static>,
+    ) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AttestationContract, ());
+        let client = AttestationContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize(&admin, &0u64);
+
+        // Deploy mock token
+        let token_admin = Address::generate(&env);
+        let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+        let token_client = token::StellarAssetClient::new(&env, &token_contract.address());
+
+        let collector = Address::generate(&env);
+        let base_fee = 1_000_000i128;
+
+        client.configure_fees(&token_contract.address(), &collector, &base_fee, &true);
+
+        (env, client, admin, collector, token_client)
+    }
+
+    /// Setup basic contract without fees
+    fn setup_basic() -> (Env, AttestationContractClient<'static>, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AttestationContract, ());
+        let client = AttestationContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin, &0u64);
+        (env, client, admin)
+    }
+
+    #[test]
+    fn test_relayer_gas_accumulation_single_submission() {
+        let (env, client, _admin, _collector, token_client) = setup_with_fees();
+
+        let attestor = Address::generate(&env);
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "2026-02");
+        let root = BytesN::from_array(&env, &[1u8; 32]);
+
+        // Mint tokens to attestor (relayer) for fee payment
+        token_client.mint(&attestor, &10_000_000i128);
+
+        // Grant attestor role
+        let admin = client.get_admin();
+        client.grant_role(&admin, &attestor, &4u32); // ROLE_ATTESTOR = 4
+
+        // Submit attestation as attestor (delegated submission)
+        client.submit_attestation_as_attestor(
+            &attestor,
+            &business,
+            &period,
+            &root,
+            &1_700_000_000u64,
+            &1u32,
+            &None,
+        );
+
+        // Check relayer gas accumulation
+        let relayer_gas = dynamic_fees::get_relayer_gas(&env, &attestor);
+        assert!(relayer_gas > 0, "Relayer should have accumulated gas");
+    }
+
+    #[test]
+    fn test_relayer_gas_zero_for_direct_business_submission() {
+        let (env, client, _admin, _collector, token_client) = setup_with_fees();
+
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "2026-02");
+        let root = BytesN::from_array(&env, &[1u8; 32]);
+
+        // Mint tokens to business for fee payment
+        token_client.mint(&business, &10_000_000i128);
+
+        // Submit attestation directly by business (not delegated)
+        client.submit_attestation(
+            &business,
+            &period,
+            &root,
+            &1_700_000_000u64,
+            &1u32,
+            &0i128,
+            &None,
+            &None,
+        );
+
+        // Check relayer gas accumulation - should be 0 for business submission
+        let relayer_gas = dynamic_fees::get_relayer_gas(&env, &business);
+        assert_eq!(relayer_gas, 0, "Business submission should not accumulate relayer gas");
+    }
+
+    #[test]
+    fn test_relayer_gas_accumulation_batch_submission() {
+        let (env, client, _admin, _collector, token_client) = setup_with_fees();
+
+        let attestor = Address::generate(&env);
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "2026-02");
+        let root = BytesN::from_array(&env, &[1u8; 32]);
+
+        // Mint tokens to attestor (relayer) for fee payment
+        token_client.mint(&attestor, &10_000_000i128);
+
+        // Grant attestor role
+        let admin = client.get_admin();
+        client.grant_role(&admin, &attestor, &4u32); // ROLE_ATTESTOR = 4
+
+        // Create batch items
+        let mut items = soroban_sdk::Vec::new(&env);
+        for i in 0..3 {
+            let period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
+            let root = BytesN::from_array(&env, &[i as u8; 32]);
+            items.push_back(BatchAttestationItem {
+                business: business.clone(),
+                period,
+                merkle_root: root,
+                timestamp: 1_700_000_000u64,
+                version: 1u32,
+                proof_hash: None,
+                expiry_timestamp: None,
+            });
+        }
+
+        // Submit batch as attestor (delegated submission)
+        client.submit_batch_as_attestor(&attestor, &items);
+
+        // Check relayer gas accumulation
+        let relayer_gas = dynamic_fees::get_relayer_gas(&env, &attestor);
+        assert!(relayer_gas > 0, "Relayer should have accumulated gas from batch submission");
+    }
+
+    #[test]
+    fn test_relayer_gas_multiple_submissions_accumulate() {
+        let (env, client, _admin, _collector, token_client) = setup_with_fees();
+
+        let attestor = Address::generate(&env);
+        let business = Address::generate(&env);
+        let period1 = String::from_str(&env, "2026-02");
+        let period2 = String::from_str(&env, "2026-03");
+        let root1 = BytesN::from_array(&env, &[1u8; 32]);
+        let root2 = BytesN::from_array(&env, &[2u8; 32]);
+
+        // Mint tokens to attestor (relayer) for fee payment
+        token_client.mint(&attestor, &20_000_000i128);
+
+        // Grant attestor role
+        let admin = client.get_admin();
+        client.grant_role(&admin, &attestor, &4u32); // ROLE_ATTESTOR = 4
+
+        // First submission
+        client.submit_attestation_as_attestor(
+            &attestor,
+            &business,
+            &period1,
+            &root1,
+            &1_700_000_000u64,
+            &1u32,
+            &None,
+        );
+
+        let gas_after_first = dynamic_fees::get_relayer_gas(&env, &attestor);
+        assert!(gas_after_first > 0);
+
+        // Second submission
+        client.submit_attestation_as_attestor(
+            &attestor,
+            &business,
+            &period2,
+            &root2,
+            &1_700_000_000u64,
+            &1u32,
+            &None,
+        );
+
+        let gas_after_second = dynamic_fees::get_relayer_gas(&env, &attestor);
+        assert!(gas_after_second > gas_after_first, "Gas should accumulate across multiple submissions");
+    }
+
+    #[test]
+    fn test_relayer_gas_zero_prior_activity() {
+        let (env, _client, _admin, _collector, _token_client) = setup_with_fees();
+
+        let attestor = Address::generate(&env);
+
+        // Check relayer gas for attestor with zero prior activity
+        let relayer_gas = dynamic_fees::get_relayer_gas(&env, &attestor);
+        assert_eq!(relayer_gas, 0, "New relayer should have zero gas accumulation");
+    }
+
+    #[test]
+    fn test_different_relayers_independent_accumulation() {
+        let (env, client, _admin, _collector, token_client) = setup_with_fees();
+
+        let attestor1 = Address::generate(&env);
+        let attestor2 = Address::generate(&env);
+        let business = Address::generate(&env);
+        let period1 = String::from_str(&env, "2026-02");
+        let period2 = String::from_str(&env, "2026-03");
+        let root1 = BytesN::from_array(&env, &[1u8; 32]);
+        let root2 = BytesN::from_array(&env, &[2u8; 32]);
+
+        // Mint tokens to both attestors
+        token_client.mint(&attestor1, &10_000_000i128);
+        token_client.mint(&attestor2, &10_000_000i128);
+
+        // Grant attestor roles
+        let admin = client.get_admin();
+        client.grant_role(&admin, &attestor1, &4u32);
+        client.grant_role(&admin, &attestor2, &4u32);
+
+        // First relayer submits
+        client.submit_attestation_as_attestor(
+            &attestor1,
+            &business,
+            &period1,
+            &root1,
+            &1_700_000_000u64,
+            &1u32,
+            &None,
+        );
+
+        let gas1 = dynamic_fees::get_relayer_gas(&env, &attestor1);
+        let gas2 = dynamic_fees::get_relayer_gas(&env, &attestor2);
+
+        assert!(gas1 > 0, "First relayer should have gas");
+        assert_eq!(gas2, 0, "Second relayer should have zero gas");
+
+        // Second relayer submits
+        client.submit_attestation_as_attestor(
+            &attestor2,
+            &business,
+            &period2,
+            &root2,
+            &1_700_000_000u64,
+            &1u32,
+            &None,
+        );
+
+        let gas1_after = dynamic_fees::get_relayer_gas(&env, &attestor1);
+        let gas2_after = dynamic_fees::get_relayer_gas(&env, &attestor2);
+
+        assert!(gas1_after > 0, "First relayer gas should remain");
+        assert!(gas2_after > 0, "Second relayer should now have gas");
+        assert_eq!(gas1_after, gas1, "First relayer gas should not change when second relayer submits");
+    }
+}

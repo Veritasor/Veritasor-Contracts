@@ -1,5 +1,4 @@
 #![cfg(test)]
-
 extern crate std;
 
 use crate::access_control::{ROLE_ATTESTOR, ROLE_BUSINESS};
@@ -287,7 +286,13 @@ fn test_double_unlock_is_safe() {
     let attestor = Address::generate(&env);
 
     with_contract(&env, &contract_id, || {
-        dispute::lock_attestor(&env, &attestor, &Address::generate(&env), &String::from_str(&env, "2026-02"), 1);
+        dispute::lock_attestor(
+            &env,
+            &attestor,
+            &Address::generate(&env),
+            &String::from_str(&env, "2026-02"),
+            1,
+        );
         dispute::unlock_attestor(&env, &attestor);
 
         dispute::unlock_attestor(&env, &attestor);

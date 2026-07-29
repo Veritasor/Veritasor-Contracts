@@ -114,6 +114,17 @@ impl TestEnv {
             &new_version,
         );
     }
+
+    pub fn revoke_and_cleanup(
+        &self,
+        caller: Address,
+        business: Address,
+        period: String,
+        reason: String,
+    ) {
+        self.client
+            .revoke_and_cleanup(&caller, &business, &period, &reason, &0u64);
+    }
 }
 use crate::{DisputeOutcome, DisputeStatus, DisputeType, OptionalResolution};
 use soroban_sdk::testutils::{Address as _, Events};
@@ -2284,4 +2295,271 @@ fn test_grace_admin_proposes_different_business() {
     // Admin then cancels it.
     client.cancel_revoke_proposal(&admin, &business, &period);
     assert!(client.get_revoke_proposal(&business, &period).is_none());
+}
+
+// ============================================================================
+// ATOMIC REVOKE-AND-CLEANUP TESTS
+// ============================================================================
+//
+// These tests verify the `revoke_and_cleanup` operation that atomically revokes
+// an attestation and removes its active storage entries.
+
+use crate::events::TOPIC_ATTESTATION_CLEANED_UP;
+
+/// Setup helper: registered contract + initialized admin + one submitted attestation.
+fn rnc_setup() -> (
+    TestEnv,
+    Address, // business
+    String,  // period
+    BytesN<32>, // root
+) {
+    let test = TestEnv::new();
+    let business = Address::generate(&test.env);
+    let period = String::from_str(&test.env, "2026-01");
+    let root = BytesN::from_array(&test.env, &[100u8; 32]);
+    test.submit_attestation(business.clone(), period.clone(), root.clone(), 1_700_000_000, 1);
+    (test, business, period, root)
+}
+
+// ── 1. Happy path ────────────────────────────────────────────────────────────
+
+#[test]
+fn test_revoke_and_cleanup_happy_path() {
+    let (test, business, period, root) = rnc_setup();
+    let reason = String::from_str(&test.env, "atomic revoke + cleanup");
+
+    // Pre-state: attestation exists and is not revoked.
+    assert!(test.get_attestation(business.clone(), period.clone()).is_some());
+    assert!(!test.is_revoked(business.clone(), period.clone()));
+    assert!(test.verify_attestation(business.clone(), period.clone(), root.clone()));
+
+    // Revoke and cleanup atomically.
+    test.revoke_and_cleanup(test.admin.clone(), business.clone(), period.clone(), reason.clone());
+
+    // Post-state: attestation data is gone.
+    assert!(test.get_attestation(business.clone(), period.clone()).is_none());
+    // verify_attestation returns false when attestation does not exist.
+    assert!(!test.verify_attestation(business.clone(), period.clone(), root.clone()));
+
+    // Revocation data is also gone (since we cleaned the Revoked key).
+    assert!(test.get_revocation_info(business.clone(), period.clone()).is_none());
+
+    // Revoked periods index should not contain the cleaned period.
+    let revoked_periods = test.client.get_revoked_periods(&business);
+    assert_eq!(revoked_periods.len(), 0);
+}
+
+// ── 2. Already-revoked edge case ─────────────────────────────────────────────
+
+#[test]
+fn test_revoke_and_cleanup_already_revoked() {
+    let (test, business, period, root) = rnc_setup();
+    let reason = String::from_str(&test.env, "post-revoke cleanup");
+
+    // First: standard revoke (marks as revoked but keeps storage).
+    let revoke_reason = String::from_str(&test.env, "initial revocation");
+    test.revoke_attestation(test.admin.clone(), business.clone(), period.clone(), revoke_reason.clone());
+
+    // Verify revoked state.
+    assert!(test.is_revoked(business.clone(), period.clone()));
+    assert!(test.get_attestation(business.clone(), period.clone()).is_some());
+    let (revoked_by, _, stored_reason) =
+        test.get_revocation_info(business.clone(), period.clone()).unwrap();
+    assert_eq!(stored_reason, revoke_reason);
+    assert_eq!(revoked_by, test.admin);
+
+    // Now call revoke_and_cleanup on the already-revoked attestation.
+    // This must NOT panic and should clean up storage.
+    test.revoke_and_cleanup(test.admin.clone(), business.clone(), period.clone(), reason);
+
+    // Post-state: attestation data is gone.
+    assert!(test.get_attestation(business.clone(), period.clone()).is_none());
+    // Revocation key should also be gone since we cleaned it.
+    assert!(test.get_revocation_info(business.clone(), period.clone()).is_none());
+
+    // Revoked periods index should be empty.
+    let revoked_periods = test.client.get_revoked_periods(&business);
+    assert_eq!(revoked_periods.len(), 0);
+}
+
+// ── 3. Unauthorized caller rejected ──────────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "caller must be ADMIN or the business owner")]
+fn test_revoke_and_cleanup_unauthorized() {
+    let (test, business, period, _root) = rnc_setup();
+    let attacker = Address::generate(&test.env);
+    test.revoke_and_cleanup(
+        attacker,
+        business,
+        period,
+        String::from_str(&test.env, "unauthorized"),
+    );
+}
+
+// ── 4. Nonexistent attestation rejected ───────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "attestation not found")]
+fn test_revoke_and_cleanup_nonexistent() {
+    let test = TestEnv::new();
+    let business = Address::generate(&test.env);
+    test.revoke_and_cleanup(
+        test.admin.clone(),
+        business,
+        String::from_str(&test.env, "2026-99"),
+        String::from_str(&test.env, "ghost cleanup"),
+    );
+}
+
+// ── 5. Storage entries are 100% deleted post-transaction ─────────────────────
+
+#[test]
+fn test_revoke_and_cleanup_storage_fully_cleared() {
+    let (test, business, period, root) = rnc_setup();
+
+    // Submit attestation with metadata.
+    test.client.submit_attestation_with_metadata(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &String::from_str(&test.env, "USD"),
+        &true,
+    );
+
+    let reason = String::from_str(&test.env, "full cleanup check");
+
+    // Confirm attestation exists before cleanup.
+    assert!(test.get_attestation(business.clone(), period.clone()).is_some());
+    assert!(!test.is_revoked(business.clone(), period.clone()));
+
+    // Execute atomic revoke + cleanup.
+    test.revoke_and_cleanup(test.admin.clone(), business.clone(), period.clone(), reason);
+
+    // Assert attestation data is deleted.
+    assert!(
+        test.get_attestation(business.clone(), period.clone()).is_none(),
+        "Attestation data should be deleted"
+    );
+
+    // Assert revocation record is gone.
+    assert!(
+        test.get_revocation_info(business.clone(), period.clone()).is_none(),
+        "Revocation record should be deleted"
+    );
+
+    // Assert is_revoked returns false (since the Revoked key was cleaned).
+    assert!(
+        !test.is_revoked(business.clone(), period.clone()),
+        "Revoked flag should be cleaned"
+    );
+
+    // Assert verify_attestation returns false (no data to verify).
+    assert!(
+        !test.verify_attestation(business.clone(), period.clone(), root),
+        "verify_attestation should return false after cleanup"
+    );
+
+    // Assert business attestations no longer returns this period.
+    let periods_vec = soroban_sdk::vec![&test.env, period.clone()];
+    let results = test.get_business_attestations(business.clone(), periods_vec);
+    assert_eq!(results.len(), 1);
+    let (_returned_period, attestation_opt, revocation_opt) = results.get(0).unwrap();
+    assert!(attestation_opt.is_none(), "Attestation in listing should be None");
+    assert!(revocation_opt.is_none(), "Revocation in listing should be None");
+
+    // Assert the revoked periods index does not contain this period.
+    let revoked_periods = test.client.get_revoked_periods(&business);
+    assert_eq!(revoked_periods.len(), 0);
+}
+
+// ── 6. Events are emitted correctly (Revoked + Cleaned) ─────────────────────
+
+#[test]
+fn test_revoke_and_cleanup_events_emitted() {
+    let (test, business, period, _root) = rnc_setup();
+    let reason = String::from_str(&test.env, "event verification");
+
+    test.revoke_and_cleanup(test.admin.clone(), business.clone(), period.clone(), reason);
+
+    let events = test.env.events().all();
+
+    // Check Revoked event was emitted.
+    let revoked_topics = (TOPIC_ATTESTATION_REVOKED, business.clone()).into_val(&test.env);
+    assert!(
+        events.iter().any(|event| event.1 == revoked_topics),
+        "Revoked event must be emitted"
+    );
+
+    // Check Cleaned event was emitted.
+    let cleaned_topics = (TOPIC_ATTESTATION_CLEANED_UP, business).into_val(&test.env);
+    assert!(
+        events.iter().any(|event| event.1 == cleaned_topics),
+        "Cleaned event must be emitted"
+    );
+}
+
+// ── 7. Already-revoked case still emits Cleaned event ────────────────────────
+
+#[test]
+fn test_revoke_and_cleanup_already_revoked_emits_cleaned() {
+    let (test, business, period, _root) = rnc_setup();
+
+    // Standard revoke first.
+    test.revoke_attestation(
+        test.admin.clone(),
+        business.clone(),
+        period.clone(),
+        String::from_str(&test.env, "first revoke"),
+    );
+
+    // Clear events so we only capture the revoke_and_cleanup events.
+    // Soroban test env accumulates events; we can check that Cleaned is present.
+    test.revoke_and_cleanup(
+        test.admin.clone(),
+        business.clone(),
+        period.clone(),
+        String::from_str(&test.env, "cleanup after revoke"),
+    );
+
+    let events = test.env.events().all();
+
+    // Cleaned event MUST be present (the attestation was deleted).
+    let cleaned_topics = (TOPIC_ATTESTATION_CLEANED_UP, business).into_val(&test.env);
+    assert!(
+        events.iter().any(|event| event.1 == cleaned_topics),
+        "Cleaned event must be emitted even when already revoked"
+    );
+}
+
+// ── 8. Paused contract rejects revoke_and_cleanup ────────────────────────────
+
+#[test]
+#[should_panic(expected = "contract is paused")]
+fn test_revoke_and_cleanup_paused() {
+    let (test, business, period, _root) = rnc_setup();
+    test.pause(test.admin.clone());
+    test.revoke_and_cleanup(
+        test.admin.clone(),
+        business,
+        period,
+        String::from_str(&test.env, "paused"),
+    );
+}
+
+// ── 9. Business owner can revoke_and_cleanup ─────────────────────────────────
+
+#[test]
+fn test_revoke_and_cleanup_by_business_owner() {
+    let (test, business, period, root) = rnc_setup();
+    let reason = String::from_str(&test.env, "owner cleanup");
+
+    test.revoke_and_cleanup(business.clone(), business.clone(), period.clone(), reason.clone());
+
+    // Attestation data must be gone.
+    assert!(test.get_attestation(business.clone(), period.clone()).is_none());
+    // Revocation info must be gone.
+    assert!(test.get_revocation_info(business, period).is_none());
 }
