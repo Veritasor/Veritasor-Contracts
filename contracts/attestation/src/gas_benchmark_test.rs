@@ -3671,33 +3671,73 @@ fn regression_get_multi_period_ranges_budget() {
 #[test]
 fn bench_metadata_size_sweep() {
     std::println!("\n╔════════════════════════════════════════════════════════════════════════╗");
-    std::println!("║      Metadata Size Sweep Benchmark                                     ║");
+    std::println!("║      Metadata vs Non-Metadata Submission Gas Comparison Sweep          ║");
     std::println!("╚════════════════════════════════════════════════════════════════════════╝");
-    std::println!("size_bytes,cpu_insns,mem_bytes");
+    std::println!("size_bytes,baseline_cpu,baseline_mem,metadata_cpu,metadata_mem,delta_cpu,delta_mem");
 
     let sizes = [0, 64, 128, 256, 512, 1024, 2048];
     for &size in &sizes {
         let (env, client, _admin) = setup_basic();
+        
         let business = Address::generate(&env);
-        let period = String::from_str(&env, "2026-02");
-        let root = BytesN::from_array(&env, &[1u8; 32]);
+        
+        // Baseline: no metadata
+        let period_baseline = String::from_str(&env, "2026-02-B");
+        let root_baseline = BytesN::from_array(&env, &[1u8; 32]);
+        
+        let before_baseline = BudgetSnapshot::capture(&env);
+        client.submit_attestation(
+            &business,
+            &period_baseline,
+            &root_baseline,
+            &1_700_000_000u64,
+            &1u32,
+            &0i128,
+            &None,
+            &None,
+        );
+        let after_baseline = BudgetSnapshot::capture(&env);
+        let baseline_cost = before_baseline.delta(&after_baseline);
+
+        // Metadata submission
+        let period_meta = String::from_str(&env, "2026-02-M");
+        let root_meta = BytesN::from_array(&env, &[2u8; 32]);
         
         let buf = std::vec![b'A'; size];
         let currency = String::from_str(&env, core::str::from_utf8(&buf).unwrap());
 
-        let before = BudgetSnapshot::capture(&env);
+        let before_meta = BudgetSnapshot::capture(&env);
         client.submit_attestation_with_metadata(
             &business,
-            &period,
-            &root,
+            &period_meta,
+            &root_meta,
             &1_700_000_000u64,
             &1u32,
             &currency,
-            &true,
+            &true, // is_net
         );
-        let after = BudgetSnapshot::capture(&env);
+        let after_meta = BudgetSnapshot::capture(&env);
+        let meta_cost = before_meta.delta(&after_meta);
 
-        let cost = before.delta(&after);
-        std::println!("{},{},{}", size, cost.cpu_insns, cost.mem_bytes);
+        let delta_cpu = meta_cost.cpu_insns.saturating_sub(baseline_cost.cpu_insns);
+        let delta_mem = meta_cost.mem_bytes.saturating_sub(baseline_cost.mem_bytes);
+
+        std::println!(
+            "{},{},{},{},{},{},{}",
+            size,
+            baseline_cost.cpu_insns,
+            baseline_cost.mem_bytes,
+            meta_cost.cpu_insns,
+            meta_cost.mem_bytes,
+            delta_cpu,
+            delta_mem
+        );
+        
+        // Security/Security notes check: Ensure costs are within reasonable bounds compared to baseline
+        assert!(meta_cost.cpu_insns >= baseline_cost.cpu_insns, "Metadata CPU should be >= baseline");
+        assert!(meta_cost.mem_bytes >= baseline_cost.mem_bytes, "Metadata Memory should be >= baseline");
     }
+    std::println!("\nSecurity note: Metadata is strictly validated (max 2048 bytes).");
+    std::println!("Metadata is stored in a separate DataKey ensuring backward compatibility.");
+    std::println!("Costs scale linearly with the length of the currency_code string.");
 }

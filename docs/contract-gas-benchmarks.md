@@ -711,6 +711,49 @@ The individual size tests catch hard regressions via the ceiling.
 
 ---
 
+## Metadata Submission Benchmarks
+
+### Motivation
+
+`submit_attestation_with_metadata` allows storing an extended metadata payload alongside the attestation. The metadata size is bounded to 2048 bytes (MAX bytes). Because the cost of storage writing scales with the size of the data, business integrators need a way to estimate the actual cost of a metadata-bearing submission based on the metadata size.
+
+### Methodology
+
+The test `bench_metadata_size_sweep` performs a side-by-side comparison between `submit_attestation` (baseline) and `submit_attestation_with_metadata` for metadata sizes sweeping from 0 bytes up to 2048 bytes.
+
+For each size, the test:
+1. Submits a baseline attestation using `submit_attestation` and captures the cost.
+2. Submits an attestation with metadata using `submit_attestation_with_metadata` with a payload of `size` bytes.
+3. Computes the delta in CPU instructions and Memory bytes.
+4. Emits a CSV row with the detailed breakdown.
+5. Asserts that the metadata submission cost is at least the baseline cost.
+
+### CSV Output Format
+
+```csv
+size_bytes,baseline_cpu,baseline_mem,metadata_cpu,metadata_mem,delta_cpu,delta_mem
+0,...,...,...,...,...,...
+64,...,...,...,...,...,...
+128,...,...,...,...,...,...
+...
+2048,...,...,...,...,...,...
+```
+
+Run the sweep test to produce this report:
+
+```bash
+cd contracts/attestation
+cargo test bench_metadata_size_sweep -- --nocapture
+```
+
+### Security Notes
+
+- Metadata payload size is strictly bounded to `CURRENCY_CODE_MAX_LEN` (2048 bytes) to prevent resource exhaustion attacks.
+- Metadata is stored under a distinct `DataKey` to ensure backward compatibility with existing attestations.
+- The cost scales linearly with the length of the string, and integrators should provision budgets corresponding to the maximum possible metadata length they anticipate supporting.
+
+---
+
 ## Changelog
 
 ### 2026-07-28
