@@ -61,11 +61,14 @@ pub use dispute::{
 };
 pub use dynamic_fees::{add_relayer_gas, compute_fee, DataKey, FeeConfig, get_relayer_gas};
 pub use dynamic_fees::{RevokeProposal, DEFAULT_REVOKE_GRACE_SECONDS};
+pub use dynamic_fees::{PendingStakingContract};
 pub use events::{
     AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
     AttestationSubmittedEvent, ProofHashUpdatedEvent,
     RelayerGasReportedEvent,
     RevocationCancelledEvent, RevocationCommittedEvent, RevocationProposedEvent,
+    StakingContractProposedEvent, StakingContractCommittedEvent, StakingContractCancelledEvent,
+    TOPIC_STAKING_CONTRACT_PROPOSED, TOPIC_STAKING_CONTRACT_COMMITTED, TOPIC_STAKING_CONTRACT_CANCELLED,
 };
 pub use fees::{collect_flat_fee, CollectorRotationProposal, FlatFeeConfig};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
@@ -170,6 +173,11 @@ mod backfill_checkpoint_test;
 /// reproduce without these tests).
 #[cfg(test)]
 mod vote_weight_snapshot_test;
+
+/// Staking contract time-lock tests. Covers propose → commit → apply flow,
+/// cancel, edge cases, authorization, and event emission.
+#[cfg(test)]
+mod timelock_staking_test;
 
 #[contractimpl]
 impl AttestationContract {
@@ -429,10 +437,106 @@ impl AttestationContract {
     }
 
     pub fn set_attestor_staking_contract(env: Env, caller: Address, staking_contract: Address) {
+        // This function is superseded by the time-locked rebinding flow.
+        // Use `propose_staking_contract` followed by `commit_staking_contract`
+        // (after at least 86 400 s / 24 h) instead.
+        panic!(
+            "set_attestor_staking_contract is disabled: \
+             use propose_staking_contract + commit_staking_contract (24 h timelock)"
+        );
+    }
+
+    /// Propose a new attestor staking contract address.
+    ///
+    /// The change enters a 24-hour time-lock (86 400 seconds) before it can be
+    /// committed.  Only one proposal may be pending at a time; cancel the
+    /// existing one with `cancel_pending_staking_contract` before creating a
+    /// new proposal.
+    ///
+    /// Rebinding the staking contract is a **high-blast-radius** operation.
+    /// Pointing the contract at a malicious or misconfigured address would
+    /// instantly break attestor eligibility checks for every business.  The
+    /// mandatory delay gives monitoring systems and stakeholders time to detect
+    /// and react to an unintended or hostile change.
+    ///
+    /// # Panics
+    /// - Caller does not have ADMIN role
+    /// - A pending staking contract proposal already exists (cancel it first)
+    pub fn propose_staking_contract(
+        env: Env,
+        caller: Address,
+        new_contract: Address,
+        nonce: u64,
+    ) {
         access_control::require_admin(&env, &caller);
+        let admin = dynamic_fees::require_admin(&env);
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
+        assert!(
+            dynamic_fees::get_pending_staking_contract(&env).is_none(),
+            "pending staking contract already scheduled"
+        );
+        let effective_at = env.ledger().timestamp() + dynamic_fees::FEE_TIMELOCK_SECONDS;
+        let pending = dynamic_fees::PendingStakingContract {
+            new_contract: new_contract.clone(),
+            effective_at,
+            proposed_by: admin.clone(),
+        };
+        dynamic_fees::set_pending_staking_contract(&env, &pending);
+        events::emit_staking_contract_proposed(&env, &new_contract, &admin, effective_at);
+    }
+
+    /// Commit a previously proposed staking contract address after its 24-hour
+    /// timelock has elapsed.
+    ///
+    /// Applies the pending address to the live staking contract slot and clears
+    /// the pending state.
+    ///
+    /// # Panics
+    /// - Caller does not have ADMIN role
+    /// - No pending staking contract proposal exists
+    /// - Timelock has not yet expired
+    pub fn commit_staking_contract(env: Env, caller: Address, nonce: u64) {
+        access_control::require_admin(&env, &caller);
+        let admin = dynamic_fees::require_admin(&env);
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
+        let pending = dynamic_fees::get_pending_staking_contract(&env)
+            .expect("no pending staking contract to commit");
+        assert!(
+            env.ledger().timestamp() >= pending.effective_at,
+            "timelock not yet expired"
+        );
         env.storage()
             .instance()
-            .set(&DataKey::AttestorStakingContract, &staking_contract);
+            .set(&DataKey::AttestorStakingContract, &pending.new_contract);
+        dynamic_fees::clear_pending_staking_contract(&env);
+        events::emit_staking_contract_committed(&env, &pending.new_contract, &admin);
+    }
+
+    /// Cancel a pending staking contract proposal.
+    ///
+    /// The live staking contract address is not affected.
+    ///
+    /// # Panics
+    /// - Caller does not have ADMIN role
+    /// - No pending staking contract proposal exists
+    pub fn cancel_pending_staking_contract(env: Env, caller: Address, nonce: u64) {
+        access_control::require_admin(&env, &caller);
+        let admin = dynamic_fees::require_admin(&env);
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
+        let pending = dynamic_fees::get_pending_staking_contract(&env)
+            .expect("no pending staking contract to cancel");
+        dynamic_fees::clear_pending_staking_contract(&env);
+        events::emit_staking_contract_cancelled(&env, &pending.new_contract, &admin);
+    }
+
+    /// Returns the pending staking contract proposal, if any.
+    ///
+    /// Observers (monitoring systems, DAO, community) can call this to detect
+    /// a pending rebinding before the timelock expires.
+    pub fn get_pending_staking_contract(
+        env: Env,
+    ) -> Option<dynamic_fees::PendingStakingContract> {
+        dynamic_fees::get_pending_staking_contract(&env)
     }
 
     pub fn get_attestor_staking_contract(env: Env) -> Option<Address> {
