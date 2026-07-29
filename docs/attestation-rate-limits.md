@@ -30,12 +30,15 @@ time source.
 On each submission:
 
 1. Load the business's recorded timestamps.
-2. Prune entries older than `now - window_seconds`.
-3. Count remaining timestamps in the full window.
-4. Count remaining timestamps in the burst window.
-5. Reject with `rate limit exceeded` if the full-window count is already at capacity.
-6. Reject with `burst rate limit exceeded` if the burst-window count is already at capacity.
-7. Record the current timestamp only after the attestation is successfully stored.
+2. Derive a per-business effective time as the maximum of the current ledger
+   timestamp and the last successful submission timestamp.
+3. Prune entries older than `effective_now - window_seconds`.
+4. Count remaining timestamps in the full window.
+5. Count remaining timestamps in the burst window.
+6. Reject with `rate limit exceeded` if the full-window count is already at capacity.
+7. Reject with `burst rate limit exceeded` if the burst-window count is already at capacity.
+8. Record the effective timestamp and advance the high-water mark only after
+   the attestation is successfully stored.
 
 The implementation uses strict `>` cutoff checks. A timestamp exactly equal to
 the computed cutoff is treated as expired.
@@ -73,6 +76,8 @@ This means:
 - Timestamp history is pruned lazily, which keeps state bounded by the configured window.
 - Counts are isolated per business address.
 - Rejected submissions do not record timestamps, so failed attempts cannot consume future quota.
+- A per-business high-water timestamp prevents a forward clock jump followed
+  by rollback from pruning history and reopening previously consumed capacity.
 
 ## Performance Notes
 
@@ -93,3 +98,4 @@ The contract test target covers:
 - per-business isolation
 - disabled and unconfigured backward-compatible behavior
 - replay nonce ordering for admin configuration
+- randomized forward and backward clock jumps, including exact window edges
