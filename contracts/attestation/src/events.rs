@@ -164,6 +164,8 @@ pub const TOPIC_EPOCH_CHECKPOINT: Symbol = symbol_short!("ep_ckpt");
 pub const TOPIC_EPOCH_ADVANCED: Symbol = symbol_short!("ep_adv");
 /// Topic: backfill checkpoint emitted every N submissions (global counter)
 pub const TOPIC_BACKFILL_CHECKPOINT: Symbol = symbol_short!("bkf_chk");
+/// Topic: archival compaction completed
+pub const TOPIC_ARCHIVAL_COMPACTED: Symbol = symbol_short!("arc_cmp");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -1980,4 +1982,52 @@ pub fn emit_backfill_checkpoint(
         state_commitment: state_commitment.clone(),
     };
     env.events().publish((TOPIC_BACKFILL_CHECKPOINT,), event);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Archival Compaction
+// ════════════════════════════════════════════════════════════════════
+
+/// Normalized payload for `ArchivalCompacted` events.
+///
+/// Emitted once per `compact_archival` call that removes at least one entry.
+/// Indexers can use this to track storage reclamation and audit the compaction
+/// history without replaying individual attestation events.
+///
+/// | Event Catalog | Topic | Secondary topic |
+/// |---|---|--|
+/// | ArchivalCompacted | `arc_cmp` | *(none)* |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ArchivalCompactedEvent {
+    /// Number of archived attestation full-data entries removed in this call.
+    pub compacted_count: u32,
+    /// Minimum epoch age threshold used for this compaction run.
+    pub min_epochs: u64,
+    /// Ledger timestamp when compaction ran.
+    pub compacted_at: u64,
+    /// Admin address that triggered the compaction.
+    pub compacted_by: Address,
+}
+
+/// Emit an `ArchivalCompacted` event.
+///
+/// Call this after `compact_archival` has removed at least one full-data entry.
+///
+/// # Events
+///
+/// Publishes `(arc_cmp,)` → `ArchivalCompactedEvent`.
+pub fn emit_archival_compacted(
+    env: &Env,
+    compacted_count: u32,
+    min_epochs: u64,
+    compacted_by: &Address,
+) {
+    let event = ArchivalCompactedEvent {
+        compacted_count,
+        min_epochs,
+        compacted_at: env.ledger().timestamp(),
+        compacted_by: compacted_by.clone(),
+    };
+    env.events().publish((TOPIC_ARCHIVAL_COMPACTED,), event);
 }

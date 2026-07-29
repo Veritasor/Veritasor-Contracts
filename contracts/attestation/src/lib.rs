@@ -61,6 +61,7 @@ pub use dispute::{
 };
 pub use dynamic_fees::{add_relayer_gas, compute_fee, DataKey, FeeConfig, get_relayer_gas};
 pub use dynamic_fees::{RevokeProposal, DEFAULT_REVOKE_GRACE_SECONDS};
+pub use dynamic_fees::{ArchivePointerRecord, CompactionRetentionPolicy};
 pub use events::{
     AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
     AttestationSubmittedEvent, ProofHashUpdatedEvent,
@@ -1044,6 +1045,138 @@ impl AttestationContract {
     /// Return the current global archive index (number of attestations archived so far).
     pub fn get_archive_index(env: Env) -> u64 {
         dynamic_fees::get_archive_index(&env)
+    }
+
+    // ── Archival Compaction ────────────────────────────────────────────────────────────────────
+
+    /// Admin: configure the retention policy for archival compaction.
+    ///
+    /// Sets the minimum number of epochs an archived attestation must have been
+    /// in the archive tier before `compact_archival` may remove its full data.
+    /// Setting `min_epochs` to `0` is rejected to prevent accidental mass-deletion.
+    ///
+    /// # Panics
+    /// - Caller is not the admin.
+    /// - `min_epochs == 0`.
+    pub fn set_compaction_retention(env: Env, caller: Address, min_epochs: u64) {
+        access_control::require_admin(&env, &caller);
+        assert!(min_epochs > 0, "min_epochs must be greater than zero");
+        let policy = dynamic_fees::CompactionRetentionPolicy { min_epochs };
+        dynamic_fees::set_compaction_retention(&env, &policy);
+    }
+
+    /// Return the current compaction retention policy, if configured.
+    pub fn get_compaction_retention(env: Env) -> Option<dynamic_fees::CompactionRetentionPolicy> {
+        dynamic_fees::get_compaction_retention(&env)
+    }
+
+    /// Admin: clear the compaction retention policy (disables compaction).
+    ///
+    /// After this call, `compact_archival` will always return `Ok(0)` without
+    /// touching any storage.
+    ///
+    /// # Panics
+    /// - Caller is not the admin.
+    pub fn clear_compaction_retention(env: Env, caller: Address) {
+        access_control::require_admin(&env, &caller);
+        dynamic_fees::clear_compaction_retention(&env);
+    }
+
+    /// Admin: compact archived attestations by removing full data for entries
+    /// whose expiry is more than `min_epochs` epochs in the past.
+    ///
+    /// Only the Merkle commitment root (via `ArchivePointer`) is retained;
+    /// the full `ArchivedAttestation` storage entry is deleted to reclaim rent.
+    ///
+    /// # Parameters
+    /// - `caller`     – must be the contract admin.
+    /// - `candidates` – list of `(business, period)` pairs to evaluate.
+    ///   Only pairs that are in the archive tier *and* old enough are compacted.
+    /// - `limit`      – maximum number of entries to compact in one call.
+    ///   Must be > 0.
+    ///
+    /// # Eligibility
+    /// An archived attestation is eligible for compaction when **all** of the
+    /// following hold:
+    /// 1. A `DataKey::ArchivedAttestation` entry exists (full data present).
+    /// 2. A `DataKey::ArchivePointer` entry exists (commitment retained).
+    /// 3. The attestation has an `expiry_timestamp` set.
+    /// 4. `current_epoch - epoch_at_expiry >= min_epochs` where `epoch_at_expiry`
+    ///    is derived from `expiry_timestamp / FEE_BUCKET_WINDOW_SECONDS`.
+    ///
+    /// Entries without an expiry timestamp are **never** compacted (they have no
+    /// defined end-of-life and must be retained indefinitely).
+    ///
+    /// # Returns
+    /// The number of entries actually compacted.
+    ///
+    /// # Panics
+    /// - Caller is not the admin.
+    /// - `limit == 0`.
+    /// - No compaction retention policy has been configured.
+    pub fn compact_archival(
+        env: Env,
+        caller: Address,
+        candidates: Vec<(Address, String)>,
+        limit: u32,
+    ) -> u32 {
+        access_control::require_admin(&env, &caller);
+        assert!(limit > 0, "limit must be greater than zero");
+
+        let policy = dynamic_fees::get_compaction_retention(&env)
+            .expect("compaction retention policy not configured");
+
+        let current_epoch = dynamic_fees::get_epoch(&env);
+        let mut compacted: u32 = 0;
+
+        for pair in candidates.iter() {
+            if compacted >= limit {
+                break;
+            }
+            let (business, period) = pair;
+
+            // Must have full archived data to compact.
+            let data: AttestationData =
+                match dynamic_fees::get_archived_attestation(&env, &business, &period) {
+                    Some(d) => d,
+                    None => continue,
+                };
+
+            // Must have a pointer (commitment) to retain after compaction.
+            if dynamic_fees::get_archive_pointer(&env, &business, &period).is_none() {
+                continue;
+            }
+
+            // Only compact entries that have an expiry timestamp.
+            let expiry_ts = match data.5 {
+                Some(e) => e,
+                None => continue,
+            };
+
+            // Derive the epoch at which the attestation expired.
+            let epoch_at_expiry = expiry_ts / dynamic_fees::FEE_BUCKET_WINDOW_SECONDS;
+
+            // Epochs elapsed since expiry (saturating to avoid underflow).
+            let epochs_since_expiry = current_epoch.saturating_sub(epoch_at_expiry);
+
+            if epochs_since_expiry < policy.min_epochs {
+                continue;
+            }
+
+            // Safety: write is a no-op (pointer already exists); remove full data.
+            dynamic_fees::remove_archived_attestation(&env, &business, &period);
+            compacted += 1;
+        }
+
+        if compacted > 0 {
+            events::emit_archival_compacted(&env, compacted, policy.min_epochs, &caller);
+        }
+
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+
+        compacted
     }
 
     pub fn is_expired(env: Env, business: Address, period: String) -> bool {
@@ -2814,6 +2947,8 @@ impl AttestationContract {
 // ── Test Modules ──
 // Issue #369 tests always run. Enable `full-tests` for the legacy attestation suite
 // (some modules need updates on this branch before they compile).
+#[cfg(test)]
+mod compact_archival_test;
 #[cfg(test)]
 mod attestor_lock_test;
 #[cfg(all(test, feature = "full-tests"))]
