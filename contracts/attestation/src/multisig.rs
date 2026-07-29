@@ -43,6 +43,8 @@ use crate::events;
 /// Default proposal expiry, expressed in ledger sequences after creation.
 pub const DEFAULT_PROPOSAL_EXPIRY: u32 = 100_000;
 
+/// Cooldown period for quorum (threshold) changes, in ledger sequences.
+pub const PROPOSAL_COOLDOWN_LEDGERS: u32 = 1_000;
 /// Default grace period after proposal expiry before auto-cleanup (ledger sequences)
 pub const DEFAULT_PROPOSAL_EXPIRY_GRACE: u32 = 10_000;
 
@@ -66,6 +68,8 @@ pub enum MultisigKey {
     NextProposalId,
     /// Expiry ledger for a proposal
     ProposalExpiry(u64),
+    /// Ledger sequence of the last quorum change
+    LastQuorumChange,
     /// Admin-configurable grace period in ledger sequences after expiry
     ProposalExpiryGrace,
     /// Immutable vote-weight snapshot captured at proposal creation.
@@ -222,6 +226,19 @@ pub fn is_multisig_initialized(env: &Env) -> bool {
 pub fn create_proposal(env: &Env, proposer: &Address, action: ProposalAction) -> u64 {
     proposer.require_auth();
     assert!(is_owner(env, proposer), "only owners can create proposals");
+
+    // Cooldown check for ChangeThreshold
+    if let ProposalAction::ChangeThreshold(_) = action {
+        let last_change: u32 = env
+            .storage()
+            .instance()
+            .get(&MultisigKey::LastQuorumChange)
+            .unwrap_or(0);
+        assert!(
+            env.ledger().sequence() >= last_change + PROPOSAL_COOLDOWN_LEDGERS,
+            "quorum change cooldown has not elapsed"
+        );
+    }
 
     let id: u64 = env
         .storage()
@@ -486,6 +503,14 @@ pub fn mark_executed(env: &Env, id: u64) {
     );
     assert!(is_proposal_approved(env, id), "proposal not approved");
     proposal.status = ProposalStatus::Executed;
+
+    // Update last quorum change
+    if let ProposalAction::ChangeThreshold(_) = proposal.action {
+        env.storage()
+            .instance()
+            .set(&MultisigKey::LastQuorumChange, &env.ledger().sequence());
+    }
+
     env.storage()
         .instance()
         .set(&MultisigKey::Proposal(id), &proposal);
