@@ -578,6 +578,46 @@ fn test_threshold_rotation() {
 }
 
 #[test]
+#[should_panic(expected = "quorum change cooldown has not elapsed")]
+fn test_quorum_change_cooldown_enforced() {
+    let (env, client, admin, owners) = setup_with_multisig();
+    let owner2 = owners.get(1).unwrap();
+
+    // 1. Propose threshold change
+    let action1 = ProposalAction::ChangeThreshold(1);
+    let proposal_id1 = client.create_proposal(&admin, &action1, &0u64, &0u64);
+    client.approve_proposal(&owner2, &proposal_id1, &0u64, &0u64);
+    client.execute_proposal(&admin, &proposal_id1, &1u64, &0u64);
+
+    // 2. Immediately propose another threshold change - should panic
+    let action2 = ProposalAction::ChangeThreshold(2);
+    client.create_proposal(&admin, &action2, &2u64, &0u64);
+}
+
+#[test]
+fn test_quorum_change_passes_after_cooldown() {
+    let (env, client, admin, owners) = setup_with_multisig();
+    let owner2 = owners.get(1).unwrap();
+
+    // 1. Propose threshold change
+    let action1 = ProposalAction::ChangeThreshold(1);
+    let proposal_id1 = client.create_proposal(&admin, &action1, &0u64, &0u64);
+    client.approve_proposal(&owner2, &proposal_id1, &0u64, &0u64);
+    client.execute_proposal(&admin, &proposal_id1, &1u64, &0u64);
+
+    // 2. Advance ledger to pass cooldown
+    env.ledger().set_sequence_number(env.ledger().sequence() + PROPOSAL_COOLDOWN_LEDGERS + 1);
+
+    // 3. Propose another threshold change - should succeed
+    let action2 = ProposalAction::ChangeThreshold(2);
+    let proposal_id2 = client.create_proposal(&admin, &action2, &2u64, &0u64);
+    client.approve_proposal(&owner2, &proposal_id2, &0u64, &0u64);
+    client.execute_proposal(&admin, &proposal_id2, &3u64, &0u64);
+
+    assert_eq!(client.get_multisig_threshold(), 2);
+}
+
+#[test]
 #[should_panic(expected = "new threshold cannot exceed number of owners")]
 fn test_threshold_rotation_invalid_exceeds_owners() {
     let (_env, client, admin, owners) = setup_with_multisig();

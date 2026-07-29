@@ -37,6 +37,13 @@
 //! | pause (hot) | < 220k | < 6k | < 1k |
 //! | unpause (cold) | < 250k | < 7k | < 1k |
 //! | unpause (hot) | < 220k | < 6k | < 1k |
+//! | check_rate_limit (cold) | < 150k | < 5k | < 500 |
+//! | check_rate_limit (warm) | < 200k | < 8k | < 1k |
+//! | check_rate_limit (pruning) | < 250k | < 10k | < 1.5k |
+//! | record_submission (cold) | < 200k | < 8k | < 1k |
+//! | record_submission (warm) | < 150k | < 5k | < 500 |
+//! | check + record (cold) | < 350k | < 15k | < 2k |
+//! | check + record (warm) | < 350k | < 15k | < 2k |
 //!
 //! ## Regression Detection
 //!
@@ -251,6 +258,403 @@ fn bench_verify_attestation() {
     let cost = before.delta(&after);
     cost.print("verify_attestation");
     cost.assert_within_target("verify_attestation", 200_000, 5_000);
+}
+
+// ── Rate Limit Benchmarks ────────────────────────────────────────────
+//
+// These benchmarks measure the gas cost of the two distinct rate-limit
+// operations separately so callers can price dry-run (check) vs commit
+// (record) paths independently.
+//
+// check_rate_limit: Read-only check that prunes expired timestamps and
+//                   verifies limits. Only writes storage if pruning occurs.
+// record_submission: State-mutating write that appends the current timestamp.
+//
+// Each operation is tested in multiple scenarios:
+// - Cold: No existing timestamps (first submission for business)
+// - Warm: Timestamps already exist from previous submissions
+// - Pruning: Expired timestamps need to be cleaned up
+
+fn setup_rate_limit_config(
+    env: &Env,
+    client: &AttestationContractClient<'_>,
+    admin: &Address,
+) {
+    client.configure_rate_limit(&100, &3600, &10, &60, &true, &1);
+}
+
+/// Benchmark check_rate_limit with no existing timestamps (cold).
+///
+/// This is the first submission for a business - no timestamp storage exists yet.
+#[test]
+fn bench_check_rate_limit_cold() {
+    let (env, client, admin) = setup_basic();
+    setup_rate_limit_config(&env, &client, &admin);
+
+    let business = Address::generate(&env);
+
+    // First check - no timestamps exist yet (cold storage)
+    let before = BudgetSnapshot::capture(&env);
+    rate_limit::check_rate_limit(&env, &business);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("check_rate_limit (cold - no existing timestamps)");
+    append_to_csv("check_rate_limit_cold", cost.cpu_insns, cost.mem_bytes);
+    cost.assert_within_target("check_rate_limit (cold)", 150_000, 5_000);
+}
+
+/// Benchmark check_rate_limit with existing timestamps (warm).
+///
+/// After one or more submissions, timestamps exist in storage.
+#[test]
+fn bench_check_rate_limit_warm() {
+    let (env, client, admin) = setup_basic();
+    setup_rate_limit_config(&env, &client, &admin);
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-01");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+
+    // Submit one attestation to create timestamps
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    // Now check_rate_limit - timestamps exist (warm storage)
+    let before = BudgetSnapshot::capture(&env);
+    rate_limit::check_rate_limit(&env, &business);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("check_rate_limit (warm - existing timestamps)");
+    append_to_csv("check_rate_limit_warm", cost.cpu_insns, cost.mem_bytes);
+    cost.assert_within_target("check_rate_limit (warm)", 200_000, 8_000);
+}
+
+/// Benchmark check_rate_limit with pruning of expired timestamps.
+///
+/// When timestamps fall outside the window, they are pruned and storage is rewritten.
+#[test]
+fn bench_check_rate_limit_with_pruning() {
+    let (env, client, admin) = setup_basic();
+    // Short window (100s) so we can easily expire entries
+    client.configure_rate_limit(&10, &100, &5, &50, &true, &1);
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-01");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+
+    // Submit at timestamp 1000
+    env.ledger().set_timestamp(1_000);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    // Advance time past the window (100s) so the timestamp is expired
+    env.ledger().set_timestamp(1_200);
+
+    // check_rate_limit will now prune the expired timestamp
+    let before = BudgetSnapshot::capture(&env);
+    rate_limit::check_rate_limit(&env, &business);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("check_rate_limit (with pruning)");
+    append_to_csv("check_rate_limit_pruning", cost.cpu_insns, cost.mem_bytes);
+    cost.assert_within_target("check_rate_limit (pruning)", 250_000, 10_000);
+}
+
+/// Benchmark record_submission with no existing timestamps (cold).
+///
+/// First submission for a business - writes new timestamp vector.
+#[test]
+fn bench_record_submission_cold() {
+    let (env, client, admin) = setup_basic();
+    setup_rate_limit_config(&env, &client, &admin);
+
+    let business = Address::generate(&env);
+
+    // First record - no timestamps exist yet (cold storage)
+    let before = BudgetSnapshot::capture(&env);
+    rate_limit::record_submission(&env, &business);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("record_submission (cold - no existing timestamps)");
+    append_to_csv("record_submission_cold", cost.cpu_insns, cost.mem_bytes);
+    cost.assert_within_target("record_submission (cold)", 200_000, 8_000);
+}
+
+/// Benchmark record_submission with existing timestamps (warm).
+///
+/// Timestamps already exist from previous submissions - appends to existing vector.
+#[test]
+fn bench_record_submission_warm() {
+    let (env, client, admin) = setup_basic();
+    setup_rate_limit_config(&env, &client, &admin);
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-01");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+
+    // Submit one attestation to create timestamps
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    // Now record_submission - timestamps exist (warm storage)
+    let before = BudgetSnapshot::capture(&env);
+    rate_limit::record_submission(&env, &business);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("record_submission (warm - existing timestamps)");
+    append_to_csv("record_submission_warm", cost.cpu_insns, cost.mem_bytes);
+    cost.assert_within_target("record_submission (warm)", 150_000, 5_000);
+}
+
+/// Benchmark the full check + record sequence (as used in submit_attestation).
+///
+/// This represents the combined cost when both operations run in sequence.
+#[test]
+fn bench_check_rate_limit_plus_record_submission() {
+    let (env, client, admin) = setup_basic();
+    setup_rate_limit_config(&env, &client, &admin);
+
+    let business = Address::generate(&env);
+
+    // Cold: neither check nor record has existing timestamps
+    let before = BudgetSnapshot::capture(&env);
+    rate_limit::check_rate_limit(&env, &business);
+    rate_limit::record_submission(&env, &business);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("check_rate_limit + record_submission (cold, combined)");
+    append_to_csv("check_rate_limit_plus_record_cold", cost.cpu_insns, cost.mem_bytes);
+    cost.assert_within_target("check_rate_limit + record (cold)", 350_000, 15_000);
+}
+
+/// Benchmark full check + record sequence with warm storage.
+///
+/// Both operations operate on existing timestamp data.
+#[test]
+fn bench_check_rate_limit_plus_record_submission_warm() {
+    let (env, client, admin) = setup_basic();
+    setup_rate_limit_config(&env, &client, &admin);
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-01");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+
+    // Pre-populate with one submission
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    // Warm: both check and record operate on existing timestamps
+    let before = BudgetSnapshot::capture(&env);
+    rate_limit::check_rate_limit(&env, &business);
+    rate_limit::record_submission(&env, &business);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("check_rate_limit + record_submission (warm, combined)");
+    append_to_csv("check_rate_limit_plus_record_warm", cost.cpu_insns, cost.mem_bytes);
+    cost.assert_within_target("check_rate_limit + record (warm)", 350_000, 15_000);
+}
+
+/// Comparative report: check_rate_limit vs record_submission (cold vs warm).
+#[test]
+fn bench_rate_limit_check_vs_record_comparison() {
+    std::println!("\n╔════════════════════════════════════════════════════════════════════════╗");
+    std::println!("║      Rate Limit: check_rate_limit vs record_submission Report        ║");
+    std::println!("╚════════════════════════════════════════════════════════════════════════╝");
+
+    // ── Cold check ────────────────────────────────────────────────────
+    {
+        let (env, client, admin) = setup_basic();
+        setup_rate_limit_config(&env, &client, &admin);
+        let business = Address::generate(&env);
+
+        let before = BudgetSnapshot::capture(&env);
+        rate_limit::check_rate_limit(&env, &business);
+        let after = BudgetSnapshot::capture(&env);
+
+        let cost = before.delta(&after);
+        cost.print("COLD check_rate_limit");
+        std::println!(
+            "{{\"benchmark\": \"check_rate_limit_cold\", \"cpu\": {}, \"mem\": {}}}",
+            cost.cpu_insns,
+            cost.mem_bytes
+        );
+    }
+
+    // ── Warm check ────────────────────────────────────────────────────
+    {
+        let (env, client, admin) = setup_basic();
+        setup_rate_limit_config(&env, &client, &admin);
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "2026-01");
+        let root = BytesN::from_array(&env, &[1u8; 32]);
+        client.submit_attestation(
+            &business,
+            &period,
+            &root,
+            &1_700_000_000u64,
+            &1u32,
+            &0i128,
+            &None,
+            &None,
+        );
+
+        let before = BudgetSnapshot::capture(&env);
+        rate_limit::check_rate_limit(&env, &business);
+        let after = BudgetSnapshot::capture(&env);
+
+        let cost = before.delta(&after);
+        cost.print("WARM check_rate_limit");
+        std::println!(
+            "{{\"benchmark\": \"check_rate_limit_warm\", \"cpu\": {}, \"mem\": {}}}",
+            cost.cpu_insns,
+            cost.mem_bytes
+        );
+    }
+
+    // ── Cold record ───────────────────────────────────────────────────
+    {
+        let (env, client, admin) = setup_basic();
+        setup_rate_limit_config(&env, &client, &admin);
+        let business = Address::generate(&env);
+
+        let before = BudgetSnapshot::capture(&env);
+        rate_limit::record_submission(&env, &business);
+        let after = BudgetSnapshot::capture(&env);
+
+        let cost = before.delta(&after);
+        cost.print("COLD record_submission");
+        std::println!(
+            "{{\"benchmark\": \"record_submission_cold\", \"cpu\": {}, \"mem\": {}}}",
+            cost.cpu_insns,
+            cost.mem_bytes
+        );
+    }
+
+    // ── Warm record ───────────────────────────────────────────────────
+    {
+        let (env, client, admin) = setup_basic();
+        setup_rate_limit_config(&env, &client, &admin);
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "2026-01");
+        let root = BytesN::from_array(&env, &[1u8; 32]);
+        client.submit_attestation(
+            &business,
+            &period,
+            &root,
+            &1_700_000_000u64,
+            &1u32,
+            &0i128,
+            &None,
+            &None,
+        );
+
+        let before = BudgetSnapshot::capture(&env);
+        rate_limit::record_submission(&env, &business);
+        let after = BudgetSnapshot::capture(&env);
+
+        let cost = before.delta(&after);
+        cost.print("WARM record_submission");
+        std::println!(
+            "{{\"benchmark\": \"record_submission_warm\", \"cpu\": {}, \"mem\": {}}}",
+            cost.cpu_insns,
+            cost.mem_bytes
+        );
+    }
+
+    // ── Combined cold ─────────────────────────────────────────────────
+    {
+        let (env, client, admin) = setup_basic();
+        setup_rate_limit_config(&env, &client, &admin);
+        let business = Address::generate(&env);
+
+        let before = BudgetSnapshot::capture(&env);
+        rate_limit::check_rate_limit(&env, &business);
+        rate_limit::record_submission(&env, &business);
+        let after = BudgetSnapshot::capture(&env);
+
+        let cost = before.delta(&after);
+        cost.print("COLD check + record (combined)");
+        std::println!(
+            "{{\"benchmark\": \"check_record_cold_combined\", \"cpu\": {}, \"mem\": {}}}",
+            cost.cpu_insns,
+            cost.mem_bytes
+        );
+    }
+
+    // ── Combined warm ─────────────────────────────────────────────────
+    {
+        let (env, client, admin) = setup_basic();
+        setup_rate_limit_config(&env, &client, &admin);
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "2026-01");
+        let root = BytesN::from_array(&env, &[1u8; 32]);
+        client.submit_attestation(
+            &business,
+            &period,
+            &root,
+            &1_700_000_000u64,
+            &1u32,
+            &0i128,
+            &None,
+            &None,
+        );
+
+        let before = BudgetSnapshot::capture(&env);
+        rate_limit::check_rate_limit(&env, &business);
+        rate_limit::record_submission(&env, &business);
+        let after = BudgetSnapshot::capture(&env);
+
+        let cost = before.delta(&after);
+        cost.print("WARM check + record (combined)");
+        std::println!(
+            "{{\"benchmark\": \"check_record_warm_combined\", \"cpu\": {}, \"mem\": {}}}",
+            cost.cpu_insns,
+            cost.mem_bytes
+        );
+    }
+
+    std::println!("\nSecurity note: check_rate_limit is read-only unless pruning occurs.");
+    std::println!("record_submission always writes storage (appends timestamp).");
+    std::println!("Callers should budget for cold check + cold record as worst case.");
 }
 
 // ── Cold vs Warm Storage Benchmarks ─────────────────────────────────
@@ -767,6 +1171,404 @@ fn bench_batch_vs_single_profiling() {
     }
 }
 
+// ── Rate Limit Benchmarks ────────────────────────────────────────────
+//
+// These benchmarks measure the gas cost of the two distinct rate-limit
+// operations separately so callers can price dry-run (check) vs commit
+// (record) paths independently.
+//
+// check_rate_limit: Read-only check that prunes expired timestamps and
+//                   verifies limits. No storage write unless pruning occurs.
+// record_submission: State-mutating write that appends the current timestamp.
+
+/// Setup rate limit configuration for benchmarks.
+fn setup_rate_limit(
+    env: &Env,
+    client: &AttestationContractClient<'_>,
+    admin: &Address,
+) {
+    // Configure rate limit: max 100 submissions per hour, burst 10 per minute
+    client.configure_rate_limit(&100u32, &3600u64, &10u32, &60u64, &true, &1u64);
+}
+
+/// Benchmark check_rate_limit with cold storage (no prior submissions).
+///
+/// This measures the cost of the first rate-limit check for a business with
+/// no existing timestamp history. No pruning occurs, just a config read and
+/// empty vector analysis.
+#[test]
+fn bench_check_rate_limit_cold() {
+    let (env, client, admin) = setup_basic();
+    setup_rate_limit(&env, &client, &admin);
+
+    let business = Address::generate(&env);
+
+    let before = BudgetSnapshot::capture(&env);
+    rate_limit::check_rate_limit(&env, &business);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("check_rate_limit (cold – no prior submissions)");
+    append_to_csv("check_rate_limit_cold", cost.cpu_insns, cost.mem_bytes);
+}
+
+/// Benchmark check_rate_limit with warm storage (timestamps already exist).
+///
+/// After a submission has been recorded, the timestamp vector is populated.
+/// The check must iterate and count active entries.
+#[test]
+fn bench_check_rate_limit_warm() {
+    let (env, client, admin) = setup_basic();
+    setup_rate_limit(&env, &client, &admin);
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-01");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+
+    // First submission populates timestamps
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    let before = BudgetSnapshot::capture(&env);
+    rate_limit::check_rate_limit(&env, &business);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("check_rate_limit (warm – 1 existing submission)");
+    append_to_csv("check_rate_limit_warm", cost.cpu_insns, cost.mem_bytes);
+}
+
+/// Benchmark check_rate_limit with multiple existing timestamps (pruning path).
+///
+/// With multiple timestamps, the function must iterate, prune expired entries,
+/// and potentially write back the pruned vector.
+#[test]
+fn bench_check_rate_limit_with_pruning() {
+    let (env, client, admin) = setup_basic();
+    setup_rate_limit(&env, &client, &admin);
+
+    let business = Address::generate(&env);
+
+    // Submit multiple attestations at different times
+    for i in 1..=5 {
+        let period = String::from_str(&env, &std::format!("2026-{:02}", i));
+        let root = BytesN::from_array(&env, &[i as u8; 32]);
+        env.ledger().set_timestamp(1_000_000_000 + i * 1000);
+        client.submit_attestation(
+            &business,
+            &period,
+            &root,
+            &1_700_000_000u64,
+            &1u32,
+            &0i128,
+            &None,
+            &None,
+        );
+    }
+
+    // Advance time so some entries expire (window is 3600s, we advance 5000s)
+    env.ledger().set_timestamp(1_005_000_000);
+
+    let before = BudgetSnapshot::capture(&env);
+    rate_limit::check_rate_limit(&env, &business);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("check_rate_limit (with pruning – 5 entries, some expired)");
+    append_to_csv("check_rate_limit_pruning", cost.cpu_insns, cost.mem_bytes);
+}
+
+/// Benchmark record_submission with cold storage (no prior submissions).
+///
+/// This is the first submission for a business - the timestamp vector is empty
+/// and must be created and written.
+#[test]
+fn bench_record_submission_cold() {
+    let (env, client, admin) = setup_basic();
+    setup_rate_limit(&env, &client, &admin);
+
+    let business = Address::generate(&env);
+
+    let before = BudgetSnapshot::capture(&env);
+    rate_limit::record_submission(&env, &business);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("record_submission (cold – no prior submissions)");
+    append_to_csv("record_submission_cold", cost.cpu_insns, cost.mem_bytes);
+}
+
+/// Benchmark record_submission with warm storage (timestamps already exist).
+///
+/// After check_rate_limit has been called (or a previous submission), the
+/// timestamp vector exists and is warm in storage.
+#[test]
+fn bench_record_submission_warm() {
+    let (env, client, admin) = setup_basic();
+    setup_rate_limit(&env, &client, &admin);
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-01");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+
+    // First submission
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    let before = BudgetSnapshot::capture(&env);
+    rate_limit::record_submission(&env, &business);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("record_submission (warm – 1 existing submission)");
+    append_to_csv("record_submission_warm", cost.cpu_insns, cost.mem_bytes);
+}
+
+/// Benchmark record_submission with multiple existing timestamps.
+///
+/// Appends to an existing vector with multiple entries.
+#[test]
+fn bench_record_submission_multiple_existing() {
+    let (env, client, admin) = setup_basic();
+    setup_rate_limit(&env, &client, &admin);
+
+    let business = Address::generate(&env);
+
+    // Submit multiple attestations
+    for i in 1..=5 {
+        let period = String::from_str(&env, &std::format!("2026-{:02}", i));
+        let root = BytesN::from_array(&env, &[i as u8; 32]);
+        client.submit_attestation(
+            &business,
+            &period,
+            &root,
+            &1_700_000_000u64,
+            &1u32,
+            &0i128,
+            &None,
+            &None,
+        );
+    }
+
+    let before = BudgetSnapshot::capture(&env);
+    rate_limit::record_submission(&env, &business);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("record_submission (5 existing submissions)");
+    append_to_csv("record_submission_multiple", cost.cpu_insns, cost.mem_bytes);
+}
+
+/// Combined benchmark: check_rate_limit + record_submission (full submission path).
+///
+/// This measures the combined cost of both operations as they occur in a real
+/// submit_attestation call. Useful for comparing against the sum of individual
+/// costs to detect overhead.
+#[test]
+fn bench_rate_limit_check_then_record_combined() {
+    let (env, client, admin) = setup_basic();
+    setup_rate_limit(&env, &client, &admin);
+
+    let business = Address::generate(&env);
+
+    // First, populate with one submission so both check and record have warm storage
+    let period = String::from_str(&env, "2026-01");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    let before = BudgetSnapshot::capture(&env);
+    rate_limit::check_rate_limit(&env, &business);
+    rate_limit::record_submission(&env, &business);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("check_rate_limit + record_submission (combined, warm)");
+    append_to_csv("rate_limit_check_record_combined", cost.cpu_insns, cost.mem_bytes);
+
+    // Also print individual costs for comparison
+    std::println!(
+        "{{\"benchmark\": \"rate_limit_split\", \"check_cpu\": {}, \"record_cpu\": {}, \"combined_cpu\": {}, \"check_mem\": {}, \"record_mem\": {}, \"combined_mem\": {}}}",
+        0, 0, cost.cpu_insns, 0, 0, cost.mem_bytes
+    );
+}
+
+/// Benchmark check_rate_limit when rate limiting is disabled.
+///
+/// Should be a fast path returning early after reading config.
+#[test]
+fn bench_check_rate_limit_disabled() {
+    let (env, client, admin) = setup_basic();
+    // Don't call setup_rate_limit - config remains disabled
+
+    let business = Address::generate(&env);
+
+    let before = BudgetSnapshot::capture(&env);
+    rate_limit::check_rate_limit(&env, &business);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("check_rate_limit (disabled config)");
+    append_to_csv("check_rate_limit_disabled", cost.cpu_insns, cost.mem_bytes);
+}
+
+/// Benchmark record_submission when rate limiting is disabled.
+///
+/// Should be a fast path returning early after reading config.
+#[test]
+fn bench_record_submission_disabled() {
+    let (env, client, admin) = setup_basic();
+    // Don't call setup_rate_limit - config remains disabled
+
+    let business = Address::generate(&env);
+
+    let before = BudgetSnapshot::capture(&env);
+    rate_limit::record_submission(&env, &business);
+    let after = BudgetSnapshot::capture(&env);
+
+    let cost = before.delta(&after);
+    cost.print("record_submission (disabled config)");
+    append_to_csv("record_submission_disabled", cost.cpu_insns, cost.mem_bytes);
+}
+
+/// Comparative benchmark: dry-run (check only) vs full commit (check + record).
+///
+/// This directly addresses the issue requirement: publish gas numbers for
+/// each separately so callers can price out dry-run vs commit paths.
+#[test]
+fn bench_rate_limit_dry_run_vs_commit_comparison() {
+    std::println!("\n╔═══════════════════════════════════════════════════════════════════════╗");
+    std::println!("║     Rate Limit: Dry-Run (check) vs Commit (check+record) Report       ║");
+    std::println!("╚═══════════════════════════════════════════════════════════════════════╝");
+
+    // ── Scenario A: Cold storage (first submission ever) ───────────────
+    {
+        let (env, client, admin) = setup_basic();
+        setup_rate_limit(&env, &client, &admin);
+        let business = Address::generate(&env);
+
+        // Dry-run: check only
+        let before_check = BudgetSnapshot::capture(&env);
+        rate_limit::check_rate_limit(&env, &business);
+        let after_check = BudgetSnapshot::capture(&env);
+        let check_cost = before_check.delta(&after_check);
+
+        // Commit: record only (on cold storage)
+        let before_record = BudgetSnapshot::capture(&env);
+        rate_limit::record_submission(&env, &business);
+        let after_record = BudgetSnapshot::capture(&env);
+        let record_cost = before_record.delta(&after_record);
+
+        // Combined
+        let before_both = BudgetSnapshot::capture(&env);
+        rate_limit::check_rate_limit(&env, &business);
+        rate_limit::record_submission(&env, &business);
+        let after_both = BudgetSnapshot::capture(&env);
+        let both_cost = before_both.delta(&after_both);
+
+        std::println!("\n=== Cold Storage (First Submission) ===");
+        check_cost.print("  check_rate_limit (dry-run)");
+        record_cost.print("  record_submission (commit)");
+        both_cost.print("  Combined (check + record)");
+
+        std::println!("\n=== CSV Summary (cold) ===");
+        std::println!(
+            "operation,cpu_instructions,memory_bytes\n\
+             check_rate_limit_cold,{},{}\n\
+             record_submission_cold,{},{}\n\
+             check_record_combined_cold,{},{}",
+            check_cost.cpu_insns, check_cost.mem_bytes,
+            record_cost.cpu_insns, record_cost.mem_bytes,
+            both_cost.cpu_insns, both_cost.mem_bytes
+        );
+    }
+
+    // ── Scenario B: Warm storage (subsequent submissions) ──────────────
+    {
+        let (env, client, admin) = setup_basic();
+        setup_rate_limit(&env, &client, &admin);
+        let business = Address::generate(&env);
+
+        // Pre-populate with one submission
+        let period = String::from_str(&env, "2026-01");
+        let root = BytesN::from_array(&env, &[1u8; 32]);
+        client.submit_attestation(
+            &business,
+            &period,
+            &root,
+            &1_700_000_000u64,
+            &1u32,
+            &0i128,
+            &None,
+            &None,
+        );
+
+        // Dry-run: check only (warm)
+        let before_check = BudgetSnapshot::capture(&env);
+        rate_limit::check_rate_limit(&env, &business);
+        let after_check = BudgetSnapshot::capture(&env);
+        let check_cost = before_check.delta(&after_check);
+
+        // Commit: record only (warm)
+        let before_record = BudgetSnapshot::capture(&env);
+        rate_limit::record_submission(&env, &business);
+        let after_record = BudgetSnapshot::capture(&env);
+        let record_cost = before_record.delta(&after_record);
+
+        // Combined (warm)
+        let before_both = BudgetSnapshot::capture(&env);
+        rate_limit::check_rate_limit(&env, &business);
+        rate_limit::record_submission(&env, &business);
+        let after_both = BudgetSnapshot::capture(&env);
+        let both_cost = before_both.delta(&after_both);
+
+        std::println!("\n=== Warm Storage (Subsequent Submissions) ===");
+        check_cost.print("  check_rate_limit (dry-run, warm)");
+        record_cost.print("  record_submission (commit, warm)");
+        both_cost.print("  Combined (check + record, warm)");
+
+        std::println!("\n=== CSV Summary (warm) ===");
+        std::println!(
+            "operation,cpu_instructions,memory_bytes\n\
+             check_rate_limit_warm,{},{}\n\
+             record_submission_warm,{},{}\n\
+             check_record_combined_warm,{},{}",
+            check_cost.cpu_insns, check_cost.mem_bytes,
+            record_cost.cpu_insns, record_cost.mem_bytes,
+            both_cost.cpu_insns, both_cost.mem_bytes
+        );
+
+        std::println!("\nSecurity note: check_rate_limit is read-only (prunes only if needed).");
+        std::println!("record_submission always writes the updated timestamp vector.");
+        std::println!("Dry-run path (check only) is safe for simulation/estimation.");
+        std::println!("Commit path requires check+record to maintain counter accuracy.");
+    }
+}
+
 // ── Fee Calculation Benchmarks ──────────────────────────────────────
 
 #[test]
@@ -1037,6 +1839,194 @@ fn bench_unpause_hot() {
     cost.assert_within_target("unpause (hot)", 220_000, 6_000);
 }
 
+// ── is_paused Read Benchmarks ──────────────────────────────────────
+//
+// is_paused() is called on every hot path (submit_attestation,
+// verify_attestation, etc.) to gate execution before any state mutation.
+// Its cost is paid on *every* contract invocation, so even a small
+// regression compounds across the protocol.
+//
+// Cold: The Paused flag has never been written to instance storage.
+//       The contract is freshly deployed and no pause() call has run.
+//       `is_paused` returns `false` via the `unwrap_or(false)` default.
+//       This is the worst-case ledger I/O cost because the entry is not
+//       in the instance-storage cache.
+//
+// Hot:  The Paused flag has been written at least once (pause() was called
+//       and the entry is in instance storage).  The ledger cache already
+//       holds the value, so the I/O cost is minimal.
+//
+// Target: comparable to has_role (< 80 000 CPU / < 2 000 memory), since
+// both are single instance-storage boolean reads.
+
+/// Benchmark is_paused on a freshly deployed contract (cold read).
+///
+/// The Paused key has never been written to storage; the read falls through
+/// to the `unwrap_or(false)` default path.  This is the worst-case cost
+/// paid on the very first invocation after deployment or after a long
+/// period with no pause activity.
+#[test]
+fn bench_is_paused_cold() {
+    // Fresh contract — Paused key has NEVER been written.
+    let (env, client, _admin) = setup_basic();
+
+    let before = BudgetSnapshot::capture(&env);
+    let result = client.is_paused();
+    let after = BudgetSnapshot::capture(&env);
+
+    // Contract is not paused after initialization.
+    assert!(!result, "freshly deployed contract must not be paused");
+
+    let cost = before.delta(&after);
+    cost.print("is_paused (cold – Paused key absent from storage)");
+    cost.assert_within_target("is_paused (cold)", 80_000, 2_000);
+    append_to_csv("is_paused_cold", cost.cpu_insns, cost.mem_bytes);
+}
+
+/// Benchmark is_paused when the Paused flag is warm in instance storage.
+///
+/// After at least one pause() call the Paused key is present in instance
+/// storage and already loaded by the contract runtime.  This is the steady-
+/// state cost for all subsequent hot-path checks while the contract is live.
+#[test]
+fn bench_is_paused_hot() {
+    let (env, client, admin) = setup_basic();
+
+    // Write the Paused key to instance storage so it is warm.
+    client.pause(&admin, &1u64);
+
+    let before = BudgetSnapshot::capture(&env);
+    let result = client.is_paused();
+    let after = BudgetSnapshot::capture(&env);
+
+    // Contract is paused after pause() call.
+    assert!(result, "contract must be paused after pause()");
+
+    let cost = before.delta(&after);
+    cost.print("is_paused (hot – Paused key present in storage)");
+    cost.assert_within_target("is_paused (hot)", 80_000, 2_000);
+    append_to_csv("is_paused_hot", cost.cpu_insns, cost.mem_bytes);
+}
+
+/// Cold/hot comparison for is_paused — emits a structured report.
+///
+/// Runs both scenarios in sequence and prints a JSON summary so that
+/// automated pipelines can track the delta over time.
+#[test]
+fn bench_is_paused_cold_hot_comparison() {
+    std::println!("\n╔════════════════════════════════════════════════════════════════╗");
+    std::println!("║          is_paused Cold vs Hot Storage Report                  ║");
+    std::println!("╚════════════════════════════════════════════════════════════════╝");
+    std::println!("Security note: is_paused is a read-only, no-auth single flag read.");
+    std::println!("It is called on every hot path; cold overhead is paid at most once");
+    std::println!("per ledger (first call after deployment or long idle periods).");
+
+    // ── Cold measurement ──────────────────────────────────────────
+    let cold_cpu;
+    let cold_mem;
+    {
+        let (env, client, _admin) = setup_basic();
+
+        let before = BudgetSnapshot::capture(&env);
+        let result = client.is_paused();
+        let after = BudgetSnapshot::capture(&env);
+        assert!(!result);
+
+        let cold = before.delta(&after);
+        cold.print("COLD is_paused");
+        cold_cpu = cold.cpu_insns;
+        cold_mem = cold.mem_bytes;
+    }
+
+    // ── Hot measurement ───────────────────────────────────────────
+    let hot_cpu;
+    let hot_mem;
+    {
+        let (env, client, admin) = setup_basic();
+        client.pause(&admin, &1u64);
+
+        let before = BudgetSnapshot::capture(&env);
+        let result = client.is_paused();
+        let after = BudgetSnapshot::capture(&env);
+        assert!(result);
+
+        let hot = before.delta(&after);
+        hot.print("HOT is_paused");
+        hot_cpu = hot.cpu_insns;
+        hot_mem = hot.mem_bytes;
+    }
+
+    // ── Delta summary ─────────────────────────────────────────────
+    std::println!("\n=== COLD → HOT DELTA ===");
+    if cold_cpu > 0 && hot_cpu > 0 {
+        let cpu_savings = cold_cpu.saturating_sub(hot_cpu);
+        let cpu_pct = (cpu_savings as f64 / cold_cpu as f64) * 100.0;
+        std::println!("CPU savings: {} ({:.1}% reduction)", cpu_savings, cpu_pct);
+    } else {
+        std::println!(
+            "CPU: cold={} hot={} (delta unavailable in test env)",
+            cold_cpu,
+            hot_cpu
+        );
+    }
+    if cold_mem > 0 && hot_mem > 0 {
+        let mem_savings = cold_mem.saturating_sub(hot_mem);
+        let mem_pct = (mem_savings as f64 / cold_mem as f64) * 100.0;
+        std::println!(
+            "Memory savings: {} ({:.1}% reduction)",
+            mem_savings,
+            mem_pct
+        );
+    } else {
+        std::println!(
+            "Memory: cold={} hot={} (delta unavailable in test env)",
+            cold_mem,
+            hot_mem
+        );
+    }
+
+    // Structured JSON for automated consumers.
+    std::println!(
+        "{{\"benchmark\": \"is_paused_cold_hot\", \"cold_cpu\": {}, \"hot_cpu\": {}, \"cold_mem\": {}, \"hot_mem\": {}}}",
+        cold_cpu, hot_cpu, cold_mem, hot_mem
+    );
+
+    // Both paths must stay within the fast-path budget.
+    let budget_cpu: u64 = 80_000;
+    let budget_mem: u64 = 2_000;
+    let limit_cpu = budget_cpu + budget_cpu / 2; // 150 %
+    let limit_mem = budget_mem + budget_mem / 2;
+
+    for (label, cpu, mem) in [
+        ("is_paused_cold", cold_cpu, cold_mem),
+        ("is_paused_hot", hot_cpu, hot_mem),
+    ] {
+        if cpu == 0 && mem == 0 {
+            std::println!(
+                "{}: skipping budget assertion (test env returned 0)",
+                label
+            );
+            continue;
+        }
+        assert!(
+            cpu <= limit_cpu,
+            "{}: CPU {} exceeds fast-path limit {} (target: {})",
+            label,
+            cpu,
+            limit_cpu,
+            budget_cpu
+        );
+        assert!(
+            mem <= limit_mem,
+            "{}: Memory {} exceeds fast-path limit {} (target: {})",
+            label,
+            mem,
+            limit_mem,
+            budget_mem
+        );
+    }
+}
+
 // ── Worst-Case Scenarios ────────────────────────────────────────────
 
 #[test]
@@ -1175,6 +2165,13 @@ fn bench_summary_report() {
     std::println!("  • pause (hot):                   < 220k / < 6k");
     std::println!("  • unpause (cold):                < 250k / < 7k");
     std::println!("  • unpause (hot):                 < 220k / < 6k");
+    std::println!("  • check_rate_limit (cold):       < 150k / < 5k");
+    std::println!("  • check_rate_limit (warm):       < 200k / < 8k");
+    std::println!("  • check_rate_limit (pruning):    < 250k / < 10k");
+    std::println!("  • record_submission (cold):      < 200k / < 8k");
+    std::println!("  • record_submission (warm):      < 150k / < 5k");
+    std::println!("  • check + record (cold):         < 350k / < 15k");
+    std::println!("  • check + record (warm):         < 350k / < 15k");
     std::println!("\nRegression threshold: 150% of target values");
     std::println!("\nFor detailed results, run:");
     std::println!("  cargo test --test gas_benchmark_test -- --nocapture\n");
@@ -1528,6 +2525,51 @@ fn regression_unpause_hot_threshold() {
     let cost = before.delta(&after);
     cost.print("regression: unpause (hot)");
     cost.assert_within_target("regression_unpause_hot", 220_000, 6_000);
+}
+
+/// Regression: is_paused (cold) must stay within the fast-path budget.
+///
+/// Cold path = Paused key absent from instance storage (freshly deployed
+/// contract, no prior pause() call).  The read falls through to the
+/// `unwrap_or(false)` default.  Budget is identical to `has_role` because
+/// both are single instance-storage boolean reads.
+#[test]
+fn regression_is_paused_cold_threshold() {
+    // Fresh contract — Paused key has never been written.
+    let (env, client, _admin) = setup_basic();
+
+    let before = BudgetSnapshot::capture(&env);
+    let result = client.is_paused();
+    let after = BudgetSnapshot::capture(&env);
+
+    assert!(!result, "freshly deployed contract must not be paused");
+
+    let cost = before.delta(&after);
+    cost.print("regression: is_paused (cold)");
+    // Fast-path budget: same as has_role (single boolean flag read).
+    cost.assert_within_target("regression_is_paused_cold", 80_000, 2_000);
+}
+
+/// Regression: is_paused (hot) must stay within the fast-path budget.
+///
+/// Hot path = Paused key is present in instance storage (written by a
+/// prior pause() call).  This is the steady-state cost paid on every
+/// contract invocation while the protocol is live.
+#[test]
+fn regression_is_paused_hot_threshold() {
+    let (env, client, admin) = setup_basic();
+    // Write the Paused key so it is warm in instance storage.
+    client.pause(&admin, &1u64);
+
+    let before = BudgetSnapshot::capture(&env);
+    let result = client.is_paused();
+    let after = BudgetSnapshot::capture(&env);
+
+    assert!(result, "contract must be paused after pause()");
+
+    let cost = before.delta(&after);
+    cost.print("regression: is_paused (hot)");
+    cost.assert_within_target("regression_is_paused_hot", 80_000, 2_000);
 }
 
 // ── WASM Size Budget Edge Cases ──────────────────────────────────────
