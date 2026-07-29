@@ -8,8 +8,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Bytes, Env, String, Symbol,
-    TryFromVal, Val, Vec,
+    contract, contractimpl, contracttype, symbol_short, Address, Bytes, Env, String, Vec,
 };
 
 /// Unique identifier for a Stellar network
@@ -123,6 +122,7 @@ pub struct VersionInfo {
 }
 
 /// Events
+#[allow(dead_code)]
 mod events {
     use super::*;
 
@@ -197,7 +197,7 @@ mod events {
     ) {
         env.events().publish(
             (symbol_short!("upgraded"), new_version),
-            (new_impl.clone(), migration_data.map(|d| d.clone())),
+            (new_impl.clone(), migration_data.cloned()),
         );
     }
 
@@ -210,6 +210,7 @@ mod events {
 }
 
 /// Access control
+#[allow(dead_code)]
 mod access_control {
     use super::*;
 
@@ -302,6 +303,7 @@ mod access_control {
 }
 
 /// Storage helpers
+#[allow(dead_code)]
 mod storage {
     use super::*;
 
@@ -347,7 +349,7 @@ mod storage {
             .instance()
             .get(&networks_key)
             .unwrap_or(Vec::new(env));
-        if !networks.contains(&network_id) {
+        if !networks.contains(network_id) {
             networks.push_back(network_id);
             env.storage().instance().set(&networks_key, &networks);
         }
@@ -464,6 +466,7 @@ mod storage {
 }
 
 /// Validation
+#[allow(dead_code)]
 mod validation {
     use super::*;
 

@@ -6,7 +6,10 @@ publish = false
 rust-version = "1.81.0"
 
 [lib]
-crate-type = ["cdylib"]
+# "rlib" added so this crate can be imported as a normal Rust library by
+# scripts/dry-run-proposal (a cross-contract simulation tool) — every other
+# contract in this workspace already builds both crate-types.
+crate-type = ["cdylib", "rlib"]
 doctest = false
 
 [dependencies]
