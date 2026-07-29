@@ -1,3 +1,4 @@
+use crate::events as events;
 //! # Flat Fee Mechanism for Attestations
 //!
 //! This module implements a flat fee mechanism for the Veritasor attestation protocol.
@@ -91,6 +92,19 @@ pub fn remove_collector_rotation_proposal(env: &Env) {
         .remove(&FlatFeeDataKey::CollectorRotationProposal);
 }
 
+pub fn get_pending_dao_rotation(env: &Env) -> Option<DaoRotationProposal> {
+    env.storage().instance().get(&FlatFeeDataKey::PendingDaoRotation)
+}
+pub fn set_pending_dao_rotation(env: &Env, proposal: &DaoRotationProposal) {
+    env.storage().instance().set(&FlatFeeDataKey::PendingDaoRotation, proposal);
+}
+pub fn remove_pending_dao_rotation(env: &Env) {
+    env.storage().instance().remove(&FlatFeeDataKey::PendingDaoRotation);
+}
+pub fn has_pending_dao_rotation(env: &Env) -> bool {
+    env.storage().instance().has(&FlatFeeDataKey::PendingDaoRotation)
+}
+
 /// Returns true when a collector rotation proposal is pending.
 pub fn has_pending_collector_rotation(env: &Env) -> bool {
     env.storage()
@@ -99,6 +113,34 @@ pub fn has_pending_collector_rotation(env: &Env) -> bool {
 }
 
 /// Set the Protocol DAO contract address.
+pub fn propose_dao_rotation(env: &Env, caller: &Address, new_dao: &Address) {
+    caller.require_auth();
+    let current_dao = get_dao(env).unwrap_or(env.current_contract_address());
+    assert!(!has_pending_dao_rotation(env), "DAO rotation already pending");
+    let proposal = DaoRotationProposal {
+        old_dao: current_dao,
+        new_dao: new_dao.clone(),
+    };
+    set_pending_dao_rotation(env, &proposal);
+    events::emit_dao_rotation_proposed(env, &proposal.old_dao, &proposal.new_dao);
+}
+pub fn accept_dao_rotation(env: &Env, caller: &Address) {
+    caller.require_auth();
+    let proposal = get_pending_dao_rotation(env).expect("no pending DAO rotation");
+    assert!(caller == &proposal.new_dao, "only proposed new DAO may accept rotation");
+    set_dao(env, &proposal.new_dao);
+    remove_pending_dao_rotation(env);
+    events::emit_dao_rotation_accepted(env, &proposal.old_dao, &proposal.new_dao);
+}
+
+/// Cancel a pending DAO rotation. Only the old DAO (original proposer) may cancel.
+pub fn cancel_dao_rotation(env: &Env, caller: &Address) {
+    caller.require_auth();
+    let proposal = get_pending_dao_rotation(env).expect("no pending DAO rotation");
+    assert!(caller == &proposal.old_dao, "only the current DAO may cancel rotation");
+    remove_pending_dao_rotation(env);
+}
+
 pub fn set_dao(env: &Env, dao: &Address) {
     env.storage().instance().set(&FlatFeeDataKey::Dao, dao);
     persist_epoch_snapshot(env);

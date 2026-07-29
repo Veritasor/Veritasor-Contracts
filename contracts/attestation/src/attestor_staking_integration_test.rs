@@ -1907,3 +1907,345 @@ fn batch_submission_collects_fees_per_item() {
     // 3 items * 1000 fee each = 3000 total
     assert_eq!(attestor_balance_before - attestor_balance_after, 3_000i128);
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  Dispute Deadline Rollback — Staking Integration Tests
+// ════════════════════════════════════════════════════════════════════
+
+/// Deadline rollback unlocks a previously locked attestor.
+#[test]
+fn test_deadline_rollback_unlocks_attestor() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Deploy attestation FIRST so we can use its address as dispute contract
+    let attestation_id = env.register(AttestationContract, ());
+    let att_client = AttestationContractClient::new(&env, &attestation_id);
+    let admin = Address::generate(&env);
+    att_client.initialize(&admin, &0u64);
+
+    // Deploy token
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    let token_client = token::StellarAssetClient::new(&env, &token);
+
+    // Deploy staking with attestation as the dispute contract
+    let staking_id = env.register(AttestorStakingContract, ());
+    let staking_addr = staking_id;
+    let staking = StakingClient::new(&env, &staking_addr);
+    let staking_admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &attestation_id,
+        &0u64,
+    );
+
+    att_client.set_attestor_staking_contract(&admin, &staking_addr);
+
+    let attestor = Address::generate(&env);
+    att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
+    token_client.mint(&attestor, &2_000i128);
+    staking.stake(&attestor, &1_000i128);
+
+    // Submit attestation
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    att_client.submit_attestation_as_attestor(
+        &attestor, &business, &period, &root,
+        &1_700_000_000u64, &1u32, &None,
+    );
+
+    // Open dispute — locks the attestor
+    let challenger = Address::generate(&env);
+    let dispute_id = att_client.open_dispute(
+        &challenger, &business, &period,
+        &DisputeType::DataIntegrity,
+        &String::from_str(&env, "bad data"),
+    );
+
+    // Verify attestor is locked
+    let locked = env.as_contract(&attestation_id, || {
+        dispute::is_attestor_locked(&env, &attestor)
+    });
+    assert!(locked, "attestor should be locked after dispute opened");
+
+    // Set short deadline and advance past it
+    att_client.set_dispute_deadline(&admin, &3600u64);
+    let now = env.ledger().timestamp();
+    env.ledger().set_timestamp(now + 3601);
+
+    // Roll back the dispute
+    let dispute_ids = soroban_sdk::vec![&env, dispute_id];
+    let count = att_client.check_and_rollback_disputes(&admin, &dispute_ids, &10u32);
+    assert_eq!(count, 1, "dispute should be rolled back");
+
+    // Verify attestor is now unlocked
+    let unlocked = env.as_contract(&attestation_id, || {
+        !dispute::is_attestor_locked(&env, &attestor)
+    });
+    assert!(unlocked, "attestor should be unlocked after deadline rollback");
+
+    // Verify dispute is closed with rollback resolution
+    let dispute = att_client.get_dispute(&dispute_id).unwrap();
+    assert_eq!(dispute.status, DisputeStatus::Closed);
+    if let OptionalResolution::Some(ref resolution) = dispute.resolution {
+        assert_eq!(resolution.outcome, DisputeOutcome::Rejected);
+        assert_eq!(
+            resolution.notes,
+            String::from_str(&env, "Automatic rollback: dispute resolution deadline exceeded")
+        );
+    } else {
+        panic!("expected rollback resolution");
+    }
+}
+
+/// Before the deadline, attestor remains locked after check_and_rollback_disputes.
+#[test]
+fn test_deadline_rollback_before_deadline_keeps_locked() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let attestation_id = env.register(AttestationContract, ());
+    let att_client = AttestationContractClient::new(&env, &attestation_id);
+    let admin = Address::generate(&env);
+    att_client.initialize(&admin, &0u64);
+
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    let token_client = token::StellarAssetClient::new(&env, &token);
+
+    let staking_id = env.register(AttestorStakingContract, ());
+    let staking_addr = staking_id;
+    let staking = StakingClient::new(&env, &staking_addr);
+    let staking_admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &attestation_id,
+        &0u64,
+    );
+
+    att_client.set_attestor_staking_contract(&admin, &staking_addr);
+
+    let attestor = Address::generate(&env);
+    att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
+    token_client.mint(&attestor, &2_000i128);
+    staking.stake(&attestor, &1_000i128);
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    att_client.submit_attestation_as_attestor(
+        &attestor, &business, &period, &root,
+        &1_700_000_000u64, &1u32, &None,
+    );
+
+    let challenger = Address::generate(&env);
+    let dispute_id = att_client.open_dispute(
+        &challenger, &business, &period,
+        &DisputeType::DataIntegrity,
+        &String::from_str(&env, "bad data"),
+    );
+
+    // Set short deadline but DON'T advance time past it
+    att_client.set_dispute_deadline(&admin, &3600u64);
+
+    // Call check_and_rollback — should do nothing (not past deadline)
+    let dispute_ids = soroban_sdk::vec![&env, dispute_id];
+    let count = att_client.check_and_rollback_disputes(&admin, &dispute_ids, &10u32);
+    assert_eq!(count, 0, "no disputes should be rolled back before deadline");
+
+    // Attestor should remain locked
+    let still_locked = env.as_contract(&attestation_id, || {
+        dispute::is_attestor_locked(&env, &attestor)
+    });
+    assert!(still_locked, "attestor should remain locked before deadline");
+
+    // Dispute should still be Open
+    let dispute = att_client.get_dispute(&dispute_id).unwrap();
+    assert_eq!(dispute.status, DisputeStatus::Open);
+}
+
+/// Attestor with multiple disputes: rolling back one keeps them partially locked.
+#[test]
+fn test_deadline_rollback_multiple_disputes_partial_unlock() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let attestation_id = env.register(AttestationContract, ());
+    let att_client = AttestationContractClient::new(&env, &attestation_id);
+    let admin = Address::generate(&env);
+    att_client.initialize(&admin, &0u64);
+
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    let token_client = token::StellarAssetClient::new(&env, &token);
+
+    let staking_id = env.register(AttestorStakingContract, ());
+    let staking_addr = staking_id;
+    let staking = StakingClient::new(&env, &staking_addr);
+    let staking_admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &attestation_id,
+        &0u64,
+    );
+
+    att_client.set_attestor_staking_contract(&admin, &staking_addr);
+
+    let attestor = Address::generate(&env);
+    att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
+    token_client.mint(&attestor, &5_000i128);
+    staking.stake(&attestor, &1_000i128);
+
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+
+    // Attestor submits two separate attestations
+    let business1 = Address::generate(&env);
+    let period1 = String::from_str(&env, "2026-01");
+    att_client.submit_attestation_as_attestor(
+        &attestor, &business1, &period1, &root,
+        &1_700_000_000u64, &1u32, &None,
+    );
+
+    let business2 = Address::generate(&env);
+    let period2 = String::from_str(&env, "2026-02");
+    att_client.submit_attestation_as_attestor(
+        &attestor, &business2, &period2, &root,
+        &1_700_000_000u64, &1u32, &None,
+    );
+
+    let challenger = Address::generate(&env);
+
+    // Open disputes against both attestations (attestor locked twice)
+    let dispute_id1 = att_client.open_dispute(
+        &challenger, &business1, &period1,
+        &DisputeType::DataIntegrity,
+        &String::from_str(&env, "bad 1"),
+    );
+    let dispute_id2 = att_client.open_dispute(
+        &challenger, &business2, &period2,
+        &DisputeType::RevenueMismatch,
+        &String::from_str(&env, "bad 2"),
+    );
+
+    // Set short deadline and advance past it
+    att_client.set_dispute_deadline(&admin, &3600u64);
+    let now = env.ledger().timestamp();
+    env.ledger().set_timestamp(now + 3601);
+
+    // Roll back only dispute 1
+    let dispute_ids_1 = soroban_sdk::vec![&env, dispute_id1];
+    let count = att_client.check_and_rollback_disputes(&admin, &dispute_ids_1, &10u32);
+    assert_eq!(count, 1, "dispute 1 should be rolled back");
+
+    // Attestor should still be locked (dispute 2 still active)
+    let still_locked = env.as_contract(&attestation_id, || {
+        dispute::is_attestor_locked(&env, &attestor)
+    });
+    assert!(still_locked, "attestor should remain locked with second dispute active");
+
+    // Roll back dispute 2
+    let dispute_ids_2 = soroban_sdk::vec![&env, dispute_id2];
+    let count2 = att_client.check_and_rollback_disputes(&admin, &dispute_ids_2, &10u32);
+    assert_eq!(count2, 1, "dispute 2 should be rolled back");
+
+    // Now attestor should be fully unlocked
+    let unlocked = env.as_contract(&attestation_id, || {
+        !dispute::is_attestor_locked(&env, &attestor)
+    });
+    assert!(unlocked, "attestor should be fully unlocked after both disputes rolled back");
+}
+
+/// Attestor can submit new attestations after being unlocked by rollback.
+#[test]
+fn test_deadline_rollback_attestor_can_submit_after_unlock() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let attestation_id = env.register(AttestationContract, ());
+    let att_client = AttestationContractClient::new(&env, &attestation_id);
+    let admin = Address::generate(&env);
+    att_client.initialize(&admin, &0u64);
+
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    let token_client = token::StellarAssetClient::new(&env, &token);
+
+    let staking_id = env.register(AttestorStakingContract, ());
+    let staking_addr = staking_id;
+    let staking = StakingClient::new(&env, &staking_addr);
+    let staking_admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &attestation_id,
+        &0u64,
+    );
+
+    att_client.set_attestor_staking_contract(&admin, &staking_addr);
+
+    let attestor = Address::generate(&env);
+    att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
+    token_client.mint(&attestor, &3_000i128);
+    staking.stake(&attestor, &1_000i128);
+
+    // First attestation
+    let business1 = Address::generate(&env);
+    let period1 = String::from_str(&env, "2026-01");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    att_client.submit_attestation_as_attestor(
+        &attestor, &business1, &period1, &root,
+        &1_700_000_000u64, &1u32, &None,
+    );
+
+    // Open dispute — locks attestor
+    let challenger = Address::generate(&env);
+    let dispute_id = att_client.open_dispute(
+        &challenger, &business1, &period1,
+        &DisputeType::DataIntegrity,
+        &String::from_str(&env, "bad"),
+    );
+
+    // Set short deadline and advance past it
+    att_client.set_dispute_deadline(&admin, &3600u64);
+    let now = env.ledger().timestamp();
+    env.ledger().set_timestamp(now + 3601);
+
+    // Roll back
+    let dispute_ids = soroban_sdk::vec![&env, dispute_id];
+    let count = att_client.check_and_rollback_disputes(&admin, &dispute_ids, &10u32);
+    assert_eq!(count, 1);
+
+    // Verify unlocked
+    let unlocked = env.as_contract(&attestation_id, || {
+        !dispute::is_attestor_locked(&env, &attestor)
+    });
+    assert!(unlocked, "attestor must be unlocked after rollback");
+
+    // Submit a new attestation — should succeed
+    let business2 = Address::generate(&env);
+    let period2 = String::from_str(&env, "2026-03");
+    att_client.submit_attestation_as_attestor(
+        &attestor, &business2, &period2, &root,
+        &1_700_000_001u64, &1u32, &None,
+    );
+
+    let stored = att_client.get_attestation(&business2, &period2);
+    assert!(stored.is_some(), "attestor should be able to submit after unlock");
+}

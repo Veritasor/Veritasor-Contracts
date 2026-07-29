@@ -126,6 +126,49 @@
   Only the contract admin can register or update portfolios. Unauthorized
   callers panic with `"caller is not admin"`.
 
+### Attestation Contract — Dispute Deadline Rollback
+
+- **Dispute deadline rollback — strict boundary** (SI-DD-001)  
+  A dispute is rolled back only when elapsed time strictly exceeds the
+  deadline (`elapsed > deadline`). At the exact boundary, the dispute is not
+  rolled back.
+
+- **Dispute deadline rollback — clock skew guard** (SI-DD-002)  
+  If the dispute timestamp is in the future, elapsed time is treated as zero,
+  preventing premature rollback from ledger clock inconsistencies.
+
+- **Dispute deadline rollback — only Open disputes eligible** (SI-DD-003)  
+  Only `Open` disputes are eligible. `Resolved` or `Closed` disputes are
+  silently skipped.
+
+- **Dispute deadline rollback — safe attestor unlock** (SI-DD-004)  
+  `unlock_attestor` is a safe no-op when no lock exists, ensuring
+  idempotent handling.
+
+- **Dispute deadline rollback — CPU budget safety** (SI-DD-005)  
+  The `limit` parameter caps the number of disputes processed per call to
+  prevent Soroban CPU instruction budget exhaustion.
+
+- **Dispute deadline rollback — bounds validation** (SI-DD-006)  
+  `set_dispute_deadline` enforces bounds (1h–90d) to prevent
+  misconfiguration.
+
+- **Dispute deadline rollback — admin-only authorization** (SI-DD-007)  
+  Both `check_and_rollback_disputes` and `set_dispute_deadline` require the
+  ADMIN role.
+
+- **Dispute deadline rollback — graceful error handling** (SI-DD-008)  
+  Non-existent dispute IDs and empty input lists are handled silently
+  without panicking.
+
+- **Dispute deadline rollback — event emission** (SI-DD-009)  
+  Every successful rollback emits a `DisputeRolledBack` event with full
+  context.
+
+- **Dispute deadline rollback — immutable resolution** (SI-DD-010)  
+  The rollback resolution is written immutably; once closed, the dispute
+  is skipped on all future calls.
+
 ---
 
 ## Detailed Invariant Reference
@@ -300,6 +343,165 @@ new_version)`
 
 ### SI-015 — fee collection matches `get_fee_quote` at submission time
 
+---
+
+### SI-DD-001 — Dispute deadline rollback: strict boundary
+
+**Applies to:** `check_and_rollback_disputes`
+
+**Statement:**  
+A dispute is rolled back only when `elapsed > deadline`. At the exact boundary
+(`elapsed == deadline`) the dispute is NOT rolled back.
+
+```rust
+if elapsed <= deadline { continue; }
+```
+
+**Tests:** `test_check_and_rollback_disputes_exact_at_deadline_boundary`
+
+**Documentation:** `docs/attestation-dispute-deadline-security.md#si-dd-001`
+
+---
+
+### SI-DD-002 — Dispute deadline rollback: clock skew guard
+
+**Applies to:** `check_and_rollback_disputes`
+
+**Statement:**  
+If `now < dispute.timestamp`, elapsed is treated as zero.
+
+```rust
+let elapsed = if now >= dispute.timestamp {
+    now - dispute.timestamp
+} else {
+    0
+};
+```
+
+**Tests:** `test_check_and_rollback_disputes_before_deadline`
+
+**Documentation:** `docs/attestation-dispute-deadline-security.md#si-dd-002`
+
+---
+
+### SI-DD-003 — Dispute deadline rollback: only Open eligible
+
+**Applies to:** `check_and_rollback_disputes`
+
+**Statement:**  
+Only disputes with `DisputeStatus::Open` are eligible. `Resolved` and `Closed`
+disputes are silently skipped.
+
+```rust
+if dispute.status != DisputeStatus::Open { continue; }
+```
+
+**Tests:** `test_check_and_rollback_disputes_resolved_skipped`,
+`test_check_and_rollback_disputes_multiple_with_mixed_statuses`
+
+**Documentation:** `docs/attestation-dispute-deadline-security.md#si-dd-003`
+
+---
+
+### SI-DD-004 — Dispute deadline rollback: safe attestor unlock
+
+**Applies to:** `check_and_rollback_disputes` → `unlock_attestor`
+
+**Statement:**  
+`unlock_attestor` is a no-op when `current == 0`, making it safe to call even
+when no attestor lock exists for the dispute.
+
+**Tests:** `test_check_and_rollback_disputes_basic_closure`
+
+**Documentation:** `docs/attestation-dispute-deadline-security.md#si-dd-004`
+
+---
+
+### SI-DD-005 — Dispute deadline rollback: CPU budget safety
+
+**Applies to:** `check_and_rollback_disputes`
+
+**Statement:**  
+The `limit` parameter caps the number of disputes processed per call. The loop
+breaks when `rolled_back_count >= limit`.
+
+**Tests:** `test_check_and_rollback_disputes_limit`
+
+**Documentation:** `docs/attestation-dispute-deadline-security.md#si-dd-005`
+
+---
+
+### SI-DD-006 — Dispute deadline rollback: bounds validation
+
+**Applies to:** `set_dispute_deadline`
+
+**Statement:**  
+Deadline must be within `[MIN_DISPUTE_DEADLINE_SECONDS, MAX_DISPUTE_DEADLINE_SECONDS]`
+(1 hour to 90 days). Values outside this range are rejected with a panic.
+
+**Tests:** `test_set_dispute_deadline_too_low_panics`,
+`test_set_dispute_deadline_too_high_panics`
+
+**Documentation:** `docs/attestation-dispute-deadline-security.md#si-dd-006`
+
+---
+
+### SI-DD-007 — Dispute deadline rollback: admin-only authorization
+
+**Applies to:** `check_and_rollback_disputes`, `set_dispute_deadline`
+
+**Statement:**  
+Both entrypoints require the ADMIN role via `access_control::require_admin`.
+`get_dispute_deadline` is read-only and requires no authorization.
+
+**Tests:** (implicit via admin-gate pattern; consistent with SI-002/003)
+
+**Documentation:** `docs/attestation-dispute-deadline-security.md#si-dd-007`
+
+---
+
+### SI-DD-008 — Dispute deadline rollback: graceful error handling
+
+**Applies to:** `check_and_rollback_disputes`
+
+**Statement:**  
+Non-existent dispute IDs are silently skipped (`get_dispute` returns `None`).
+Empty ID lists immediately return `0` without processing.
+
+**Tests:** `test_check_and_rollback_disputes_nonexistent_skipped`,
+`test_check_and_rollback_disputes_empty_list`
+
+**Documentation:** `docs/attestation-dispute-deadline-security.md#si-dd-008`
+
+---
+
+### SI-DD-009 — Dispute deadline rollback: event emission
+
+**Applies to:** `check_and_rollback_disputes` → `emit_dispute_rolled_back`
+
+**Statement:**  
+Every successful rollback publishes a `DisputeRolledBack` event with
+`dispute_id`, `business`, `period`, `rolled_back_at`, and `deadline_seconds`.
+
+**Topic:** `(dsp_rb, business)` → `DisputeRolledBackEvent`
+
+**Documentation:** `docs/attestation-dispute-deadline-security.md#si-dd-009`
+
+---
+
+### SI-DD-010 — Dispute deadline rollback: immutable resolution
+
+**Applies to:** `check_and_rollback_disputes`
+
+**Statement:**  
+On rollback, both `store_dispute` (status → Closed) and
+`store_dispute_resolution` are called. Once closed, subsequent calls skip the
+rolled-back dispute.
+
+**Documentation:** `docs/attestation-dispute-deadline-security.md#si-dd-010`
+
+---
+
 **Applies to:** `submit_attestation`, `get_fee_quote`, `get_fee_quote_detailed`
 
 **Statement:**
@@ -428,4 +630,5 @@ For production gas benchmarks see `docs/contract-gas-benchmarks.md` and
 | Date | Author | Change |
 |---|---|---|
 | 2025-07 | Veritasor team | v2 — expanded to multi-contract scope; realigned all SI ids to actual `lib.rs` API; retired 9 stale invariants; added SI-006 (migrate), SI-007 (multi-period), SI-009 (dispute), SI-012 (spoofing), SI-013 (get_attestation) |
+| 2026-07-29 | #521 | Added SI-DD-001 through SI-DD-010 — dispute deadline rollback invariants |
 | 2025-07 | Veritasor team | v1 — initial draft (attestation contract only, 20 invariants) |
