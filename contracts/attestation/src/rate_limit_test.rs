@@ -3,6 +3,7 @@
 extern crate std;
 
 use super::*;
+use proptest::prelude::*;
 use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};
 use soroban_sdk::{Address, BytesN, Env, String};
 
@@ -593,4 +594,231 @@ fn test_disabled_config_enforces_nothing() {
     assert_eq!(client.get_submission_window_count(&business), 0);
     assert_eq!(client.get_submission_burst_count(&business), 0);
     assert_eq!(client.get_business_count(&business), 3);
+}
+
+/// A forward jump must not erase quota history that a later rollback could
+/// exploit. With a budget of one, the rollback attempt remains rejected.
+#[test]
+#[should_panic(expected = "rate limit exceeded")]
+fn test_forward_jump_then_backward_jump_does_not_reopen_capacity() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+    configure_rate_limit(&client, 1, 100, 1, 100, true, 1);
+
+    set_ledger_timestamp(&env, 1_000);
+    submit(&client, &env, &business, 1);
+
+    set_ledger_timestamp(&env, 1_200);
+    submit(&client, &env, &business, 2);
+
+    set_ledger_timestamp(&env, 1_001);
+    submit(&client, &env, &business, 3);
+}
+prop_compose! {
+    /// Generates clock movement biased toward the exact expiry boundary and
+    /// its two adjacent seconds, plus larger forward/backward jumps.
+    fn skewed_rate_limit_sequence()
+        (window_seconds in 2u64..120, max_per_window in 1u32..8)
+        (
+            movements in prop::collection::vec(
+                prop_oneof![
+                    4 => Just(window_seconds as i64),
+                    4 => Just(window_seconds as i64 - 1),
+                    4 => Just(window_seconds as i64 + 1),
+                    3 => Just(-(window_seconds as i64)),
+                    3 => Just(-(window_seconds as i64 - 1)),
+                    3 => Just(-(window_seconds as i64 + 1)),
+                    2 => -240i64..=240,
+                ],
+                1..48,
+            ),
+            window_seconds in Just(window_seconds),
+            max_per_window in Just(max_per_window),
+        ) -> (u64, u32, std::vec::Vec<i64>) {
+            (window_seconds, max_per_window, movements)
+        }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: 64,
+        max_shrink_iters: 2_048,
+        ..ProptestConfig::default()
+    })]
+
+    /// Replays randomized ledger skew against the contract. The oracle uses
+    /// the same non-decreasing effective clock required by the security model
+    /// and verifies that every admitted submission fits the configured budget.
+    #[test]
+    fn check_rate_limit_never_exceeds_window_budget_under_clock_skew(
+        (window_seconds, max_per_window, movements) in skewed_rate_limit_sequence()
+    ) {
+        let (env, client, _admin) = setup();
+        let business = Address::generate(&env);
+        configure_rate_limit(
+            &client,
+            max_per_window,
+            window_seconds,
+            max_per_window,
+            window_seconds,
+            true,
+            1,
+        );
+
+        let mut ledger_now = 10_000u64;
+        let mut effective_now = ledger_now;
+        let mut admitted_at = std::vec::Vec::<u64>::new();
+
+        for (index, movement) in movements.into_iter().enumerate() {
+            ledger_now = if movement < 0 {
+                ledger_now.saturating_sub(movement.unsigned_abs())
+            } else {
+                ledger_now.saturating_add(movement as u64)
+            };
+            set_ledger_timestamp(&env, ledger_now);
+
+            let period = String::from_str(&env, &std::format!("skew-{index}"));
+            let root = BytesN::from_array(&env, &[index as u8; 32]);
+            let admitted = client
+                .try_submit_attestation(
+                    &business,
+                    &period,
+                    &root,
+                    &1_700_000_000u64,
+                    &1u32,
+                    &0i128,
+                    &None,
+                    &None,
+                )
+                .is_ok();
+
+            if admitted {
+                effective_now = effective_now.max(ledger_now);
+                admitted_at.retain(|timestamp| {
+                    *timestamp > effective_now.saturating_sub(window_seconds)
+                });
+                admitted_at.push(effective_now);
+
+                prop_assert!(
+                    admitted_at.len() <= max_per_window as usize,
+                    "{} admits in a {}-second window with budget {}; ledger_now={}, effective_now={}",
+                    admitted_at.len(),
+                    window_seconds,
+                    max_per_window,
+                    ledger_now,
+                    effective_now,
+                );
+            }
+        }
+    }
+}
+
+// ── Mid-window config change edge tests ───────────────────────────────────────
+//
+// When the rate-limit configuration changes partway through a window, the new
+// limit must apply immediately without violating already-accepted submissions.
+// These tests cover both raising and lowering the cap.
+
+/// Raise the cap mid-window: fill to the old limit, raise the cap, and verify
+/// that additional submissions are accepted up to the new limit.
+#[test]
+fn test_reconfigure_raises_cap_mid_window() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+
+    // Start with a tight cap: 2 submissions / 3600 s
+    configure_rate_limit(&client, 2, 3600, 2, 3600, true, 1);
+
+    set_ledger_timestamp(&env, 1_000);
+    submit(&client, &env, &business, 1);
+    set_ledger_timestamp(&env, 1_001);
+    submit(&client, &env, &business, 2);
+
+    // Window is full at 2/2 submissions
+    assert_eq!(client.get_submission_window_count(&business), 2);
+
+    // Raise the cap to 5
+    configure_rate_limit(&client, 5, 3600, 5, 3600, true, 2);
+
+    // Now can submit 3 more (reaching the new cap of 5)
+    set_ledger_timestamp(&env, 1_002);
+    submit(&client, &env, &business, 3);
+    set_ledger_timestamp(&env, 1_003);
+    submit(&client, &env, &business, 4);
+    set_ledger_timestamp(&env, 1_004);
+    submit(&client, &env, &business, 5);
+
+    assert_eq!(client.get_submission_window_count(&business), 5);
+
+    // 6th submission — one over the new cap — must be rejected
+    set_ledger_timestamp(&env, 1_005);
+    let period = String::from_str(&env, "over-raise");
+    let root = BytesN::from_array(&env, &[99u8; 32]);
+    let result = client.try_submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+    assert!(result.is_err());
+}
+
+/// Lower the cap below the already-accepted count: fill the window beyond the
+/// new (lower) limit, then verify the next submission is rejected immediately
+/// because the existing count already exceeds the new limit.
+#[test]
+#[should_panic(expected = "rate limit exceeded")]
+fn test_reconfigure_lowers_cap_below_accepted_count() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+
+    // Start with a generous cap: 10 submissions / 3600 s
+    configure_rate_limit(&client, 10, 3600, 10, 3600, true, 1);
+
+    set_ledger_timestamp(&env, 1_000);
+    for i in 1..=5 {
+        submit(&client, &env, &business, i);
+        set_ledger_timestamp(&env, 1_000 + i as u64);
+    }
+
+    // 5 submissions accepted; window count shows 5
+    assert_eq!(client.get_submission_window_count(&business), 5);
+
+    // Lower the cap to 3 — already exceeded by the 5 existing submissions
+    configure_rate_limit(&client, 3, 3600, 3, 3600, true, 2);
+
+    // The next submission must be rejected: 5 >= 3 (new max_submissions)
+    set_ledger_timestamp(&env, 1_010);
+    submit(&client, &env, &business, 6);
+}
+
+/// Lower the cap to exactly the current count: fill to N, lower the cap to N,
+/// and verify the very next submission is rejected.
+#[test]
+#[should_panic(expected = "rate limit exceeded")]
+fn test_reconfigure_lowers_cap_to_exact_accepted_count() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+
+    // Start with cap of 5
+    configure_rate_limit(&client, 5, 3600, 5, 3600, true, 1);
+
+    set_ledger_timestamp(&env, 1_000);
+    submit(&client, &env, &business, 1);
+    set_ledger_timestamp(&env, 1_001);
+    submit(&client, &env, &business, 2);
+
+    // 2 submissions accepted
+    assert_eq!(client.get_submission_window_count(&business), 2);
+
+    // Lower the cap to exactly 2 — the current count equals the new limit
+    configure_rate_limit(&client, 2, 3600, 2, 3600, true, 2);
+
+    // The next submission must be rejected: 2 >= 2 (new max_submissions)
+    set_ledger_timestamp(&env, 1_002);
+    submit(&client, &env, &business, 3);
 }
