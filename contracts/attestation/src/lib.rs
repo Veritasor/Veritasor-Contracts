@@ -1094,6 +1094,7 @@ impl AttestationContract {
 
         env.storage().instance().remove(&key);
         extended_metadata::remove_metadata(&env, &business, &period);
+        dynamic_fees::increment_cleanup_count(&env);
         events::emit_attestation_cleaned_up(&env, &business, &period);
     }
 
@@ -1953,6 +1954,15 @@ impl AttestationContract {
         dynamic_fees::get_epoch(&env)
     }
 
+    /// Returns how many successful cleanups were recorded for `epoch`.
+    ///
+    /// Backed by [`DataKey::CleanupCountForEpoch`]. Missing epochs return `0`.
+    /// At each fee-bucket boundary a `CleanupSummary` event is emitted with
+    /// this value for the ending epoch (including zero).
+    pub fn get_cleanup_count_for_epoch(env: Env, epoch: u64) -> u64 {
+        dynamic_fees::get_cleanup_count_for_epoch(&env, epoch)
+    }
+
     pub fn get_submission_window_count(env: Env, business: Address) -> u32 {
         rate_limit::get_submission_count(&env, &business)
     }
@@ -2312,10 +2322,13 @@ impl AttestationContract {
         }
         dispute::set_revoked_periods(&env, &business, &new_periods);
 
-        // 9. Emit cleaned event.
+        // 9. Record cleanup metrics for the current fee-bucket epoch.
+        dynamic_fees::increment_cleanup_count(&env);
+
+        // 10. Emit cleaned event.
         events::emit_attestation_cleaned_up(&env, &business, &period);
 
-        // 10. Bump TTL after storage modifications.
+        // 11. Bump TTL after storage modifications.
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
@@ -2836,6 +2849,8 @@ mod dispute_test;
 mod dynamic_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod epoch_counter_test;
+#[cfg(all(test, feature = "full-tests"))]
+mod cleanup_metrics_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod events_test;
 #[cfg(all(test, feature = "full-tests"))]

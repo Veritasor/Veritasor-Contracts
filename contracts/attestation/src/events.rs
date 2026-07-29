@@ -45,6 +45,7 @@
 //! | `ApprovalRevoked`           | `appr_rv`      | `proposal_id`     |
 //! | `EpochCheckpoint`           | `ep_ckpt`      | *(none)*          |
 //! | `EpochAdvanced`             | `ep_adv`       | *(none)*          |
+//! | `CleanupSummary`            | `cl_sum`       | *(none)*          |
 //! | `BackfillCheckpoint`        | `bkf_chk`      | *(none)*          |
 //!
 //! ## Indexer Compatibility Contract
@@ -150,6 +151,8 @@ pub const TOPIC_BIZ_REACTIVATE: Symbol = symbol_short!("biz_rea");
 pub const TOPIC_PROOF_HASH_UPDATED: Symbol = symbol_short!("ph_upd");
 /// Topic: fee bucket epoch advanced
 pub const TOPIC_EPOCH_ADVANCED: Symbol = symbol_short!("ep_adv");
+/// Topic: per-epoch cleanup summary at fee-bucket boundary
+pub const TOPIC_CLEANUP_SUMMARY: Symbol = symbol_short!("cl_sum");
 /// Topic: revocation proposed (grace window started)
 pub const TOPIC_REVOCATION_PROPOSED: Symbol = symbol_short!("rv_prop");
 /// Topic: revocation proposal cancelled (appeal succeeded)
@@ -160,8 +163,6 @@ pub const TOPIC_REVOCATION_COMMITTED: Symbol = symbol_short!("rv_cmmt");
 pub const TOPIC_APPROVAL_REVOKED: Symbol = symbol_short!("appr_rv");
 /// Topic: epoch checkpoint emitted after each submission (per-period)
 pub const TOPIC_EPOCH_CHECKPOINT: Symbol = symbol_short!("ep_ckpt");
-/// Topic: epoch advanced on fee-bucket window rollover
-pub const TOPIC_EPOCH_ADVANCED: Symbol = symbol_short!("ep_adv");
 /// Topic: backfill checkpoint emitted every N submissions (global counter)
 pub const TOPIC_BACKFILL_CHECKPOINT: Symbol = symbol_short!("bkf_chk");
 
@@ -679,6 +680,30 @@ pub struct EpochAdvancedEvent {
     /// New epoch number (1-based, monotonically non-decreasing).
     pub epoch: u64,
     /// Ledger timestamp when the epoch was advanced.
+    pub at_ts: u64,
+}
+
+/// Normalized payload for `CleanupSummary` events.
+///
+/// Emitted at each fee-bucket epoch boundary with the number of successful
+/// cleanup operations recorded for the **ending** epoch. Operators use this
+/// to monitor cleanup health without scanning every `AttestationCleanedUp`
+/// event.
+///
+/// ## Security
+/// - Only emitted from the contract's epoch-rollover path.
+/// - `removed_count` is the persisted `CleanupCountForEpoch(epoch)` value
+///   (including `0` when no cleanups occurred).
+/// - The counter is incremented only after a successful cleanup removes
+///   storage; failed / unauthorized cleanup attempts do not affect it.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CleanupSummaryEvent {
+    /// Epoch that just ended (the epoch whose cleanup count is reported).
+    pub epoch: u64,
+    /// Number of successful cleanup operations in that epoch.
+    pub removed_count: u64,
+    /// Ledger timestamp when the summary was emitted.
     pub at_ts: u64,
 }
 
@@ -1861,23 +1886,6 @@ pub struct EpochCheckpointEvent {
     pub checkpoint_timestamp: u64,
 }
 
-/// Normalized payload for `EpochAdvanced` events.
-///
-/// Emitted when the fee-bucket window rolls over, incrementing the
-/// monotonic epoch counter. One event is emitted per elapsed window.
-///
-/// | Event Catalog | Topic | Secondary topic |
-/// |---|---|--|
-/// | EpochAdvanced | `ep_adv` | *(none)* |
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct EpochAdvancedEvent {
-    /// New epoch value after the rollover.
-    pub epoch: u64,
-    /// Ledger timestamp at which the rollover was detected.
-    pub at_ts: u64,
-}
-
 /// Normalized payload for `BackfillCheckpoint` events.
 ///
 /// Emitted every `BACKFILL_CHECKPOINT_INTERVAL` (global) submissions to
@@ -1953,6 +1961,29 @@ pub fn emit_epoch_advanced(env: &Env, epoch: u64) {
         at_ts: env.ledger().timestamp(),
     };
     env.events().publish((TOPIC_EPOCH_ADVANCED,), event);
+}
+
+/// Emit a `CleanupSummary` event at an epoch boundary.
+///
+/// Called from the fee-bucket rollover path immediately before the epoch
+/// counter advances. Reports cleanups recorded for the ending epoch.
+///
+/// # Arguments
+///
+/// * `env`           – Soroban execution environment.
+/// * `epoch`         – Ending epoch whose cleanup count is reported.
+/// * `removed_count` – Persisted cleanup count for that epoch (may be 0).
+///
+/// # Events
+///
+/// Publishes `(cl_sum,)` → `CleanupSummaryEvent`.
+pub fn emit_cleanup_summary(env: &Env, epoch: u64, removed_count: u64) {
+    let event = CleanupSummaryEvent {
+        epoch,
+        removed_count,
+        at_ts: env.ledger().timestamp(),
+    };
+    env.events().publish((TOPIC_CLEANUP_SUMMARY,), event);
 }
 
 /// Emit a `BackfillCheckpoint` event.
