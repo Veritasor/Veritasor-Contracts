@@ -1563,7 +1563,8 @@ fn test_schema_hash_catalog_integrity() {
     let catalog: serde_json::Value = serde_json::from_str(&index_content).expect("json parse");
 
     let topics_map = catalog["topics"].as_object().unwrap();
-    assert_eq!(topics_map.len(), 22);
+    // 22 existing + 3 new (ep_ckpt, ep_adv, bkf_chk) = 25
+    assert_eq!(topics_map.len(), 25);
 
     for (topic_symbol, summary) in topics_map {
         let topic_file = schemas_dir.join(alloc::format!("{}.json", topic_symbol));
@@ -1595,6 +1596,7 @@ fn test_edge_case_new_event_topic_coverage() {
         "att_sub", "att_rev", "att_mig", "att_cl", "role_gr", "role_rv", "paused", "unpaus",
         "fee_cfg", "ff_cfg", "rate_lm", "kr_prop", "kr_conf", "kr_canc", "kr_emer", "biz_reg",
         "biz_apr", "biz_sus", "biz_rea", "ph_upd", "att_exp", "mul_iss",
+        "ep_ckpt", "ep_adv", "bkf_chk",
     ];
 
     for expected in &required_topics {

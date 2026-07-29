@@ -53,6 +53,12 @@ use soroban_sdk::{contracttype, token, Address, Env, Symbol, Val, Vec};
 //  Tier bounds
 // ════════════════════════════════════════════════════════════════════
 
+/// Minimum supported business tier index (inclusive).
+///
+/// Tier 0 is the default (Standard) tier. At this tier the discount must be
+/// exactly zero so that businesses pay the full base fee.
+pub const MIN_TIER: u32 = 0;
+
 /// Maximum supported business tier index (inclusive).
 ///
 /// Tiers are 0-indexed: 0 = Standard, 1 = Pro, 2 = Enterprise, …, MAX_TIER = top tier.
@@ -143,6 +149,14 @@ pub enum DataKey {
     /// the revocation.  Defaults to [`DEFAULT_REVOKE_GRACE_SECONDS`] when
     /// not explicitly configured.
     RevokeGraceSeconds,
+
+    // ── Epoch / backfill checkpoint tracking ────────────────────
+    /// Per-period submission count within the current epoch.
+    EpochSubmissions(soroban_sdk::String),
+    /// Per-period accumulated fees within the current epoch.
+    EpochFees(soroban_sdk::String),
+    /// Global running submission count for backfill checkpointing.
+    BackfillSubmissionCount,
 }
 
 // ════════════════════════════════════════════════════════════════════

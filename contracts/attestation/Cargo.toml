@@ -32,6 +32,22 @@ serde_json = "1.0"
 proptest    = { version = "=1.5.0", default-features = false, features = ["std"] }
 veritasor-common = { path = "../common" }
 veritasor-attestor-staking = { path = "../attestor-staking" }
+# Kani is only pulled in when the kani toolchain is active (`cargo kani`).
+# It is absent from normal `cargo test` / `cargo build` runs, so it does not
+# affect contract size or test execution time.
+kani = { version = "0.57.0", optional = true }
+
+# ── Kani proof harnesses ────────────────────────────────────────────────────
+# Each [[bin]] target below corresponds to a file under kani/.  The targets
+# are only compiled when `cargo kani` (or `cargo kani --harness <name>`) is
+# invoked; they are excluded from normal `cargo test --all` runs because the
+# `kani` crate is not present in the default feature set.
+#
+# Naming convention: one file per logical group of related harnesses.
+[[bin]]
+name = "kani_flat_fee_overflow"
+path = "kani/flat_fee_overflow.rs"
+required-features = ["kani"]
 
 [profile.release]
 opt-level = "z"
