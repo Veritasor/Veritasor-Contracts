@@ -2102,6 +2102,7 @@ impl AttestationContract {
                     .expect("staking contract not configured");
                 let staking_client = AttestorStakingClient::new(&env, &staking_addr);
                 staking_client.slash(&d.attestor, &1000i128, &dispute_id);
+            }
             if let Some(attestor) =
                 dispute::get_attestor_for_attestation(&env, &d.business, &d.period)
             {
@@ -2142,6 +2143,57 @@ impl AttestationContract {
     /// Return all dispute IDs opened by a specific challenger.
     pub fn get_disputes_by_challenger(env: Env, challenger: Address) -> Vec<u64> {
         dispute::get_dispute_ids_by_challenger(&env, &challenger)
+    }
+
+    /// Check a batch of dispute IDs and automatically roll back any that have
+    /// exceeded the configurable resolution deadline.
+    ///
+    /// Only disputes with `Open` status and whose elapsed time since creation
+    /// exceeds the configured deadline (see `set_dispute_deadline`) are affected.
+    ///
+    /// On rollback:
+    /// - The dispute is transitioned to `Closed` with a resolution indicating
+    ///   deadline expiry.
+    /// - The associated attestor lock (if any) is released.
+    /// - A `DisputeRolledBack` event is emitted.
+    ///
+    /// # Arguments
+    ///
+    /// * `env`         – Soroban execution environment.
+    /// * `caller`      – Must hold ADMIN role.
+    /// * `dispute_ids` – Candidate dispute IDs to check for deadline expiry.
+    /// * `limit`       – Maximum number of disputes to roll back in this call.
+    ///
+    /// # Returns
+    ///
+    /// The number of disputes actually rolled back.
+    pub fn check_and_rollback_disputes(
+        env: Env,
+        caller: Address,
+        dispute_ids: Vec<u64>,
+        limit: u32,
+    ) -> u32 {
+        access_control::require_admin(&env, &caller);
+        dispute::check_and_rollback_disputes(&env, &dispute_ids, limit)
+    }
+
+    /// Set the dispute resolution deadline in seconds.
+    ///
+    /// The deadline must be within the allowed range:
+    /// - Minimum: 1 hour (3600 seconds)
+    /// - Maximum: 90 days (7,776,000 seconds)
+    ///
+    /// # Panics
+    /// - Caller does not have ADMIN role.
+    /// - `deadline_seconds` is outside the allowed range.
+    pub fn set_dispute_deadline(env: Env, caller: Address, deadline_seconds: u64) {
+        access_control::require_admin(&env, &caller);
+        dispute::set_dispute_deadline(&env, deadline_seconds);
+    }
+
+    /// Return the currently configured dispute resolution deadline in seconds.
+    pub fn get_dispute_deadline(env: Env) -> u64 {
+        dispute::get_dispute_deadline(&env)
     }
 
     /// Triggers a slash for a resolved dispute and records the event in the audit log.

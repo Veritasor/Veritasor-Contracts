@@ -129,6 +129,14 @@ pub fn resolve_dispute(
 - `outcome`: Outcome of the dispute resolution
 - `notes`: Optional notes about the resolution
 
+**Side Effects**:
+- **Slashing** (Upheld only): If the outcome is `Upheld`, the attestor associated
+  with the disputed attestation is slashed via the staking contract (1000 token
+  units). This does not apply for `Rejected` or `Settled` outcomes.
+- **Attestor unlock** (always): Regardless of outcome, the attestor's lock is
+  released so they can submit new attestations. This ensures the dispute lifecycle
+  is complete and the attestor is no longer restricted.
+
 **Panics**:
 - If dispute doesn't exist
 - If dispute is not in Open status
@@ -200,6 +208,113 @@ Currently, any address can resolve disputes. In a production environment, this s
 - Multi-signature wallets
 - Predefined resolver addresses
 
+## Dispute Resolution Deadline & Automatic Rollback
+
+### Overview
+
+Disputes that remain unresolved beyond a configurable deadline can be automatically rolled back, preventing indefinite locks on disputed attestations. This mechanism ensures that the dispute lifecycle has a deterministic bound even if no party actively resolves the dispute.
+
+### Configuration
+
+The dispute resolution deadline is configurable via `set_dispute_deadline`:
+- **Default**: 7 days (`DISPUTE_DEADLINE_SECONDS = 604,800`)
+- **Minimum**: 1 hour (`MIN_DISPUTE_DEADLINE_SECONDS = 3,600`)
+- **Maximum**: 90 days (`MAX_DISPUTE_DEADLINE_SECONDS = 7,776,000`)
+
+```rust
+// Admin sets a custom deadline of 48 hours
+contract.set_dispute_deadline(admin, 172_800);
+
+// Query current deadline
+let deadline = contract.get_dispute_deadline();
+```
+
+### Rollback Mechanism
+
+#### Entry Point
+```rust
+pub fn check_and_rollback_disputes(
+    env: Env,
+    caller: Address,       // Must hold ADMIN role
+    dispute_ids: Vec<u64>,  // Candidate dispute IDs to check
+    limit: u32,             // Max number to roll back per call (CPU budget safety)
+) -> u32                    // Returns count of rolled-back disputes
+```
+
+#### Eligibility Conditions
+A dispute is rolled back only when **all** of the following are true:
+1. The dispute exists and has `Open` status (Resolved/Closed disputes skipped)
+2. The current ledger timestamp exceeds `dispute.timestamp + deadline`
+3. The deadline check uses strict less-than-or-equal (`elapsed <= deadline`) to skip, meaning the full deadline period is granted — a dispute is only rolled back when `elapsed > deadline`
+
+#### Rollback Actions
+When a dispute is rolled back, the following occurs atomically:
+1. Dispute status is set to `Closed`
+2. A `DisputeResolution` is recorded with:
+   - `outcome`: `Rejected`
+   - `notes`: `"Automatic rollback: dispute resolution deadline exceeded"`
+   - `timestamp`: Current ledger timestamp
+3. The associated attestor lock (if any) is released via `unlock_attestor`
+4. A `DisputeRolledBack` event is emitted
+
+#### Event
+```rust
+pub struct DisputeRolledBackEvent {
+    pub dispute_id: u64,        // Rolled-back dispute identifier
+    pub business: Address,       // Business associated with the dispute
+    pub period: String,          // Period of the disputed attestation
+    pub rolled_back_at: u64,     // Timestamp when rollback occurred
+    pub deadline_seconds: u64,   // Deadline threshold that was exceeded
+}
+```
+
+**Topic**: `dsp_rb` with secondary topic `business`
+
+### Security & Safety
+
+- **Admin-only**: Only ADMIN role can trigger rollbacks (via `access_control::require_admin`)
+- **CPU budget safety**: The `limit` parameter caps the number of disputes processed per call, preventing Soroban CPU instruction budget exhaustion
+- **Clock skew protection**: If a dispute's timestamp is in the future, elapsed time is treated as 0, preventing erroneous rollbacks
+- **Safe unlock**: `unlock_attestor` is a no-op when no attestor lock exists, so attestations submitted directly by businesses (not through attestors) are handled correctly
+- **Bound validation**: Configurable deadline is restricted to a safe range (1 hour to 90 days) to prevent misconfiguration
+
+### Usage Example
+
+```rust
+// Admin configures a 48-hour deadline
+contract.set_dispute_deadline(admin, 172_800);
+
+// Later: admin checks and rolls back expired disputes
+let dispute_ids = vec![1, 2, 3, 4, 5];
+let rolled_back = contract.check_and_rollback_disputes(
+    admin,
+    dispute_ids,
+    10u32,  // Process up to 10 per call
+);
+// Returns count of disputes that were past deadline and rolled back
+```
+
+### Idempotency
+
+`check_and_rollback_disputes` is idempotent:
+- Calling it multiple times with the same IDs only rolls back each eligible dispute once
+- Already-rolled-back disputes are skipped (status is no longer `Open`)
+- Non-existent dispute IDs are silently skipped
+
+### Testing Coverage
+
+Tests in `contracts/attestation/src/dispute_test.rs` cover:
+- Default deadline value (7 days)
+- Custom deadline configuration within bounds
+- Rejection of below-minimum and above-maximum deadlines
+- Disputes not rolled back before deadline elapses
+- Disputes rolled back after deadline elapses
+- Resolved disputes skipped (even if past deadline)
+- `limit` parameter respected (partial batches)
+- Non-existent and empty dispute ID lists
+- Exact deadline boundary (not rolled back)
+- Mixed Open/Resolved/Closed statuses
+
 ## Storage Design
 
 ### Instance Storage Keys
@@ -207,6 +322,7 @@ Currently, any address can resolve disputes. In a production environment, this s
 - `Dispute(u64)`: Individual dispute records
 - `DisputesByAttestation(Address, String)`: Index by attestation
 - `DisputesByChallenger(Address)`: Index by challenger
+- `DisputeDeadlineSeconds`: Configurable deadline for automatic rollback
 
 ### Indexing
 The system maintains two-way indexing for efficient queries:
