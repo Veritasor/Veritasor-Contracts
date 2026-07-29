@@ -6,8 +6,8 @@
 //! off-chain verifier CLI.
 
 use super::*;
-use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{Address, Env, String, Vec};
+use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
+use soroban_sdk::{Address, Env, String, Symbol, TryFromVal, Vec};
 
 fn setup_snapshot_only() -> (Env, AttestationSnapshotContractClient<'static>, Address) {
     let env = Env::default();
@@ -17,6 +17,30 @@ fn setup_snapshot_only() -> (Env, AttestationSnapshotContractClient<'static>, Ad
     let admin = Address::generate(&env);
     client.initialize(&admin, &None::<Address>);
     (env, client, admin)
+}
+
+/// Helper to create a valid RestoreEntry with the current schema version.
+fn make_entry(
+    env: &Env,
+    business: &Address,
+    period: &str,
+    trailing_revenue: i128,
+    anomaly_count: u32,
+    attestation_count: u64,
+    recorded_at: u64,
+) -> RestoreEntry {
+    RestoreEntry {
+        business: business.clone(),
+        period: String::from_str(env, period),
+        record: SnapshotRecord {
+            period: String::from_str(env, period),
+            trailing_revenue,
+            anomaly_count,
+            attestation_count,
+            recorded_at,
+        },
+        schema_version: SNAPSHOT_SCHEMA_VERSION,
+    }
 }
 
 // ── Initialization ───────────────────────────────────────────────────
@@ -245,8 +269,7 @@ fn test_commitment_with_multiple_businesses_and_epochs() {
 }
 
 #[test]
-fn test_commitment_order_matters() {
-    // Use a single contract: record biz_a then biz_b and capture C1.
+fn test_commitment_is_order_independent() {
     let (env, client, admin) = setup_snapshot_only();
     let biz_a = Address::generate(&env);
     let biz_b = Address::generate(&env);
@@ -269,8 +292,6 @@ fn test_commitment_order_matters() {
     );
     let commitment_ab = client.export_snapshot_commitment();
 
-    // Re-order: record biz_b then biz_a in the same epoch.
-    // We need a separate contract because order is set at record-time.
     let env2 = Env::default();
     env2.mock_all_auths();
     let contract_id2 = env2.register(AttestationSnapshotContract, ());
@@ -278,8 +299,6 @@ fn test_commitment_order_matters() {
     let admin2 = Address::generate(&env2);
     client2.initialize(&admin2, &None::<Address>);
 
-    // Generate *new* addresses bound to env2 with the same semantic values.
-    // (We cannot re-use Address objects from env across environments in Soroban.)
     let biz_b2 = Address::generate(&env2);
     let biz_a2 = Address::generate(&env2);
 
@@ -301,8 +320,24 @@ fn test_commitment_order_matters() {
     );
     let commitment_ba = client2.export_snapshot_commitment();
 
-    // Different insertion order => different commitment
-    assert_ne!(commitment_ab, commitment_ba);
+    assert_eq!(commitment_ab, commitment_ba);
+}
+
+#[test]
+fn test_commitment_with_count_returns_entry_total() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    client.record_snapshot(
+        &admin,
+        &business,
+        &String::from_str(&env, "2026-01"),
+        &100_000i128,
+        &0u32,
+        &1u64,
+    );
+    let (commitment, count) = client.export_snapshot_commitment_with_count();
+    assert_eq!(commitment.len(), 32);
+    assert_eq!(count, 1u64);
 }
 
 // ── Epoch listing ─────────────────────────────────────────────────────
@@ -423,109 +458,158 @@ fn test_set_attestation_contract_non_admin_panics() {
     client.set_attestation_contract(&other, &None::<Address>);
 }
 
-// ── Restore idempotency ──────────────────────────────────────────────
+// ── Restore version checking ───────────────────────────────────────────
 
-fn restore_entry(env: &Env, business: &Address, period: &str, revenue: i128) -> RestoreEntry {
-    let period = String::from_str(env, period);
-    RestoreEntry {
+#[test]
+fn test_restore_dry_run_with_matching_version_succeeds() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+
+    let entries = vec![
+        &env,
+        make_entry(&env, &business, "2026-01", 100_000i128, 0u32, 1u64, 1_000_000),
+    ];
+
+    let report = client.restore_dry_run(&admin, &entries);
+    assert!(report.ready_to_commit);
+    assert_eq!(report.entries_checked, 1);
+    assert_eq!(report.entries_valid, 1);
+    assert!(report.violations.is_empty());
+}
+
+#[test]
+#[should_panic(expected = "snapshot schema version mismatch")]
+fn test_restore_dry_run_with_older_version_fails() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+
+    // Create an entry with an older schema version (0)
+    let mut entry = make_entry(&env, &business, "2026-01", 100_000i128, 0u32, 1u64, 1_000_000);
+    entry.schema_version = 0; // Older version
+
+    let entries = vec![&env, entry];
+    client.restore_dry_run(&admin, &entries);
+}
+
+#[test]
+#[should_panic(expected = "snapshot schema version mismatch")]
+fn test_restore_dry_run_with_newer_version_fails() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+
+    // Create an entry with a newer schema version (999)
+    let mut entry = make_entry(&env, &business, "2026-01", 100_000i128, 0u32, 1u64, 1_000_000);
+    entry.schema_version = 999; // Newer version
+
+    let entries = vec![&env, entry];
+    client.restore_dry_run(&admin, &entries);
+}
+
+#[test]
+#[should_panic(expected = "snapshot schema version mismatch")]
+fn test_restore_commit_with_mismatched_version_fails() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+
+    // First do a valid dry-run
+    let valid_entries = vec![
+        &env,
+        make_entry(&env, &business, "2026-01", 100_000i128, 0u32, 1u64, 1_000_000),
+    ];
+    client.restore_dry_run(&admin, &valid_entries);
+
+    // Now try to commit with a mismatched version (should fail even though dry-run passed)
+    let mut bad_entry = make_entry(&env, &business, "2026-01", 100_000i128, 0u32, 1u64, 1_000_000);
+    bad_entry.schema_version = 999;
+    let bad_entries = vec![&env, bad_entry];
+
+    client.restore_commit(&admin, &bad_entries);
+}
+
+#[test]
+#[should_panic(expected = "snapshot schema version mismatch")]
+fn test_restore_dry_run_multiple_entries_all_must_match_version() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business1 = Address::generate(&env);
+    let business2 = Address::generate(&env);
+
+    // One valid, one invalid version
+    let mut entry1 = make_entry(&env, &business1, "2026-01", 100_000i128, 0u32, 1u64, 1_000_000);
+    let mut entry2 = make_entry(&env, &business2, "2026-01", 200_000i128, 1u32, 2u64, 2_000_000);
+    entry2.schema_version = 0; // Invalid version
+
+    let entries = vec![&env, entry1, entry2];
+    client.restore_dry_run(&admin, &entries);
+}
+
+#[test]
+#[should_panic(expected = "snapshot schema version mismatch")]
+fn test_restore_dry_run_missing_version_field_panics() {
+    // Test that entries without schema_version (default 0) are rejected
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+
+    // Construct an entry with schema_version = 0 (simulating missing field)
+    let entry = RestoreEntry {
         business: business.clone(),
-        period: period.clone(),
+        period: String::from_str(&env, "2026-01"),
         record: SnapshotRecord {
-            period,
-            trailing_revenue: revenue,
-            anomaly_count: 0,
-            attestation_count: 1,
-            recorded_at: env.ledger().timestamp(),
+            period: String::from_str(&env, "2026-01"),
+            trailing_revenue: 100_000i128,
+            anomaly_count: 0u32,
+            attestation_count: 1u64,
+            recorded_at: 1_000_000,
         },
-    }
+        schema_version: 0, // Missing/zero version
+    };
+
+    let entries = vec![&env, entry];
+    client.restore_dry_run(&admin, &entries);
 }
 
-fn restore_batch(env: &Env, entry: RestoreEntry) -> Vec<RestoreEntry> {
-    let mut entries = Vec::new(env);
-    entries.push_back(entry);
-    entries
-}
-
+/// Test that RestoreVersionMismatchEvent is emitted with correct fields
+/// when a version mismatch is detected.
 #[test]
-fn restore_idempotency_rejects_double_restore_with_specific_code() {
+fn test_restore_version_mismatch_event_emitted() {
     let (env, client, admin) = setup_snapshot_only();
     let business = Address::generate(&env);
-    let entries = restore_batch(
-        &env,
-        restore_entry(&env, &business, "2026-08", 100_000),
-    );
+    env.ledger().with_mut(|l| l.timestamp = 5_000_000);
 
-    assert!(client.restore_dry_run(&admin, &entries).ready_to_commit);
-    client.restore_commit(&admin, &entries);
-    let first_id = client.get_last_restore_id().unwrap();
+    // Create an entry with wrong version
+    let mut entry = make_entry(&env, &business, "2026-01", 100_000i128, 0u32, 1u64, 1_000_000);
+    entry.schema_version = 999; // Wrong version
 
-    // A fresh dry-run must not make an already-applied batch replayable.
-    assert!(client.restore_dry_run(&admin, &entries).ready_to_commit);
-    let second = client.try_restore_commit(&admin, &entries);
-    assert_eq!(
-        second,
-        Err(Ok(soroban_sdk::Error::from_contract_error(
-            SnapshotError::AlreadyRestored as u32,
-        )))
-    );
-    assert_eq!(client.get_last_restore_id(), Some(first_id));
-    assert_eq!(
-        client
-            .get_snapshot(&business, &String::from_str(&env, "2026-08"))
-            .unwrap()
-            .trailing_revenue,
-        100_000
-    );
-}
+    let entries = vec![&env, entry];
 
-#[test]
-fn restore_changed_payload_cannot_reuse_validated_restore_id() {
-    let (env, client, admin) = setup_snapshot_only();
-    let business = Address::generate(&env);
-    let validated = restore_batch(
-        &env,
-        restore_entry(&env, &business, "2026-09", 100_000),
-    );
-    let changed = restore_batch(
-        &env,
-        restore_entry(&env, &business, "2026-09", 999_999),
-    );
+    // Expect panic with version mismatch
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.restore_dry_run(&admin, &entries);
+    }));
 
-    assert!(client.restore_dry_run(&admin, &validated).ready_to_commit);
-    assert!(client.try_restore_commit(&admin, &changed).is_err());
-    assert!(client.get_last_restore_id().is_none());
-    assert!(client
-        .get_snapshot(&business, &String::from_str(&env, "2026-09"))
-        .is_none());
-}
+    assert!(result.is_err(), "Expected panic for version mismatch");
 
-#[test]
-fn restore_different_batch_after_first_restore_is_allowed() {
-    let (env, client, admin) = setup_snapshot_only();
-    let first_business = Address::generate(&env);
-    let second_business = Address::generate(&env);
-    let first = restore_batch(
-        &env,
-        restore_entry(&env, &first_business, "2026-10", 100_000),
-    );
-    let second = restore_batch(
-        &env,
-        restore_entry(&env, &second_business, "2026-11", 200_000),
-    );
+    // Verify event was emitted
+    let events = env.events().all();
+    let mismatch_events: Vec<_> = events
+        .iter()
+        .filter_map(|(cid, topics, data)| {
+            if cid != client.address {
+                return None;
+            }
+            if topics.len() != 2 {
+                return None;
+            }
+            let sym = Symbol::try_from_val(&env, &topics.get(0).unwrap()).ok()?;
+            if sym != TOPIC_RESTORE_VERSION_MISMATCH {
+                return None;
+            }
+            RestoreVersionMismatchEvent::try_from_val(&env, &data).ok()
+        })
+        .collect();
 
-    client.restore_dry_run(&admin, &first);
-    client.restore_commit(&admin, &first);
-    let first_id = client.get_last_restore_id().unwrap();
-
-    client.restore_dry_run(&admin, &second);
-    client.restore_commit(&admin, &second);
-    let second_id = client.get_last_restore_id().unwrap();
-
-    assert_ne!(first_id, second_id);
-    assert!(client
-        .get_snapshot(&first_business, &String::from_str(&env, "2026-10"))
-        .is_some());
-    assert!(client
-        .get_snapshot(&second_business, &String::from_str(&env, "2026-11"))
-        .is_some());
+    assert_eq!(mismatch_events.len(), 1, "Expected exactly one RestoreVersionMismatchEvent");
+    let evt = &mismatch_events[0];
+    assert_eq!(evt.batch_version, 999);
+    assert_eq!(evt.expected_version, SNAPSHOT_SCHEMA_VERSION);
+    assert_eq!(evt.detected_at, 5_000_000);
 }

@@ -712,3 +712,113 @@ proptest! {
         }
     }
 }
+
+// ── Mid-window config change edge tests ───────────────────────────────────────
+//
+// When the rate-limit configuration changes partway through a window, the new
+// limit must apply immediately without violating already-accepted submissions.
+// These tests cover both raising and lowering the cap.
+
+/// Raise the cap mid-window: fill to the old limit, raise the cap, and verify
+/// that additional submissions are accepted up to the new limit.
+#[test]
+fn test_reconfigure_raises_cap_mid_window() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+
+    // Start with a tight cap: 2 submissions / 3600 s
+    configure_rate_limit(&client, 2, 3600, 2, 3600, true, 1);
+
+    set_ledger_timestamp(&env, 1_000);
+    submit(&client, &env, &business, 1);
+    set_ledger_timestamp(&env, 1_001);
+    submit(&client, &env, &business, 2);
+
+    // Window is full at 2/2 submissions
+    assert_eq!(client.get_submission_window_count(&business), 2);
+
+    // Raise the cap to 5
+    configure_rate_limit(&client, 5, 3600, 5, 3600, true, 2);
+
+    // Now can submit 3 more (reaching the new cap of 5)
+    set_ledger_timestamp(&env, 1_002);
+    submit(&client, &env, &business, 3);
+    set_ledger_timestamp(&env, 1_003);
+    submit(&client, &env, &business, 4);
+    set_ledger_timestamp(&env, 1_004);
+    submit(&client, &env, &business, 5);
+
+    assert_eq!(client.get_submission_window_count(&business), 5);
+
+    // 6th submission — one over the new cap — must be rejected
+    set_ledger_timestamp(&env, 1_005);
+    let period = String::from_str(&env, "over-raise");
+    let root = BytesN::from_array(&env, &[99u8; 32]);
+    let result = client.try_submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+    assert!(result.is_err());
+}
+
+/// Lower the cap below the already-accepted count: fill the window beyond the
+/// new (lower) limit, then verify the next submission is rejected immediately
+/// because the existing count already exceeds the new limit.
+#[test]
+#[should_panic(expected = "rate limit exceeded")]
+fn test_reconfigure_lowers_cap_below_accepted_count() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+
+    // Start with a generous cap: 10 submissions / 3600 s
+    configure_rate_limit(&client, 10, 3600, 10, 3600, true, 1);
+
+    set_ledger_timestamp(&env, 1_000);
+    for i in 1..=5 {
+        submit(&client, &env, &business, i);
+        set_ledger_timestamp(&env, 1_000 + i as u64);
+    }
+
+    // 5 submissions accepted; window count shows 5
+    assert_eq!(client.get_submission_window_count(&business), 5);
+
+    // Lower the cap to 3 — already exceeded by the 5 existing submissions
+    configure_rate_limit(&client, 3, 3600, 3, 3600, true, 2);
+
+    // The next submission must be rejected: 5 >= 3 (new max_submissions)
+    set_ledger_timestamp(&env, 1_010);
+    submit(&client, &env, &business, 6);
+}
+
+/// Lower the cap to exactly the current count: fill to N, lower the cap to N,
+/// and verify the very next submission is rejected.
+#[test]
+#[should_panic(expected = "rate limit exceeded")]
+fn test_reconfigure_lowers_cap_to_exact_accepted_count() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+
+    // Start with cap of 5
+    configure_rate_limit(&client, 5, 3600, 5, 3600, true, 1);
+
+    set_ledger_timestamp(&env, 1_000);
+    submit(&client, &env, &business, 1);
+    set_ledger_timestamp(&env, 1_001);
+    submit(&client, &env, &business, 2);
+
+    // 2 submissions accepted
+    assert_eq!(client.get_submission_window_count(&business), 2);
+
+    // Lower the cap to exactly 2 — the current count equals the new limit
+    configure_rate_limit(&client, 2, 3600, 2, 3600, true, 2);
+
+    // The next submission must be rejected: 2 >= 2 (new max_submissions)
+    set_ledger_timestamp(&env, 1_002);
+    submit(&client, &env, &business, 3);
+}

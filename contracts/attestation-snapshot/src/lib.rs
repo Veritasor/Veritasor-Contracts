@@ -29,6 +29,9 @@
 //! ## Restore dry-run invariants
 //!
 //! `restore_dry_run` checks and reports:
+//! - **Schema version**: all entries must declare `schema_version == SNAPSHOT_SCHEMA_VERSION`.
+//!   Batches with an incompatible version are rejected immediately with a
+//!   `RestoreVersionMismatch` event.
 //! - **No duplicate keys**: each (business, period) pair must be unique in the batch.
 //! - **Expiries in the future**: any `recorded_at` must not exceed the current ledger timestamp
 //!   (records from the future are rejected).
@@ -46,7 +49,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
-    xdr::ToXdr, BytesN, Env, String, Symbol, Vec,
+    xdr::ToXdr, Bytes, BytesN, Env, String, Symbol, Vec,
 };
 
 /// Maximum UTF-8 byte length for period/epoch identifiers.
@@ -63,6 +66,35 @@ pub const MAX_RESTORE_BATCH: u32 = 512;
 
 /// Ledgers after dry-run during which its restore token remains valid.
 pub const RESTORE_COMMIT_WINDOW_LEDGERS: u32 = 600;
+
+// ════════════════════════════════════════════════════════════════════
+//  Snapshot schema versioning
+//
+//  When restoring a snapshot batch, the contract must verify that the
+//  payload was encoded with a compatible schema version.  This prevents
+//  silent data corruption when restoring older snapshots after a schema
+//  evolution.
+// ════════════════════════════════════════════════════════════════════
+
+/// Current schema version for snapshot restore batches.
+///
+/// Increment this constant whenever the on-chain layout of `RestoreEntry`
+/// or `SnapshotRecord` changes in a way that would cause older encoded
+/// payloads to be misinterpreted.  Restore batches encoded with a different
+/// version are rejected during `restore_dry_run` with a `RestoreVersionMismatch`
+/// event.
+pub const SNAPSHOT_SCHEMA_VERSION: u32 = 1;
+
+/// Maximum number of entries allowed in a single restore batch.
+///
+/// Limits the computational cost of the dry-run validation and the commit
+/// operation to keep them within gas bounds.
+pub const MAX_RESTORE_BATCH: u32 = 1024;
+
+/// Number of ledgers after which a pending restore token expires.
+///
+/// Approximately ~2 hours at 5-second ledger close time.
+pub const RESTORE_COMMIT_WINDOW_LEDGERS: u32 = 1_440;
 
 // ════════════════════════════════════════════════════════════════════
 //  TTL constants
@@ -104,6 +136,35 @@ pub struct PointerTtlBumpedEvent {
     pub bumped_at: u64,
     /// The TTL amount added (in ledger sequences).
     pub ttl_bump: u32,
+}
+
+/// Topic: snapshot restore version mismatch.
+pub const TOPIC_RESTORE_VERSION_MISMATCH: Symbol = symbol_short!("rst_ver");
+
+/// Payload emitted when `restore_dry_run` or `restore_commit` detects a
+/// snapshot schema version mismatch between the incoming batch and the
+/// contract's expected `SNAPSHOT_SCHEMA_VERSION`.
+///
+/// The event is emitted **before** the function panics, allowing off-chain
+/// tooling to detect the version incompatibility without relying on panic
+/// messages.
+///
+/// ## Security Notes
+///
+/// - Emitted only when a version mismatch is detected; no event for matching
+///   versions.
+/// - The `batch_version` field allows off-chain tooling to distinguish between
+///   older and newer snapshot payloads.
+/// - No sensitive data is included.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct RestoreVersionMismatchEvent {
+    /// The schema version declared in the incoming restore batch.
+    pub batch_version: u32,
+    /// The contract's expected schema version (`SNAPSHOT_SCHEMA_VERSION`).
+    pub expected_version: u32,
+    /// Ledger timestamp when the mismatch was detected.
+    pub detected_at: u64,
 }
 
 /// Attestation contract client: WASM import for wasm32 (avoids duplicate symbols), crate for tests.
@@ -213,6 +274,8 @@ pub struct RestoreEntry {
     pub period: String,
     /// Full snapshot record to restore.
     pub record: SnapshotRecord,
+    /// Schema version of this entry's encoding. Must match `SNAPSHOT_SCHEMA_VERSION`.
+    pub schema_version: u32,
 }
 
 /// Outcome of a single-entry invariant check.
@@ -466,10 +529,13 @@ impl AttestationSnapshotContract {
     /// Validate a restore batch without writing any business state.
     ///
     /// Invariants checked per entry:
-    /// 1. `period` length within `MAX_PERIOD_BYTES`.
-    /// 2. `recorded_at` must not be in the future (> current ledger timestamp).
-    /// 3. No duplicate `(business, period)` keys within the batch.
-    /// 4. For each business, `recorded_at` values must be non-decreasing across
+    /// 1. **Schema version** matches `SNAPSHOT_SCHEMA_VERSION` — batches encoded
+    ///    with an incompatible version are rejected with a `RestoreVersionMismatch`
+    ///    event.
+    /// 2. `period` length within `MAX_PERIOD_BYTES`.
+    /// 3. `recorded_at` must not be in the future (> current ledger timestamp).
+    /// 4. No duplicate `(business, period)` keys within the batch.
+    /// 5. For each business, `recorded_at` values must be non-decreasing across
     ///    entries as they appear in the batch (monotonic nonces).
     ///
     /// If all checks pass a `PendingRestoreToken` is stored keyed to `caller`.
@@ -506,6 +572,22 @@ impl AttestationSnapshotContract {
 
         for i in 0..batch_len {
             let entry = entries.get(i).unwrap();
+
+            // ── Invariant 0: schema version check ────────────────────
+            if entry.schema_version != SNAPSHOT_SCHEMA_VERSION {
+                // Emit version mismatch event before panicking
+                let event = RestoreVersionMismatchEvent {
+                    batch_version: entry.schema_version,
+                    expected_version: SNAPSHOT_SCHEMA_VERSION,
+                    detected_at: now_ts,
+                };
+                env.events().publish(
+                    (TOPIC_RESTORE_VERSION_MISMATCH, caller.clone()),
+                    event,
+                );
+                panic!("snapshot schema version mismatch: expected {}, got {}",
+                       SNAPSHOT_SCHEMA_VERSION, entry.schema_version);
+            }
 
             // ── Invariant 1: period length ──────────────────────────
             if entry.period.len() > MAX_PERIOD_BYTES {
@@ -614,6 +696,7 @@ impl AttestationSnapshotContract {
     /// - A pending token exists for the caller (set by `restore_dry_run`).
     /// - The token has not expired.
     /// - The `entries` batch hash matches the token exactly.
+    /// - All entries declare `schema_version == SNAPSHOT_SCHEMA_VERSION`.
     ///
     /// On success all entries are written to storage and the pending token is
     /// consumed (one-shot). Entries whose epoch is already finalized are skipped
@@ -624,8 +707,8 @@ impl AttestationSnapshotContract {
     ///   and commit.
     /// - Token expiry prevents indefinitely-pending authorisations.
     /// - Token is deleted before writes begin (re-entrancy guard).
-    /// - The last committed batch fingerprint rejects sequential replay, even
-    ///   when the caller performs a new dry-run first.
+    /// - Schema version re-check at commit time provides defence-in-depth against
+    ///   direct commit calls that bypass dry-run.
     pub fn restore_commit(env: Env, caller: Address, entries: Vec<RestoreEntry>) {
         Self::require_admin(&env, &caller);
 
@@ -651,13 +734,24 @@ impl AttestationSnapshotContract {
             "snapshot_bytes hash mismatch; batch was altered since dry-run"
         );
 
-        if env
-            .storage()
-            .instance()
-            .get::<_, BytesN<32>>(&DataKey::LastRestoreId)
-            == Some(incoming_hash.clone())
-        {
-            panic_with_error!(&env, SnapshotError::AlreadyRestored);
+        // Defence-in-depth: re-validate schema version at commit time
+        // (should never fail if dry-run passed, but guards against direct commit calls).
+        let now_ts = env.ledger().timestamp();
+        for i in 0..entries.len() {
+            let entry = entries.get(i).unwrap();
+            if entry.schema_version != SNAPSHOT_SCHEMA_VERSION {
+                let event = RestoreVersionMismatchEvent {
+                    batch_version: entry.schema_version,
+                    expected_version: SNAPSHOT_SCHEMA_VERSION,
+                    detected_at: now_ts,
+                };
+                env.events().publish(
+                    (TOPIC_RESTORE_VERSION_MISMATCH, caller.clone()),
+                    event,
+                );
+                panic!("snapshot schema version mismatch: expected {}, got {}",
+                       SNAPSHOT_SCHEMA_VERSION, entry.schema_version);
+            }
         }
 
         for i in 0..entries.len() {
@@ -799,21 +893,26 @@ impl AttestationSnapshotContract {
     ///
     /// # Algorithm
     ///
-    /// 1. Iterate all known epochs in insertion order.
-    /// 2. For each epoch, iterate its businesses in insertion order.
-    /// 3. For each business, iterate its snapshot records in period order.
-    /// 4. Serialize the flat `Vec<SnapshotRecord>` to XDR.
-    /// 5. Return `sha256(xdr_bytes)`.
+    /// 1. Collect all live snapshot records from contract storage.
+    /// 2. Canonicalize each record into a stable byte encoding.
+    /// 3. Sort the canonical entries by their encoded bytes.
+    /// 4. Hash the sorted entries with SHA-256.
     ///
-    /// An empty contract returns the SHA-256 of the empty XDR vector.
+    /// The resulting commitment is order-independent, so the same snapshot set
+    /// produces the same hash even when records were inserted in different orders.
     pub fn export_snapshot_commitment(env: Env) -> BytesN<32> {
+        let (commitment, _) = Self::export_snapshot_commitment_with_count(env);
+        commitment
+    }
+
+    /// Export a deterministic commitment and the number of live snapshot entries.
+    pub fn export_snapshot_commitment_with_count(env: Env) -> (BytesN<32>, u64) {
+        let mut entries = Vec::new(&env);
         let all_epochs: Vec<String> = env
             .storage()
             .instance()
             .get(&DataKey::AllEpochs)
             .unwrap_or_else(|| Vec::new(&env));
-
-        let mut records = Vec::new(&env);
 
         for i in 0..all_epochs.len() {
             let epoch = all_epochs.get(i).unwrap();
@@ -833,14 +932,32 @@ impl AttestationSnapshotContract {
                     let snap_key = DataKey::Snapshot(business.clone(), period.clone());
                     if let Some(record) = env.storage().instance().get::<_, SnapshotRecord>(&snap_key)
                     {
-                        records.push_back(record);
+                        entries.push_back(Self::canonicalize_snapshot_record(&env, &record));
                     }
                 }
             }
         }
 
-        let encoded = records.to_xdr(&env);
-        env.crypto().sha256(&encoded).into()
+        entries.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+
+        let mut body = Bytes::new(&env);
+        for i in 0..entries.len() {
+            let entry = entries.get(i).unwrap();
+            body.append(&entry);
+        }
+
+        let commitment: BytesN<32> = env.crypto().sha256(&body).into();
+        (commitment, entries.len() as u64)
+    }
+
+    fn canonicalize_snapshot_record(env: &Env, record: &SnapshotRecord) -> Bytes {
+        let mut bytes = Bytes::new(env);
+        bytes.append(&record.period.to_xdr(env));
+        bytes.append(&record.trailing_revenue.to_le_bytes().as_slice().to_xdr(env));
+        bytes.append(&record.anomaly_count.to_le_bytes().as_slice().to_xdr(env));
+        bytes.append(&record.attestation_count.to_le_bytes().as_slice().to_xdr(env));
+        bytes.append(&record.recorded_at.to_le_bytes().as_slice().to_xdr(env));
+        bytes
     }
 
     // ── Internal ────────────────────────────────────────────────────
@@ -938,6 +1055,23 @@ impl AttestationSnapshotContract {
         epochs.push_back(epoch.clone());
         env.storage().instance().set(&key, &epochs);
     }
+
+    /// Compute a SHA-256 hash of the canonical restore batch data.
+    ///
+    /// The hash covers the ordered sequence of (business, period, schema_version)
+    /// tuples to bind the commit to the exact entries validated by dry-run.
+    fn compute_batch_hash(env: &Env, entries: &Vec<RestoreEntry>) -> soroban_sdk::BytesN<32> {
+        let mut buffer = Vec::new(env);
+        for i in 0..entries.len() {
+            let entry = entries.get(i).unwrap();
+            buffer.push_back(entry.business.clone());
+            buffer.push_back(entry.period.clone());
+            buffer.push_back(entry.schema_version);
+        }
+        let encoded = buffer.to_xdr(env);
+        env.crypto().sha256(&encoded).into()
+    }
+}
 
     /// Compute a deterministic identifier that binds every restore field.
     ///

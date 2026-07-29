@@ -190,6 +190,42 @@ fn test_execute_pause_proposal() {
 }
 
 #[test]
+fn test_preview_proposal_is_side_effect_free() {
+    let (env, client, admin, owners) = setup_with_multisig();
+    let owner2 = owners.get(1).unwrap();
+    let new_owner = Address::generate(&env);
+
+    let proposal_id = client.create_proposal(
+        &admin,
+        &ProposalAction::AddOwner(new_owner.clone()),
+        &0u64,
+    );
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
+
+    let preview = client.preview_proposal(&proposal_id);
+
+    assert_eq!(preview.proposal_id, proposal_id);
+    assert!(preview.would_execute);
+    assert!(preview.error.is_none());
+    assert_eq!(preview.change_count, 1u32);
+    assert!(!client.is_multisig_owner(&new_owner));
+}
+
+#[test]
+fn test_preview_expired_proposal_reports_error() {
+    let (env, client, admin, owners) = setup_with_multisig();
+    let owner2 = owners.get(1).unwrap();
+    let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
+
+    env.ledger().set_sequence(100_000 + 1_000_000);
+    let preview = client.preview_proposal(&proposal_id);
+
+    assert!(!preview.would_execute);
+    assert!(preview.error.is_some());
+}
+
+#[test]
 fn test_execute_unpause_proposal() {
     let (_env, client, admin, owners) = setup_with_multisig();
     let owner2 = owners.get(1).unwrap();
