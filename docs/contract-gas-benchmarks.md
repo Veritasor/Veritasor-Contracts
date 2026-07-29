@@ -70,6 +70,7 @@ Based on Soroban's resource limits and operation complexity:
 |-----------|-----------------|--------------|-------|
 | `submit_attestation` (no fee) | < 500,000 | < 10,000 | Basic storage write |
 | `submit_attestation` (with fee) | < 1,000,000 | < 15,000 | Includes token transfer |
+| `submit_attestation_with_metadata` | < 1,500,000 | < 25,000 | Metadata payload sweep (up to MAX) |
 | `verify_attestation` | < 200,000 | < 5,000 | Read + comparison |
 | `revoke_attestation` | < 300,000 | < 8,000 | Write revocation flag |
 | `migrate_attestation` | < 400,000 | < 10,000 | Update existing entry |

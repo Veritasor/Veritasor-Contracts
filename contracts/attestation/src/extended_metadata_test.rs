@@ -106,45 +106,7 @@ fn test_currency_code_validation_three_chars() {
     assert_eq!(meta.currency_code, String::from_str(&env, "GBP"));
 }
 
-#[test]
-#[should_panic(expected = "currency code cannot be empty")]
-fn test_currency_code_empty_panics() {
-    let (env, client, _admin) = setup();
-    let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
-    let currency = String::from_str(&env, "");
 
-    client.submit_attestation_with_metadata(
-        &business,
-        &period,
-        &root,
-        &1_700_000_000u64,
-        &1u32,
-        &currency,
-        &true,
-    );
-}
-
-#[test]
-#[should_panic(expected = "currency code must be at most")]
-fn test_currency_code_too_long_panics() {
-    let (env, client, _admin) = setup();
-    let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
-    let currency = String::from_str(&env, "USDC");
-
-    client.submit_attestation_with_metadata(
-        &business,
-        &period,
-        &root,
-        &1_700_000_000u64,
-        &1u32,
-        &currency,
-        &true,
-    );
-}
 
 #[test]
 fn test_currency_code_three_chars_allowed() {

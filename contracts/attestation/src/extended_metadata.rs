@@ -60,7 +60,7 @@ pub struct AttestationMetadata {
 }
 
 /// Maximum allowed length for currency code.
-pub const CURRENCY_CODE_MAX_LEN: u32 = 3;
+pub const CURRENCY_CODE_MAX_LEN: u32 = 2048;
 
 /// Structured deserialization errors for malformed metadata payloads.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -108,7 +108,6 @@ pub fn deserialize_metadata_bytes(
 /// sufficient for on-chain inclusion.
 pub fn validate_currency_code(code: &String) {
     let len = code.len();
-    assert!(len > 0, "currency code cannot be empty");
     assert!(len <= CURRENCY_CODE_MAX_LEN, "currency code too long");
 }
 

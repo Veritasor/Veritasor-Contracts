@@ -3665,3 +3665,39 @@ fn regression_get_multi_period_ranges_budget() {
         );
     }
 }
+
+// ── Metadata Size Benchmark ────────────────────────────────────────────────────────
+
+#[test]
+fn bench_metadata_size_sweep() {
+    std::println!("\n╔════════════════════════════════════════════════════════════════════════╗");
+    std::println!("║      Metadata Size Sweep Benchmark                                     ║");
+    std::println!("╚════════════════════════════════════════════════════════════════════════╝");
+    std::println!("size_bytes,cpu_insns,mem_bytes");
+
+    let sizes = [0, 64, 128, 256, 512, 1024, 2048];
+    for &size in &sizes {
+        let (env, client, _admin) = setup_basic();
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "2026-02");
+        let root = BytesN::from_array(&env, &[1u8; 32]);
+        
+        let buf = std::vec![b'A'; size];
+        let currency = String::from_str(&env, core::str::from_utf8(&buf).unwrap());
+
+        let before = BudgetSnapshot::capture(&env);
+        client.submit_attestation_with_metadata(
+            &business,
+            &period,
+            &root,
+            &1_700_000_000u64,
+            &1u32,
+            &currency,
+            &true,
+        );
+        let after = BudgetSnapshot::capture(&env);
+
+        let cost = before.delta(&after);
+        std::println!("{},{},{}", size, cost.cpu_insns, cost.mem_bytes);
+    }
+}
