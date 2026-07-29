@@ -30,6 +30,21 @@ use crate::ROLE_ADMIN;
 use crate::events;
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
+/// Default deadline in seconds for dispute resolution.
+/// Disputes that remain open beyond this deadline are eligible for automatic
+/// rollback to the pre-dispute attestation state.
+///
+/// Default: 7 days (604,800 seconds).
+pub const DISPUTE_DEADLINE_SECONDS: u64 = 604_800;
+
+/// Minimum allowed deadline (1 hour in seconds). Prevents accidental
+/// misconfiguration that could cause premature rollback.
+pub const MIN_DISPUTE_DEADLINE_SECONDS: u64 = 3600;
+
+/// Maximum allowed deadline (90 days in seconds). Prevents indefinite
+/// dispute locks beyond a reasonable upper bound.
+pub const MAX_DISPUTE_DEADLINE_SECONDS: u64 = 7_776_000;
+
 /// Status of a dispute
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -159,6 +174,9 @@ enum DisputeKey {
     /// Tracks the number of active disputes locking an attestor.
     /// When count reaches 0, the attestor is fully unlocked.
     AttestorLockCount(Address),
+    /// Configurable deadline in seconds for dispute resolution rollback.
+    /// Defaults to DISPUTE_DEADLINE_SECONDS if not explicitly set.
+    DisputeDeadlineSeconds,
 }
 
 /// Generate next unique dispute ID
@@ -302,6 +320,43 @@ fn append_to_revocation_index(env: &Env, business: &Address, period: &String) {
     let mut periods = get_revoked_periods(env, business);
     periods.push_back(period.clone());
     set_revoked_periods(env, business, &periods);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Dispute Deadline Configuration
+// ════════════════════════════════════════════════════════════════════
+
+/// Get the configured dispute resolution deadline in seconds.
+///
+/// Returns the explicitly configured value, or `DISPUTE_DEADLINE_SECONDS`
+/// if no custom deadline has been set.
+pub fn get_dispute_deadline(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DisputeKey::DisputeDeadlineSeconds)
+        .unwrap_or(DISPUTE_DEADLINE_SECONDS)
+}
+
+/// Set a custom dispute resolution deadline in seconds.
+///
+/// The deadline must be within `[MIN_DISPUTE_DEADLINE_SECONDS,
+/// MAX_DISPUTE_DEADLINE_SECONDS]` to prevent misconfiguration.
+///
+/// # Panics
+/// - `deadline_seconds` is less than `MIN_DISPUTE_DEADLINE_SECONDS`.
+/// - `deadline_seconds` is greater than `MAX_DISPUTE_DEADLINE_SECONDS`.
+pub fn set_dispute_deadline(env: &Env, deadline_seconds: u64) {
+    assert!(
+        deadline_seconds >= MIN_DISPUTE_DEADLINE_SECONDS,
+        "deadline must be at least 1 hour"
+    );
+    assert!(
+        deadline_seconds <= MAX_DISPUTE_DEADLINE_SECONDS,
+        "deadline must not exceed 90 days"
+    );
+    env.storage()
+        .instance()
+        .set(&DisputeKey::DisputeDeadlineSeconds, &deadline_seconds);
 }
 
 /// Set the revoked periods array.
@@ -741,4 +796,117 @@ pub fn unlock_attestor(env: &Env, attestor: &Address) -> bool {
         env.storage().instance().set(&key, &new_count);
         false
     }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Dispute Deadline Rollback
+// ════════════════════════════════════════════════════════════════════
+
+/// Check a batch of dispute IDs and automatically roll back any that have
+/// exceeded the resolution deadline.
+///
+/// A dispute is rolled back when **all** of the following conditions are met:
+/// 1. The dispute exists and is in `Open` status.
+/// 2. The current ledger timestamp exceeds `dispute.timestamp + deadline`.
+///
+/// On rollback:
+/// - The dispute status is set to `Closed` with a resolution indicating
+///   automatic rollback due to deadline expiry.
+/// - The attestor lock count is decremented (if the attestor was locked).
+/// - A `DisputeRolledBack` event is emitted.
+///
+/// # Arguments
+///
+/// * `env`         – Soroban execution environment.
+/// * `dispute_ids` – Candidate dispute IDs to check for deadline expiry.
+/// * `limit`       – Maximum number of disputes to roll back in this call
+///   (prevents exceeding Soroban CPU budget).
+///
+/// # Returns
+///
+/// The number of disputes that were actually rolled back.
+///
+/// # Security & Correctness Assumptions
+///
+/// - The deadline check uses `env.ledger().timestamp()` which is the
+///   consensus timestamp of the current ledger — it cannot be manipulated
+///   by the caller.
+/// - Only `Open` disputes are eligible; already-resolved or closed disputes
+///   are skipped silently.
+/// - The `limit` parameter prevents unbounded iteration that could exceed
+///   the Soroban CPU instruction budget.
+/// - The attestor unlock uses the ref-counted `unlock_attestor` which
+///   correctly handles attestors with multiple active disputes.
+pub fn check_and_rollback_disputes(
+    env: &Env,
+    dispute_ids: &Vec<u64>,
+    limit: u32,
+) -> u32 {
+    let deadline = get_dispute_deadline(env);
+    let now = env.ledger().timestamp();
+    let mut rolled_back_count: u32 = 0;
+
+    for i in 0..dispute_ids.len() {
+        if rolled_back_count >= limit {
+            break;
+        }
+
+        let dispute_id = match dispute_ids.get(i) {
+            Some(id) => id,
+            None => continue,
+        };
+
+        let mut dispute = match get_dispute(env, dispute_id) {
+            Some(d) => d,
+            None => continue,
+        };
+
+        // Only roll back Open disputes that have exceeded the deadline.
+        if dispute.status != DisputeStatus::Open {
+            continue;
+        }
+
+        let elapsed = if now >= dispute.timestamp {
+            now - dispute.timestamp
+        } else {
+            // Guard against clock skew: if the dispute timestamp is in the
+            // future, it has not exceeded any deadline.
+            0
+        };
+
+        if elapsed <= deadline {
+            continue;
+        }
+
+        // ── Rollback: close the dispute with an auto-rollback resolution ──
+        let resolution = DisputeResolution {
+            resolver: dispute.challenger.clone(),
+            outcome: DisputeOutcome::Rejected,
+            timestamp: now,
+            notes: String::from_str(
+                env,
+                "Automatic rollback: dispute resolution deadline exceeded",
+            ),
+        };
+
+        dispute.status = DisputeStatus::Closed;
+        dispute.resolution = OptionalResolution::Some(resolution.clone());
+
+        store_dispute(env, &dispute);
+        store_dispute_resolution(env, dispute_id, &resolution);
+
+        // Release the attestor lock if one exists for this dispute's attestation.
+        if let Some(attestor) =
+            get_attestor_for_attestation(env, &dispute.business, &dispute.period)
+        {
+            unlock_attestor(env, &attestor);
+        }
+
+        // Emit event.
+        events::emit_dispute_rolled_back(env, dispute_id, &dispute.business, &dispute.period, deadline);
+
+        rolled_back_count += 1;
+    }
+
+    rolled_back_count
 }

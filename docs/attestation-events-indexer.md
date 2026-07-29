@@ -10,6 +10,7 @@ This specification covers the following events only:
 - `AttestationRevokedEvent` with topic `(att_rev, business)`
 - `AttestationMigratedEvent` with topic `(att_mig, business)`
 - `AttestationCleanedUpEvent` with topic `(att_cl, business)`
+- `CleanupSummaryEvent` with topic `(cl_sum,)` — per-epoch cleanup health at fee-bucket boundaries
 
 Source of truth for payload structs and topic symbols:
 - `contracts/attestation/src/events.rs`

@@ -16,6 +16,7 @@ use veritasor_common::replay_protection;
 // Nonce channels
 pub const NONCE_CHANNEL_ADMIN: u32 = 0;
 pub const NONCE_CHANNEL_BUSINESS: u32 = 1;
+pub const NONCE_CHANNEL_PERMIT: u32 = 2;
 
 // Key Tags
 const ANOMALY_KEY_TAG: (u32,) = (3,);
@@ -64,9 +65,11 @@ pub use dynamic_fees::{RevokeProposal, DEFAULT_REVOKE_GRACE_SECONDS};
 pub use dynamic_fees::{ArchivePointerRecord, CompactionRetentionPolicy};
 pub use events::{
     AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
-    AttestationSubmittedEvent, ProofHashUpdatedEvent,
+    AttestationSubmittedEvent, PermitCancelledEvent, ProofHashUpdatedEvent,
     RelayerGasReportedEvent,
     RevocationCancelledEvent, RevocationCommittedEvent, RevocationProposedEvent,
+    StakingContractProposedEvent, StakingContractCommittedEvent, StakingContractCancelledEvent,
+    TOPIC_STAKING_CONTRACT_PROPOSED, TOPIC_STAKING_CONTRACT_COMMITTED, TOPIC_STAKING_CONTRACT_CANCELLED,
 };
 pub use fees::{collect_flat_fee, CollectorRotationProposal, FlatFeeConfig};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
@@ -104,6 +107,19 @@ pub struct BatchAttestationItem {
     pub version: u32,
     pub proof_hash: Option<BytesN<32>>,
     pub expiry_timestamp: Option<u64>,
+}
+
+/// Off-chain signed payload that authorises cancelling one outstanding
+/// delegated-submission permit by burning its nonce.
+///
+/// The business signs this struct (by including it in a Soroban function call
+/// that authenticates via `require_auth`) to invalidate any pending permit
+/// created with the same nonce value on `NONCE_CHANNEL_PERMIT`.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CancelPermit {
+    pub business: Address,
+    pub nonce: u64,
 }
 
 /// Maximum number of items allowed in a single batch submission.
@@ -171,6 +187,11 @@ mod backfill_checkpoint_test;
 /// reproduce without these tests).
 #[cfg(test)]
 mod vote_weight_snapshot_test;
+
+/// Staking contract time-lock tests. Covers propose → commit → apply flow,
+/// cancel, edge cases, authorization, and event emission.
+#[cfg(test)]
+mod timelock_staking_test;
 
 #[contractimpl]
 impl AttestationContract {
@@ -430,10 +451,106 @@ impl AttestationContract {
     }
 
     pub fn set_attestor_staking_contract(env: Env, caller: Address, staking_contract: Address) {
+        // This function is superseded by the time-locked rebinding flow.
+        // Use `propose_staking_contract` followed by `commit_staking_contract`
+        // (after at least 86 400 s / 24 h) instead.
+        panic!(
+            "set_attestor_staking_contract is disabled: \
+             use propose_staking_contract + commit_staking_contract (24 h timelock)"
+        );
+    }
+
+    /// Propose a new attestor staking contract address.
+    ///
+    /// The change enters a 24-hour time-lock (86 400 seconds) before it can be
+    /// committed.  Only one proposal may be pending at a time; cancel the
+    /// existing one with `cancel_pending_staking_contract` before creating a
+    /// new proposal.
+    ///
+    /// Rebinding the staking contract is a **high-blast-radius** operation.
+    /// Pointing the contract at a malicious or misconfigured address would
+    /// instantly break attestor eligibility checks for every business.  The
+    /// mandatory delay gives monitoring systems and stakeholders time to detect
+    /// and react to an unintended or hostile change.
+    ///
+    /// # Panics
+    /// - Caller does not have ADMIN role
+    /// - A pending staking contract proposal already exists (cancel it first)
+    pub fn propose_staking_contract(
+        env: Env,
+        caller: Address,
+        new_contract: Address,
+        nonce: u64,
+    ) {
         access_control::require_admin(&env, &caller);
+        let admin = dynamic_fees::require_admin(&env);
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
+        assert!(
+            dynamic_fees::get_pending_staking_contract(&env).is_none(),
+            "pending staking contract already scheduled"
+        );
+        let effective_at = env.ledger().timestamp() + dynamic_fees::FEE_TIMELOCK_SECONDS;
+        let pending = dynamic_fees::PendingStakingContract {
+            new_contract: new_contract.clone(),
+            effective_at,
+            proposed_by: admin.clone(),
+        };
+        dynamic_fees::set_pending_staking_contract(&env, &pending);
+        events::emit_staking_contract_proposed(&env, &new_contract, &admin, effective_at);
+    }
+
+    /// Commit a previously proposed staking contract address after its 24-hour
+    /// timelock has elapsed.
+    ///
+    /// Applies the pending address to the live staking contract slot and clears
+    /// the pending state.
+    ///
+    /// # Panics
+    /// - Caller does not have ADMIN role
+    /// - No pending staking contract proposal exists
+    /// - Timelock has not yet expired
+    pub fn commit_staking_contract(env: Env, caller: Address, nonce: u64) {
+        access_control::require_admin(&env, &caller);
+        let admin = dynamic_fees::require_admin(&env);
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
+        let pending = dynamic_fees::get_pending_staking_contract(&env)
+            .expect("no pending staking contract to commit");
+        assert!(
+            env.ledger().timestamp() >= pending.effective_at,
+            "timelock not yet expired"
+        );
         env.storage()
             .instance()
-            .set(&DataKey::AttestorStakingContract, &staking_contract);
+            .set(&DataKey::AttestorStakingContract, &pending.new_contract);
+        dynamic_fees::clear_pending_staking_contract(&env);
+        events::emit_staking_contract_committed(&env, &pending.new_contract, &admin);
+    }
+
+    /// Cancel a pending staking contract proposal.
+    ///
+    /// The live staking contract address is not affected.
+    ///
+    /// # Panics
+    /// - Caller does not have ADMIN role
+    /// - No pending staking contract proposal exists
+    pub fn cancel_pending_staking_contract(env: Env, caller: Address, nonce: u64) {
+        access_control::require_admin(&env, &caller);
+        let admin = dynamic_fees::require_admin(&env);
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
+        let pending = dynamic_fees::get_pending_staking_contract(&env)
+            .expect("no pending staking contract to cancel");
+        dynamic_fees::clear_pending_staking_contract(&env);
+        events::emit_staking_contract_cancelled(&env, &pending.new_contract, &admin);
+    }
+
+    /// Returns the pending staking contract proposal, if any.
+    ///
+    /// Observers (monitoring systems, DAO, community) can call this to detect
+    /// a pending rebinding before the timelock expires.
+    pub fn get_pending_staking_contract(
+        env: Env,
+    ) -> Option<dynamic_fees::PendingStakingContract> {
+        dynamic_fees::get_pending_staking_contract(&env)
     }
 
     pub fn get_attestor_staking_contract(env: Env) -> Option<Address> {
@@ -519,6 +636,31 @@ impl AttestationContract {
 
     pub fn get_replay_nonce(env: Env, actor: Address, channel: u32) -> u64 {
         replay_protection::get_nonce(&env, &actor, channel)
+    }
+
+    /// Revoke an outstanding delegated-submission permit by burning its nonce.
+    ///
+    /// The business authorises this cancellation by signing a Soroban
+    /// transaction that calls this function with `cancel_permit`.  After
+    /// the nonce is consumed, any pre-signed delegated-submission permit
+    /// using the same nonce is permanently invalid.
+    ///
+    /// # Events
+    ///
+    /// Publishes `(perm_canc, business)` → `PermitCancelledEvent`.
+    ///
+    /// # Panics
+    /// - `cancel_permit.business` auth is missing or invalid
+    /// - Nonce mismatch or replay (via `verify_and_increment_nonce`)
+    pub fn cancel_delegated_permit(env: Env, cancel_permit: CancelPermit) {
+        cancel_permit.business.require_auth();
+        replay_protection::verify_and_increment_nonce(
+            &env,
+            &cancel_permit.business,
+            NONCE_CHANNEL_PERMIT,
+            cancel_permit.nonce,
+        );
+        events::emit_permit_cancelled(&env, &cancel_permit.business, cancel_permit.nonce);
     }
 
     pub fn submit_attestation(
@@ -1227,6 +1369,7 @@ impl AttestationContract {
 
         env.storage().instance().remove(&key);
         extended_metadata::remove_metadata(&env, &business, &period);
+        dynamic_fees::increment_cleanup_count(&env);
         events::emit_attestation_cleaned_up(&env, &business, &period);
     }
 
@@ -1980,16 +2123,36 @@ impl AttestationContract {
         env.storage().instance().set(&ranges_key, &ranges);
     }
 
+    /// Propose a new DAO contract address (two-phase rotation). The current DAO calls this.
+    pub fn propose_dao_rotation(env: Env, new_dao: Address) {
+        let caller = env.invoker();
+        fees::propose_dao_rotation(&env, &caller, &new_dao);
+    }
+    /// The proposed new DAO calls this to accept the role.
+    pub fn accept_dao_rotation(env: Env) {
+        let caller = env.invoker();
+        fees::accept_dao_rotation(&env, &caller);
+    }
     /// Admin: set the DAO contract address for dynamic fee config override.
     pub fn set_dao(env: Env, dao: Address) {
         dynamic_fees::require_admin(&env);
         dynamic_fees::set_dao(&env, &dao);
     }
-
     /// Admin: set the DAO contract address for flat fee config override.
     pub fn set_flat_fee_dao(env: Env, dao: Address) {
         dynamic_fees::require_admin(&env);
         fees::set_dao(&env, &dao);
+    }
+
+    /// The current DAO may cancel a pending rotation before the new DAO accepts.
+    pub fn cancel_dao_rotation(env: Env) {
+        let caller = env.invoker();
+        fees::cancel_dao_rotation(&env, &caller);
+    }
+
+    /// Returns the pending DAO rotation proposal if any.
+    pub fn get_pending_dao_rotation(env: Env) -> Option<fees::DaoRotationProposal> {
+        fees::get_pending_dao_rotation(&env)
     }
 
     /// Returns the locally stored dynamic fee config (ignores DAO).
@@ -2084,6 +2247,15 @@ impl AttestationContract {
     /// window. The value is monotonically non-decreasing.
     pub fn get_epoch(env: Env) -> u64 {
         dynamic_fees::get_epoch(&env)
+    }
+
+    /// Returns how many successful cleanups were recorded for `epoch`.
+    ///
+    /// Backed by [`DataKey::CleanupCountForEpoch`]. Missing epochs return `0`.
+    /// At each fee-bucket boundary a `CleanupSummary` event is emitted with
+    /// this value for the ending epoch (including zero).
+    pub fn get_cleanup_count_for_epoch(env: Env, epoch: u64) -> u64 {
+        dynamic_fees::get_cleanup_count_for_epoch(&env, epoch)
     }
 
     pub fn get_submission_window_count(env: Env, business: Address) -> u32 {
@@ -2282,6 +2454,57 @@ impl AttestationContract {
         dispute::get_dispute_ids_by_challenger(&env, &challenger)
     }
 
+    /// Check a batch of dispute IDs and automatically roll back any that have
+    /// exceeded the configurable resolution deadline.
+    ///
+    /// Only disputes with `Open` status and whose elapsed time since creation
+    /// exceeds the configured deadline (see `set_dispute_deadline`) are affected.
+    ///
+    /// On rollback:
+    /// - The dispute is transitioned to `Closed` with a resolution indicating
+    ///   deadline expiry.
+    /// - The associated attestor lock (if any) is released.
+    /// - A `DisputeRolledBack` event is emitted.
+    ///
+    /// # Arguments
+    ///
+    /// * `env`         – Soroban execution environment.
+    /// * `caller`      – Must hold ADMIN role.
+    /// * `dispute_ids` – Candidate dispute IDs to check for deadline expiry.
+    /// * `limit`       – Maximum number of disputes to roll back in this call.
+    ///
+    /// # Returns
+    ///
+    /// The number of disputes actually rolled back.
+    pub fn check_and_rollback_disputes(
+        env: Env,
+        caller: Address,
+        dispute_ids: Vec<u64>,
+        limit: u32,
+    ) -> u32 {
+        access_control::require_admin(&env, &caller);
+        dispute::check_and_rollback_disputes(&env, &dispute_ids, limit)
+    }
+
+    /// Set the dispute resolution deadline in seconds.
+    ///
+    /// The deadline must be within the allowed range:
+    /// - Minimum: 1 hour (3600 seconds)
+    /// - Maximum: 90 days (7,776,000 seconds)
+    ///
+    /// # Panics
+    /// - Caller does not have ADMIN role.
+    /// - `deadline_seconds` is outside the allowed range.
+    pub fn set_dispute_deadline(env: Env, caller: Address, deadline_seconds: u64) {
+        access_control::require_admin(&env, &caller);
+        dispute::set_dispute_deadline(&env, deadline_seconds);
+    }
+
+    /// Return the currently configured dispute resolution deadline in seconds.
+    pub fn get_dispute_deadline(env: Env) -> u64 {
+        dispute::get_dispute_deadline(&env)
+    }
+
     /// Triggers a slash for a resolved dispute and records the event in the audit log.
     pub fn trigger_slash(
         env: Env,
@@ -2445,10 +2668,13 @@ impl AttestationContract {
         }
         dispute::set_revoked_periods(&env, &business, &new_periods);
 
-        // 9. Emit cleaned event.
+        // 9. Record cleanup metrics for the current fee-bucket epoch.
+        dynamic_fees::increment_cleanup_count(&env);
+
+        // 10. Emit cleaned event.
         events::emit_attestation_cleaned_up(&env, &business, &period);
 
-        // 10. Bump TTL after storage modifications.
+        // 11. Bump TTL after storage modifications.
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
@@ -2972,6 +3198,8 @@ mod dynamic_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod epoch_counter_test;
 #[cfg(all(test, feature = "full-tests"))]
+mod cleanup_metrics_test;
+#[cfg(all(test, feature = "full-tests"))]
 mod events_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod expiry_test;
@@ -3001,6 +3229,8 @@ mod multisig_e2e_test;
 mod multisig_test;
 #[cfg(test)]
 mod pause_test;
+#[cfg(test)]
+mod permit_test;
 #[cfg(test)]
 mod timelock_fees_test;
 #[cfg(all(test, feature = "full-tests"))]

@@ -45,7 +45,9 @@
 //! | `ApprovalRevoked`           | `appr_rv`      | `proposal_id`     |
 //! | `EpochCheckpoint`           | `ep_ckpt`      | *(none)*          |
 //! | `EpochAdvanced`             | `ep_adv`       | *(none)*          |
+//! | `CleanupSummary`            | `cl_sum`       | *(none)*          |
 //! | `BackfillCheckpoint`        | `bkf_chk`      | *(none)*          |
+//! | `DisputeRolledBack`         | `dsp_rb`       | `business`        |
 //!
 //! ## Indexer Compatibility Contract
 //!
@@ -137,7 +139,7 @@ pub const TOPIC_KEY_ROTATION_CANCELLED: Symbol = symbol_short!("kr_canc");
 /// Topic: emergency key rotation executed
 pub const TOPIC_KEY_ROTATION_EMERGENCY: Symbol = symbol_short!("kr_emer");
 /// Topic: emergency pause triggered (dual-key bypass)
-pub const TOPIC_EMERGENCY_PAUSE_TRIGGERED: Symbol = symbol_short!("emer_pause");
+pub const TOPIC_EMERGENCY_PAUSE_TRIGGERED: Symbol = symbol_short!("emr_pse");
 /// Topic: business registered
 pub const TOPIC_BIZ_REGISTERED: Symbol = symbol_short!("biz_reg");
 /// Topic: business approved
@@ -150,6 +152,8 @@ pub const TOPIC_BIZ_REACTIVATE: Symbol = symbol_short!("biz_rea");
 pub const TOPIC_PROOF_HASH_UPDATED: Symbol = symbol_short!("ph_upd");
 /// Topic: fee bucket epoch advanced
 pub const TOPIC_EPOCH_ADVANCED: Symbol = symbol_short!("ep_adv");
+/// Topic: per-epoch cleanup summary at fee-bucket boundary
+pub const TOPIC_CLEANUP_SUMMARY: Symbol = symbol_short!("cl_sum");
 /// Topic: revocation proposed (grace window started)
 pub const TOPIC_REVOCATION_PROPOSED: Symbol = symbol_short!("rv_prop");
 /// Topic: revocation proposal cancelled (appeal succeeded)
@@ -160,8 +164,6 @@ pub const TOPIC_REVOCATION_COMMITTED: Symbol = symbol_short!("rv_cmmt");
 pub const TOPIC_APPROVAL_REVOKED: Symbol = symbol_short!("appr_rv");
 /// Topic: epoch checkpoint emitted after each submission (per-period)
 pub const TOPIC_EPOCH_CHECKPOINT: Symbol = symbol_short!("ep_ckpt");
-/// Topic: epoch advanced on fee-bucket window rollover
-pub const TOPIC_EPOCH_ADVANCED: Symbol = symbol_short!("ep_adv");
 /// Topic: backfill checkpoint emitted every N submissions (global counter)
 pub const TOPIC_BACKFILL_CHECKPOINT: Symbol = symbol_short!("bkf_chk");
 /// Topic: archival compaction completed
@@ -666,6 +668,20 @@ pub struct BusinessReactivatedEvent {
     pub reactivated_by: Address,
 }
 
+/// Normalized payload for `PermitCancelled` events.
+///
+/// Emitted when a delegated-submission permit is cancelled and its nonce
+/// is burned, permanently invalidating any pre-signed permit using that
+/// nonce value for the business on `NONCE_CHANNEL_PERMIT`.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PermitCancelledEvent {
+    /// Business whose permit was cancelled.
+    pub business: Address,
+    /// Nonce value that was burned.
+    pub nonce: u64,
+}
+
 /// Normalized payload for `EpochAdvanced` events.
 ///
 /// Emitted once per fee-bucket window rollover. Indexers use `epoch` as a
@@ -681,6 +697,30 @@ pub struct EpochAdvancedEvent {
     /// New epoch number (1-based, monotonically non-decreasing).
     pub epoch: u64,
     /// Ledger timestamp when the epoch was advanced.
+    pub at_ts: u64,
+}
+
+/// Normalized payload for `CleanupSummary` events.
+///
+/// Emitted at each fee-bucket epoch boundary with the number of successful
+/// cleanup operations recorded for the **ending** epoch. Operators use this
+/// to monitor cleanup health without scanning every `AttestationCleanedUp`
+/// event.
+///
+/// ## Security
+/// - Only emitted from the contract's epoch-rollover path.
+/// - `removed_count` is the persisted `CleanupCountForEpoch(epoch)` value
+///   (including `0` when no cleanups occurred).
+/// - The counter is incremented only after a successful cleanup removes
+///   storage; failed / unauthorized cleanup attempts do not affect it.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CleanupSummaryEvent {
+    /// Epoch that just ended (the epoch whose cleanup count is reported).
+    pub epoch: u64,
+    /// Number of successful cleanup operations in that epoch.
+    pub removed_count: u64,
+    /// Ledger timestamp when the summary was emitted.
     pub at_ts: u64,
 }
 
@@ -715,6 +755,25 @@ pub struct ProposalCleanedEvent {
     pub action: ProposalAction,
     /// Ledger sequence number when the cleanup occurred
     pub cleaned_at: u32,
+}
+
+/// Normalized payload for `DisputeRolledBack` events.
+///
+/// Emitted when an open dispute exceeds the configurable resolution deadline
+/// and is automatically rolled back to the pre-dispute attestation state.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DisputeRolledBackEvent {
+    /// Unique identifier of the dispute that was rolled back.
+    pub dispute_id: u64,
+    /// Business address associated with the dispute.
+    pub business: Address,
+    /// Period identifier of the disputed attestation.
+    pub period: String,
+    /// Ledger timestamp when the rollback occurred.
+    pub rolled_back_at: u64,
+    /// The deadline threshold in seconds that was exceeded.
+    pub deadline_seconds: u64,
 }
 
 /// Normalized payload for `SlashTriggered` events.
@@ -902,6 +961,30 @@ pub fn emit_attestation_cleaned_up(env: &Env, business: &Address, period: &Strin
     };
     env.events()
         .publish((TOPIC_ATTESTATION_CLEANED_UP, business.clone()), event);
+}
+
+/// Emit a `PermitCancelled` event.
+///
+/// Call this after a delegated-submission permit has been cancelled and its
+/// nonce burned on `NONCE_CHANNEL_PERMIT`.  Off-chain indexers can use the
+/// `business` secondary topic to monitor cancellations per business.
+///
+/// # Arguments
+///
+/// * `env`      – Soroban execution environment.
+/// * `business` – Business whose permit was cancelled.
+/// * `nonce`    – Nonce value that was burned.
+///
+/// # Events
+///
+/// Publishes `(perm_canc, business)` → `PermitCancelledEvent`.
+pub fn emit_permit_cancelled(env: &Env, business: &Address, nonce: u64) {
+    let event = PermitCancelledEvent {
+        business: business.clone(),
+        nonce,
+    };
+    env.events()
+        .publish((TOPIC_PERMIT_CANCELLED, business.clone()), event);
 }
 
 /// Emit a `SlashTriggered` event.
@@ -1863,23 +1946,6 @@ pub struct EpochCheckpointEvent {
     pub checkpoint_timestamp: u64,
 }
 
-/// Normalized payload for `EpochAdvanced` events.
-///
-/// Emitted when the fee-bucket window rolls over, incrementing the
-/// monotonic epoch counter. One event is emitted per elapsed window.
-///
-/// | Event Catalog | Topic | Secondary topic |
-/// |---|---|--|
-/// | EpochAdvanced | `ep_adv` | *(none)* |
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct EpochAdvancedEvent {
-    /// New epoch value after the rollover.
-    pub epoch: u64,
-    /// Ledger timestamp at which the rollover was detected.
-    pub at_ts: u64,
-}
-
 /// Normalized payload for `BackfillCheckpoint` events.
 ///
 /// Emitted every `BACKFILL_CHECKPOINT_INTERVAL` (global) submissions to
@@ -1955,6 +2021,29 @@ pub fn emit_epoch_advanced(env: &Env, epoch: u64) {
         at_ts: env.ledger().timestamp(),
     };
     env.events().publish((TOPIC_EPOCH_ADVANCED,), event);
+}
+
+/// Emit a `CleanupSummary` event at an epoch boundary.
+///
+/// Called from the fee-bucket rollover path immediately before the epoch
+/// counter advances. Reports cleanups recorded for the ending epoch.
+///
+/// # Arguments
+///
+/// * `env`           – Soroban execution environment.
+/// * `epoch`         – Ending epoch whose cleanup count is reported.
+/// * `removed_count` – Persisted cleanup count for that epoch (may be 0).
+///
+/// # Events
+///
+/// Publishes `(cl_sum,)` → `CleanupSummaryEvent`.
+pub fn emit_cleanup_summary(env: &Env, epoch: u64, removed_count: u64) {
+    let event = CleanupSummaryEvent {
+        epoch,
+        removed_count,
+        at_ts: env.ledger().timestamp(),
+    };
+    env.events().publish((TOPIC_CLEANUP_SUMMARY,), event);
 }
 
 /// Emit a `BackfillCheckpoint` event.

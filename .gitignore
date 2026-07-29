@@ -9,4 +9,8 @@
 
 # Test snapshots
 **/test_snapshots/
+
+# Python artifacts
+__pycache__/
+*.pyc
 .keys/private.pem
