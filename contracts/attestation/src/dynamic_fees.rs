@@ -653,6 +653,8 @@ pub fn handle_epoch_rollover(env: &Env) {
     env.storage()
         .instance()
         .set(&DataKey::LastFeeBucket, &current_bucket);
+}
+
 //  Archive tier helpers
 // ════════════════════════════════════════════════════════════════════
 

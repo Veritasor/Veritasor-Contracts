@@ -36,7 +36,7 @@
 //! See `docs/attestation-vote-weight-snapshot.md` for the full threat model,
 //! security notes, and migration considerations.
 
-use soroban_sdk::{contracttype, signature, Signature, Address, Env, Vec};
+use soroban_sdk::{contracttype, signature, symbol_short, Signature, Address, Env, String, Symbol, Vec};
 
 use crate::events;
 use crate::access_control::{is_paused, set_paused};
@@ -48,9 +48,6 @@ pub const DEFAULT_PROPOSAL_EXPIRY: u32 = 100_000;
 pub const PROPOSAL_COOLDOWN_LEDGERS: u32 = 1_000;
 /// Default grace period after proposal expiry before auto-cleanup (ledger sequences)
 pub const DEFAULT_PROPOSAL_EXPIRY_GRACE: u32 = 10_000;
-
-/// Cooldown period for quorum (threshold) changes, in ledger sequences.
-pub const PROPOSAL_COOLDOWN_LEDGERS: u32 = 1_000;
 
 // ════════════════════════════════════════════════════════════════════
 //  Storage Types
@@ -80,8 +77,6 @@ pub enum MultisigKey {
     /// Closing the flash-vote attack surface (issue #512).
     /// Keyed by proposal ID; presence is mandatory for every live proposal.
     VoteWeightSnapshot(u64),
-    /// Ledger sequence of the last quorum change
-    LastQuorumChange,
 }
 
 /// Snapshot of governance vote weights captured when a proposal is created.
@@ -159,6 +154,28 @@ pub enum ProposalStatus {
     Rejected,
     /// Proposal expired before execution
     Expired,
+}
+
+/// A single reviewable change described by a proposal preview.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProposalChange {
+    pub kind: Symbol,
+    pub detail: String,
+}
+
+/// Preview outcome for a proposal without mutating on-chain state.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProposalEffect {
+    pub proposal_id: u64,
+    pub would_execute: bool,
+    pub error: Option<String>,
+    pub change_count: u32,
+    pub changes: Vec<ProposalChange>,
+    pub predicted_status: ProposalStatus,
+    pub approvals: u32,
+    pub required_approvals: u32,
 }
 
 /// Full proposal data
@@ -357,6 +374,107 @@ pub fn get_vote_weight_snapshot(env: &Env, id: u64) -> Option<VoteWeightSnapshot
 
 pub fn get_proposal(env: &Env, id: u64) -> Option<Proposal> {
     env.storage().instance().get(&MultisigKey::Proposal(id))
+}
+
+pub fn preview_proposal(env: &Env, id: u64) -> ProposalEffect {
+    let proposal = match get_proposal(env, id) {
+        Some(proposal) => proposal,
+        None => {
+            return ProposalEffect {
+                proposal_id: id,
+                would_execute: false,
+                error: Some(String::from_str(env, "proposal not found")),
+                change_count: 0,
+                changes: Vec::new(env),
+                predicted_status: ProposalStatus::Pending,
+                approvals: 0,
+                required_approvals: 0,
+            };
+        }
+    };
+
+    let approvals = get_approval_count(env, id);
+    let required_approvals = effective_threshold(env, id);
+
+    if is_proposal_expired(env, id) {
+        return ProposalEffect {
+            proposal_id: id,
+            would_execute: false,
+            error: Some(String::from_str(env, "proposal has expired")),
+            change_count: 0,
+            changes: Vec::new(env),
+            predicted_status: ProposalStatus::Expired,
+            approvals,
+            required_approvals,
+        };
+    }
+
+    if proposal.status != ProposalStatus::Pending {
+        return ProposalEffect {
+            proposal_id: id,
+            would_execute: false,
+            error: Some(String::from_str(env, "proposal is not pending")),
+            change_count: 0,
+            changes: Vec::new(env),
+            predicted_status: proposal.status.clone(),
+            approvals,
+            required_approvals,
+        };
+    }
+
+    if approvals < required_approvals {
+        return ProposalEffect {
+            proposal_id: id,
+            would_execute: false,
+            error: Some(String::from_str(env, "proposal not approved")),
+            change_count: 0,
+            changes: Vec::new(env),
+            predicted_status: ProposalStatus::Pending,
+            approvals,
+            required_approvals,
+        };
+    }
+
+    let mut changes = Vec::new(env);
+    let detail = match &proposal.action {
+        ProposalAction::Pause => String::from_str(env, "pause the contract"),
+        ProposalAction::Unpause => String::from_str(env, "unpause the contract"),
+        ProposalAction::AddOwner(_) => String::from_str(env, "add owner"),
+        ProposalAction::RemoveOwner(_) => String::from_str(env, "remove owner"),
+        ProposalAction::ChangeThreshold(_) => String::from_str(env, "change threshold"),
+        ProposalAction::GrantRole(_, _) => String::from_str(env, "grant role"),
+        ProposalAction::RevokeRole(_, _) => String::from_str(env, "revoke role"),
+        ProposalAction::UpdateFeeConfig(_, _, _, _) => String::from_str(env, "update fee config"),
+        ProposalAction::EmergencyRotateAdmin(_) => String::from_str(env, "rotate admin"),
+        ProposalAction::EmergencyPause => String::from_str(env, "trigger emergency pause"),
+    };
+
+    changes.push_back(ProposalChange {
+        kind: match &proposal.action {
+            ProposalAction::Pause => symbol_short!("pause"),
+            ProposalAction::Unpause => symbol_short!("unpause"),
+            ProposalAction::AddOwner(_) => symbol_short!("add_owner"),
+            ProposalAction::RemoveOwner(_) => symbol_short!("remove_owner"),
+            ProposalAction::ChangeThreshold(_) => symbol_short!("threshold"),
+            ProposalAction::GrantRole(_, _) => symbol_short!("grant_role"),
+            ProposalAction::RevokeRole(_, _) => symbol_short!("revoke_role"),
+            ProposalAction::UpdateFeeConfig(_, _, _, _) => symbol_short!("fee_config"),
+            ProposalAction::EmergencyRotateAdmin(_) => symbol_short!("rotate_admin"),
+            ProposalAction::EmergencyPause => symbol_short!("emergency_pause"),
+        },
+        detail,
+    });
+
+    ProposalEffect {
+        proposal_id: id,
+        would_execute: true,
+        error: None,
+        change_count: 1,
+        changes,
+        predicted_status: ProposalStatus::Executed,
+        approvals,
+        required_approvals,
+    }
 }
 
 pub fn get_approvals(env: &Env, id: u64) -> Vec<Address> {
@@ -646,7 +764,7 @@ pub fn cleanup_expired_proposals(env: &Env, limit: u32) -> u32 {
                     // proposal's intended lifetime.
                     env.storage()
                         .instance()
-                        .remove(&MultisigKey::VoteWeightSnapshot(id));
+                        .remove(&MultisigKey::VoteWeightSnapshot(id as u64));
                     events::emit_proposal_cleaned(env, id, &action, cleaned_at);
                     cleaned += 1;
                 }

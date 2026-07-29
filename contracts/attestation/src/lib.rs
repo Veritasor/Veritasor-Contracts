@@ -68,7 +68,7 @@ pub use events::{
     RevocationCancelledEvent, RevocationCommittedEvent, RevocationProposedEvent,
 };
 pub use fees::{collect_flat_fee, CollectorRotationProposal, FlatFeeConfig};
-pub use multisig::{Proposal, ProposalAction, ProposalStatus};
+pub use multisig::{Proposal, ProposalAction, ProposalStatus, ProposalChange, ProposalEffect};
 pub use rate_limit::RateLimitConfig;
 pub use registry::{BusinessRecord, BusinessStatus};
 
@@ -1434,6 +1434,10 @@ impl AttestationContract {
         Self::dispatch_multisig_action(&env, &executor, &action);
     }
 
+    pub fn preview_proposal(env: Env, proposal_id: u64) -> ProposalEffect {
+        multisig::preview_proposal(&env, proposal_id)
+    }
+
     pub fn get_proposal(env: Env, proposal_id: u64) -> Option<Proposal> {
         multisig::get_proposal(&env, proposal_id)
     }
@@ -2102,6 +2106,8 @@ impl AttestationContract {
                     .expect("staking contract not configured");
                 let staking_client = AttestorStakingClient::new(&env, &staking_addr);
                 staking_client.slash(&d.attestor, &1000i128, &dispute_id);
+            }
+
             if let Some(attestor) =
                 dispute::get_attestor_for_attestation(&env, &d.business, &d.period)
             {
