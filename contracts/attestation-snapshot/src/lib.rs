@@ -47,7 +47,10 @@
 //!   stale authorisations from being replayed.
 //! - Only the admin who called `restore_dry_run` can call `restore_commit`.
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
+    xdr::ToXdr, BytesN, Env, String, Symbol, Vec,
+};
 
 /// Maximum UTF-8 byte length for period/epoch identifiers.
 pub const MAX_PERIOD_BYTES: u32 = 128;
@@ -57,6 +60,12 @@ pub const MAX_BUSINESS_PERIODS: u32 = 512;
 
 /// Maximum indexed businesses per epoch.
 pub const MAX_EPOCH_BUSINESSES: u32 = 512;
+
+/// Maximum number of records accepted in a restore batch.
+pub const MAX_RESTORE_BATCH: u32 = 512;
+
+/// Ledgers after dry-run during which its restore token remains valid.
+pub const RESTORE_COMMIT_WINDOW_LEDGERS: u32 = 600;
 
 // ════════════════════════════════════════════════════════════════════
 //  Snapshot schema versioning
@@ -210,6 +219,17 @@ pub enum DataKey {
     Writer(Address),
     /// Pending restore token for a given admin (set by dry-run, consumed by commit).
     PendingRestore(Address),
+    /// Fingerprint of the most recently committed restore batch.
+    LastRestoreId,
+}
+
+/// Typed restore errors exposed to callers and automation.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum SnapshotError {
+    /// The restore batch fingerprint matches the last successfully applied batch.
+    AlreadyRestored = 1,
 }
 
 /// A single snapshot record for (business, period).
@@ -749,6 +769,12 @@ impl AttestationSnapshotContract {
             Self::index_period_for_business(&env, &entry.business, &entry.period);
             Self::index_business_for_epoch(&env, &entry.period, &entry.business);
         }
+
+        // Soroban invocations are atomic: this marker and all restored records
+        // commit together, or neither does.
+        env.storage()
+            .instance()
+            .set(&DataKey::LastRestoreId, &incoming_hash);
     }
 
     /// Return the pending restore token for an admin, if any.
@@ -758,6 +784,11 @@ impl AttestationSnapshotContract {
         env.storage()
             .instance()
             .get(&DataKey::PendingRestore(admin))
+    }
+
+    /// Return the fingerprint of the most recently committed restore batch.
+    pub fn get_last_restore_id(env: Env) -> Option<BytesN<32>> {
+        env.storage().instance().get(&DataKey::LastRestoreId)
     }
 
     // ── Read-only queries ────────────────────────────────────────────
@@ -1019,5 +1050,14 @@ impl AttestationSnapshotContract {
     }
 }
 
+    /// Compute a deterministic identifier that binds every restore field.
+    ///
+    /// Contract-value serialization is length-delimited and avoids ambiguous
+    /// concatenation. Changing a business, period, metric, count, or timestamp
+    /// therefore produces a different restore identifier.
+    fn compute_batch_hash(env: &Env, entries: &Vec<RestoreEntry>) -> BytesN<32> {
+        env.crypto().sha256(&entries.clone().to_xdr(env)).into()
+    }
+}
 #[cfg(test)]
 mod snapshot_ttl_test;

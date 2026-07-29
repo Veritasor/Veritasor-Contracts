@@ -152,3 +152,207 @@ fn test_edge_case_previously_used_nonce() {
     // Trying to use nonce 0 (which was already consumed during initialize) must panic.
     configure_rate_limit(&client, 5, 3600, 2, 60, true, 0);
 }
+
+#[test]
+fn test_multi_attestor_nonce_isolation() {
+    let (env, client, _admin) = setup();
+    let contract_id = client.address.clone();
+
+    let business = Address::generate(&env);
+    let attestor_a = Address::generate(&env);
+    let attestor_b = Address::generate(&env);
+
+    // Both attestors start with nonce 0 on BUS channel
+    env.as_contract(&contract_id, || {
+        assert_eq!(
+            veritasor_common::replay_protection::get_nonce(&env, &attestor_a, crate::NONCE_CHANNEL_BUSINESS),
+            0
+        );
+        assert_eq!(
+            veritasor_common::replay_protection::get_nonce(&env, &attestor_b, crate::NONCE_CHANNEL_BUSINESS),
+            0
+        );
+    });
+
+    // Attestor A consumes nonce 0, 1, 2 -> advances to 3
+    env.as_contract(&contract_id, || {
+        veritasor_common::replay_protection::verify_and_increment_nonce(
+            &env,
+            &attestor_a,
+            crate::NONCE_CHANNEL_BUSINESS,
+            0,
+        );
+        veritasor_common::replay_protection::verify_and_increment_nonce(
+            &env,
+            &attestor_a,
+            crate::NONCE_CHANNEL_BUSINESS,
+            1,
+        );
+        veritasor_common::replay_protection::verify_and_increment_nonce(
+            &env,
+            &attestor_a,
+            crate::NONCE_CHANNEL_BUSINESS,
+            2,
+        );
+        assert_eq!(
+            veritasor_common::replay_protection::get_nonce(&env, &attestor_a, crate::NONCE_CHANNEL_BUSINESS),
+            3
+        );
+    });
+
+    // Attestor B's nonce must still be 0 (unaffected by A's submissions)
+    env.as_contract(&contract_id, || {
+        assert_eq!(
+            veritasor_common::replay_protection::get_nonce(&env, &attestor_b, crate::NONCE_CHANNEL_BUSINESS),
+            0
+        );
+    });
+
+    // Attestor B consumes its own nonce 0 -> advances to 1
+    env.as_contract(&contract_id, || {
+        veritasor_common::replay_protection::verify_and_increment_nonce(
+            &env,
+            &attestor_b,
+            crate::NONCE_CHANNEL_BUSINESS,
+            0,
+        );
+        assert_eq!(
+            veritasor_common::replay_protection::get_nonce(&env, &attestor_b, crate::NONCE_CHANNEL_BUSINESS),
+            1
+        );
+    });
+
+    // Attestor A is still at 3 (unaffected by B)
+    env.as_contract(&contract_id, || {
+        assert_eq!(
+            veritasor_common::replay_protection::get_nonce(&env, &attestor_a, crate::NONCE_CHANNEL_BUSINESS),
+            3
+        );
+    });
+}
+
+#[test]
+#[should_panic(expected = "nonce mismatch")]
+fn test_multi_attestor_cross_replay_rejected() {
+    let (env, client, _admin) = setup();
+    let contract_id = client.address.clone();
+
+    let attestor_a = Address::generate(&env);
+    let attestor_b = Address::generate(&env);
+
+    // Attestor A consumes nonce 0
+    env.as_contract(&contract_id, || {
+        veritasor_common::replay_protection::verify_and_increment_nonce(
+            &env,
+            &attestor_a,
+            crate::NONCE_CHANNEL_BUSINESS,
+            0,
+        );
+    });
+
+    // Attestor B tries to reuse attestor A's nonce 0 — must panic
+    env.as_contract(&contract_id, || {
+        veritasor_common::replay_protection::verify_and_increment_nonce(
+            &env,
+            &attestor_b,
+            crate::NONCE_CHANNEL_BUSINESS,
+            0,
+        );
+    });
+}
+
+#[test]
+fn test_multi_attestor_alternating_submissions() {
+    let (env, client, _admin) = setup();
+    let contract_id = client.address.clone();
+
+    let attestor_a = Address::generate(&env);
+    let attestor_b = Address::generate(&env);
+
+    // Simulate alternating attestation submissions on the same business
+    // Each attestor maintains independent nonce sequencing
+    env.as_contract(&contract_id, || {
+        // Attestor A: nonce 0
+        veritasor_common::replay_protection::verify_and_increment_nonce(
+            &env,
+            &attestor_a,
+            crate::NONCE_CHANNEL_BUSINESS,
+            0,
+        );
+        // Attestor B: nonce 0 (independent from A)
+        veritasor_common::replay_protection::verify_and_increment_nonce(
+            &env,
+            &attestor_b,
+            crate::NONCE_CHANNEL_BUSINESS,
+            0,
+        );
+        // Attestor A: nonce 1
+        veritasor_common::replay_protection::verify_and_increment_nonce(
+            &env,
+            &attestor_a,
+            crate::NONCE_CHANNEL_BUSINESS,
+            1,
+        );
+        // Attestor B: nonce 1
+        veritasor_common::replay_protection::verify_and_increment_nonce(
+            &env,
+            &attestor_b,
+            crate::NONCE_CHANNEL_BUSINESS,
+            1,
+        );
+        // Attestor A: nonce 2
+        veritasor_common::replay_protection::verify_and_increment_nonce(
+            &env,
+            &attestor_a,
+            crate::NONCE_CHANNEL_BUSINESS,
+            2,
+        );
+
+        // Final state: A at 3, B at 2
+        assert_eq!(
+            veritasor_common::replay_protection::get_nonce(&env, &attestor_a, crate::NONCE_CHANNEL_BUSINESS),
+            3
+        );
+        assert_eq!(
+            veritasor_common::replay_protection::get_nonce(&env, &attestor_b, crate::NONCE_CHANNEL_BUSINESS),
+            2
+        );
+    });
+}
+
+#[test]
+#[should_panic(expected = "nonce mismatch")]
+fn test_multi_attestor_attestor_a_nonce_replayed_as_b() {
+    let (env, client, _admin) = setup();
+    let contract_id = client.address.clone();
+
+    let attestor_a = Address::generate(&env);
+    let attestor_b = Address::generate(&env);
+
+    // Attestor A advances to nonce 5
+    env.as_contract(&contract_id, || {
+        for i in 0u64..5 {
+            veritasor_common::replay_protection::verify_and_increment_nonce(
+                &env,
+                &attestor_a,
+                crate::NONCE_CHANNEL_BUSINESS,
+                i,
+            );
+        }
+        assert_eq!(
+            veritasor_common::replay_protection::get_nonce(&env, &attestor_a, crate::NONCE_CHANNEL_BUSINESS),
+            5
+        );
+    });
+
+    // Attestor B tries to use attestor A's current nonce (5) — must panic
+    // because B's own nonce is still 0
+    env.as_contract(&contract_id, || {
+        veritasor_common::replay_protection::verify_and_increment_nonce(
+            &env,
+            &attestor_b,
+            crate::NONCE_CHANNEL_BUSINESS,
+            5,
+        );
+    });
+}
