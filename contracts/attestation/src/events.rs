@@ -137,7 +137,7 @@ pub const TOPIC_KEY_ROTATION_CANCELLED: Symbol = symbol_short!("kr_canc");
 /// Topic: emergency key rotation executed
 pub const TOPIC_KEY_ROTATION_EMERGENCY: Symbol = symbol_short!("kr_emer");
 /// Topic: emergency pause triggered (dual-key bypass)
-pub const TOPIC_EMERGENCY_PAUSE_TRIGGERED: Symbol = symbol_short!("emer_pause");
+pub const TOPIC_EMERGENCY_PAUSE_TRIGGERED: Symbol = symbol_short!("emr_pse");
 /// Topic: business registered
 pub const TOPIC_BIZ_REGISTERED: Symbol = symbol_short!("biz_reg");
 /// Topic: business approved
@@ -160,8 +160,6 @@ pub const TOPIC_REVOCATION_COMMITTED: Symbol = symbol_short!("rv_cmmt");
 pub const TOPIC_APPROVAL_REVOKED: Symbol = symbol_short!("appr_rv");
 /// Topic: epoch checkpoint emitted after each submission (per-period)
 pub const TOPIC_EPOCH_CHECKPOINT: Symbol = symbol_short!("ep_ckpt");
-/// Topic: epoch advanced on fee-bucket window rollover
-pub const TOPIC_EPOCH_ADVANCED: Symbol = symbol_short!("ep_adv");
 /// Topic: backfill checkpoint emitted every N submissions (global counter)
 pub const TOPIC_BACKFILL_CHECKPOINT: Symbol = symbol_short!("bkf_chk");
 
@@ -1859,23 +1857,6 @@ pub struct EpochCheckpointEvent {
     pub fees_collected: i128,
     /// Ledger timestamp at checkpoint emission.
     pub checkpoint_timestamp: u64,
-}
-
-/// Normalized payload for `EpochAdvanced` events.
-///
-/// Emitted when the fee-bucket window rolls over, incrementing the
-/// monotonic epoch counter. One event is emitted per elapsed window.
-///
-/// | Event Catalog | Topic | Secondary topic |
-/// |---|---|--|
-/// | EpochAdvanced | `ep_adv` | *(none)* |
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct EpochAdvancedEvent {
-    /// New epoch value after the rollover.
-    pub epoch: u64,
-    /// Ledger timestamp at which the rollover was detected.
-    pub at_ts: u64,
 }
 
 /// Normalized payload for `BackfillCheckpoint` events.
