@@ -1849,7 +1849,7 @@ impl AttestationContract {
 
     /// Propose a new DAO contract address (two-phase rotation). The current DAO calls this.
     pub fn propose_dao_rotation(env: Env, new_dao: Address) {
-        let caller = env.current_contract().address();
+        let caller = env.invoker();
         fees::propose_dao_rotation(&env, &caller, &new_dao);
     }
     /// The proposed new DAO calls this to accept the role.
@@ -1866,6 +1866,12 @@ impl AttestationContract {
     pub fn set_flat_fee_dao(env: Env, dao: Address) {
         dynamic_fees::require_admin(&env);
         fees::set_dao(&env, &dao);
+    }
+
+    /// The current DAO may cancel a pending rotation before the new DAO accepts.
+    pub fn cancel_dao_rotation(env: Env) {
+        let caller = env.invoker();
+        fees::cancel_dao_rotation(&env, &caller);
     }
 
     /// Returns the pending DAO rotation proposal if any.

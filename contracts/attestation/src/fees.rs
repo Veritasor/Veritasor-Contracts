@@ -1,3 +1,4 @@
+use crate::events as events;
 //! # Flat Fee Mechanism for Attestations
 //!
 //! This module implements a flat fee mechanism for the Veritasor attestation protocol.
@@ -121,6 +122,7 @@ pub fn propose_dao_rotation(env: &Env, caller: &Address, new_dao: &Address) {
         new_dao: new_dao.clone(),
     };
     set_pending_dao_rotation(env, &proposal);
+    events::emit_dao_rotation_proposed(env, &proposal.old_dao, &proposal.new_dao);
 }
 pub fn accept_dao_rotation(env: &Env, caller: &Address) {
     caller.require_auth();
@@ -128,7 +130,17 @@ pub fn accept_dao_rotation(env: &Env, caller: &Address) {
     assert!(caller == &proposal.new_dao, "only proposed new DAO may accept rotation");
     set_dao(env, &proposal.new_dao);
     remove_pending_dao_rotation(env);
+    events::emit_dao_rotation_accepted(env, &proposal.old_dao, &proposal.new_dao);
 }
+
+/// Cancel a pending DAO rotation. Only the old DAO (original proposer) may cancel.
+pub fn cancel_dao_rotation(env: &Env, caller: &Address) {
+    caller.require_auth();
+    let proposal = get_pending_dao_rotation(env).expect("no pending DAO rotation");
+    assert!(caller == &proposal.old_dao, "only the current DAO may cancel rotation");
+    remove_pending_dao_rotation(env);
+}
+
 pub fn set_dao(env: &Env, dao: &Address) {
     env.storage().instance().set(&FlatFeeDataKey::Dao, dao);
     persist_epoch_snapshot(env);
