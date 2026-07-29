@@ -692,6 +692,26 @@ fn test_key_rotation_confirmed_schema_snapshot_emergency_flag() {
 }
 
 #[test]
+fn test_analytics_rotation_completed_schema_snapshot() {
+    let (env, _client, _admin) = setup();
+    let old_analytics = Address::generate(&env);
+    let new_analytics = Address::generate(&env);
+
+    crate::events::emit_analytics_rotation_completed(&env, &old_analytics, &new_analytics);
+
+    let (_cid, topics, data) = env.events().all().last().unwrap();
+    assert_eq!(topics.len(), 1);
+    assert_eq!(
+        soroban_sdk::Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+        TOPIC_ANALYTICS_ROTATION_COMPLETED
+    );
+
+    let ev = AnalyticsRotationCompletedEvent::try_from_val(&env, &data).unwrap();
+    assert_eq!(ev.old_analytics, old_analytics);
+    assert_eq!(ev.new_analytics, new_analytics);
+}
+
+#[test]
 fn test_key_rotation_cancelled_schema_snapshot() {
     let (env, _client, _admin) = setup();
     let cancelled_by = Address::generate(&env);

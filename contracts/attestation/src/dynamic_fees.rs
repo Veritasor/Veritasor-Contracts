@@ -177,6 +177,8 @@ pub enum DataKey {
     ArchivedAttestation(Address, soroban_sdk::String),
     /// Lightweight archive pointer.
     ArchivePointer(Address, soroban_sdk::String),
+    /// Admin-configurable retention policy for archival compaction.
+    CompactionRetentionEpochs,
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -704,8 +706,37 @@ pub fn handle_epoch_rollover(env: &Env) {
         .set(&DataKey::LastFeeBucket, &current_bucket);
 }
 
-//  Archive tier helpers
+//  Archive tier types and helpers
 // ════════════════════════════════════════════════════════════════════
+
+/// Lightweight pointer preserved after an attestation is moved to the archive tier.
+///
+/// Written under [`DataKey::ArchivePointer(business, period)`] at archival time.
+/// After compaction the full `ArchivedAttestation` entry is removed; only this
+/// pointer (containing the Merkle commitment root) is retained.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ArchivePointerRecord {
+    /// Merkle commitment root — the historical proof retained after compaction.
+    pub merkle_root: soroban_sdk::BytesN<32>,
+    /// Monotonically increasing ordinal assigned at archival time.
+    pub archive_index: u64,
+    /// Ledger timestamp when the attestation was moved to the archive tier.
+    pub archived_at: u64,
+}
+
+/// Admin-configurable retention policy for archival compaction.
+///
+/// Stored under [`DataKey::CompactionRetentionEpochs`].
+/// When `None` (default), compaction is disabled and `compact_archival` is a no-op.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct CompactionRetentionPolicy {
+    /// Minimum number of epochs an archived attestation must have been in the
+    /// archive tier before its full data may be compacted away.
+    /// Must be > 0.
+    pub min_epochs: u64,
+}
 
 /// Read the current global archive index (0 if never set).
 pub fn get_archive_index(env: &Env) -> u64 {
@@ -794,49 +825,41 @@ pub fn add_relayer_gas(env: &Env, relayer: &Address, gas: u64) {
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  Pending Staking Contract (time-locked rebinding)
+//  Compaction retention policy helpers
 // ════════════════════════════════════════════════════════════════════
 
-/// A pending staking-contract rebinding waiting for the timelock to expire.
+/// Read the compaction retention policy, if configured.
+pub fn get_compaction_retention(env: &Env) -> Option<CompactionRetentionPolicy> {
+    env.storage()
+        .instance()
+        .get(&DataKey::CompactionRetentionEpochs)
+}
+
+/// Persist the compaction retention policy.
+pub fn set_compaction_retention(env: &Env, policy: &CompactionRetentionPolicy) {
+    env.storage()
+        .instance()
+        .set(&DataKey::CompactionRetentionEpochs, policy);
+}
+
+/// Remove the compaction retention policy (disables compaction).
+pub fn clear_compaction_retention(env: &Env) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::CompactionRetentionEpochs);
+}
+
+/// Remove the full archived attestation data, leaving only the pointer.
 ///
-/// Stored under [`DataKey::PendingStakingContract`].
-///
-/// The rebinding of the attestor staking contract is a high-blast-radius
-/// operation: pointing the contract at a malicious or misconfigured address
-/// could instantly break attestor eligibility checks for all businesses.
-/// Requiring a 24-hour delay gives monitoring systems and stakeholders time
-/// to detect and react to a hostile or accidental change before it takes
-/// effect.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct PendingStakingContract {
-    /// The staking contract address that will become active after `effective_at`.
-    pub new_contract: Address,
-    /// Ledger timestamp (Unix seconds) after which the rebinding may be committed.
-    ///
-    /// Set to `env.ledger().timestamp() + FEE_TIMELOCK_SECONDS` at proposal time.
-    pub effective_at: u64,
-    /// Address that proposed this rebinding.
-    pub proposed_by: Address,
-}
-
-/// Read the pending staking-contract proposal, if one exists.
-pub fn get_pending_staking_contract(env: &Env) -> Option<PendingStakingContract> {
+/// Called by `compact_archival` after verifying the retention policy.
+/// The `ArchivePointer` (Merkle commitment) is preserved; only the
+/// `ArchivedAttestation` (full data) is deleted.
+pub fn remove_archived_attestation(
+    env: &Env,
+    business: &Address,
+    period: &soroban_sdk::String,
+) {
     env.storage()
         .instance()
-        .get(&DataKey::PendingStakingContract)
-}
-
-/// Store a pending staking-contract proposal.
-pub fn set_pending_staking_contract(env: &Env, pending: &PendingStakingContract) {
-    env.storage()
-        .instance()
-        .set(&DataKey::PendingStakingContract, pending);
-}
-
-/// Remove any pending staking-contract proposal (after commit or cancel).
-pub fn clear_pending_staking_contract(env: &Env) {
-    env.storage()
-        .instance()
-        .remove(&DataKey::PendingStakingContract);
+        .remove(&DataKey::ArchivedAttestation(business.clone(), period.clone()));
 }

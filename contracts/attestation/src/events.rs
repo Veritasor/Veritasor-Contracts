@@ -138,6 +138,8 @@ pub const TOPIC_KEY_ROTATION_CONFIRMED: Symbol = symbol_short!("kr_conf");
 pub const TOPIC_KEY_ROTATION_CANCELLED: Symbol = symbol_short!("kr_canc");
 /// Topic: emergency key rotation executed
 pub const TOPIC_KEY_ROTATION_EMERGENCY: Symbol = symbol_short!("kr_emer");
+/// Topic: analytics rotation completed
+pub const TOPIC_ANALYTICS_ROTATION_COMPLETED: Symbol = symbol_short!("anly_cm");
 /// Topic: emergency pause triggered (dual-key bypass)
 pub const TOPIC_EMERGENCY_PAUSE_TRIGGERED: Symbol = symbol_short!("emr_pse");
 /// Topic: business registered
@@ -166,8 +168,8 @@ pub const TOPIC_APPROVAL_REVOKED: Symbol = symbol_short!("appr_rv");
 pub const TOPIC_EPOCH_CHECKPOINT: Symbol = symbol_short!("ep_ckpt");
 /// Topic: backfill checkpoint emitted every N submissions (global counter)
 pub const TOPIC_BACKFILL_CHECKPOINT: Symbol = symbol_short!("bkf_chk");
-/// Topic: delegated-submission permit cancelled (nonce burned)
-pub const TOPIC_PERMIT_CANCELLED: Symbol = symbol_short!("perm_canc");
+/// Topic: archival compaction completed
+pub const TOPIC_ARCHIVAL_COMPACTED: Symbol = symbol_short!("arc_cmp");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -1548,6 +1550,29 @@ pub fn emit_key_rotation_cancelled(
     env.events().publish((TOPIC_KEY_ROTATION_CANCELLED,), event);
 }
 
+/// Emit an `AnalyticsRotationCompleted` event.
+///
+/// # Arguments
+///
+/// * `env` - Soroban execution environment.
+/// * `old_analytics` - Address being rotated out of the certified analytics set.
+/// * `new_analytics` - Address being rotated into the certified analytics set.
+///
+/// # Events
+///
+/// Publishes `(anly_cm,)` → `AnalyticsRotationCompletedEvent`.
+pub fn emit_analytics_rotation_completed(
+    env: &Env,
+    old_analytics: &Address,
+    new_analytics: &Address,
+) {
+    let event = AnalyticsRotationCompletedEvent {
+        old_analytics: old_analytics.clone(),
+        new_analytics: new_analytics.clone(),
+    };
+    env.events().publish((TOPIC_ANALYTICS_ROTATION_COMPLETED,), event);
+}
+
 /// Emit a `KeyRotationEmergency` event.
 ///
 /// Unlike the normal timelock flow, emergency rotations bypass the
@@ -2073,16 +2098,50 @@ pub fn emit_backfill_checkpoint(
     env.events().publish((TOPIC_BACKFILL_CHECKPOINT,), event);
 }
 
-// DAO Rotation Events
-pub fn emit_dao_rotation_proposed(env: &Env, old_dao: &Address, new_dao: &Address) {
-    env.events().publish(
-        (Symbol::new(env, "dao_rotation_proposed"), old_dao.clone()),
-        new_dao.clone(),
-    );
+// ════════════════════════════════════════════════════════════════════
+//  Archival Compaction
+// ════════════════════════════════════════════════════════════════════
+
+/// Normalized payload for `ArchivalCompacted` events.
+///
+/// Emitted once per `compact_archival` call that removes at least one entry.
+/// Indexers can use this to track storage reclamation and audit the compaction
+/// history without replaying individual attestation events.
+///
+/// | Event Catalog | Topic | Secondary topic |
+/// |---|---|--|
+/// | ArchivalCompacted | `arc_cmp` | *(none)* |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ArchivalCompactedEvent {
+    /// Number of archived attestation full-data entries removed in this call.
+    pub compacted_count: u32,
+    /// Minimum epoch age threshold used for this compaction run.
+    pub min_epochs: u64,
+    /// Ledger timestamp when compaction ran.
+    pub compacted_at: u64,
+    /// Admin address that triggered the compaction.
+    pub compacted_by: Address,
 }
-pub fn emit_dao_rotation_accepted(env: &Env, old_dao: &Address, new_dao: &Address) {
-    env.events().publish(
-        (Symbol::new(env, "dao_rotation_accepted"), old_dao.clone()),
-        new_dao.clone(),
-    );
+
+/// Emit an `ArchivalCompacted` event.
+///
+/// Call this after `compact_archival` has removed at least one full-data entry.
+///
+/// # Events
+///
+/// Publishes `(arc_cmp,)` → `ArchivalCompactedEvent`.
+pub fn emit_archival_compacted(
+    env: &Env,
+    compacted_count: u32,
+    min_epochs: u64,
+    compacted_by: &Address,
+) {
+    let event = ArchivalCompactedEvent {
+        compacted_count,
+        min_epochs,
+        compacted_at: env.ledger().timestamp(),
+        compacted_by: compacted_by.clone(),
+    };
+    env.events().publish((TOPIC_ARCHIVAL_COMPACTED,), event);
 }
