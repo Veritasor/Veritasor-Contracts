@@ -605,3 +605,6 @@ impl LenderConsumerContract {
             .set(&DataKey::Anomaly(business, period), &false);
     }
 }
+
+#[cfg(test)]
+mod tests;
