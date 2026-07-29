@@ -254,6 +254,43 @@ fn test_volume_bracket_selection_across_threshold_boundaries() {
 }
 
 #[test]
+fn test_volume_bracket_exact_boundary() {
+    let t = setup_with_fees(1_000_000);
+    // Thresholds: [10, 50, 100]
+    // Discounts: [500, 1000, 2000] (in basis points)
+    let thresholds = vec![&t.env, 10u64, 50u64, 100u64];
+    let discounts = vec![&t.env, 500u32, 1_000u32, 2_000u32];
+    t.client.set_volume_brackets(&thresholds, &discounts);
+
+    let business = Address::generate(&t.env);
+    mint(&t.env, &t.token_addr, &business, 200_000_000);
+
+    let boundary_cases = [
+        (0u64, 0u32),
+        (9u64, 0u32),
+        (10u64, 500u32),
+        (11u64, 500u32),
+        (49u64, 500u32),
+        (50u64, 1_000u32),
+        (51u64, 1_000u32),
+        (99u64, 1_000u32),
+        (100u64, 2_000u32),
+        (101u64, 2_000u32),
+    ];
+
+    let mut submitted = 0u64;
+    for &(target_count, expected_bps) in boundary_cases.iter() {
+        while submitted < target_count {
+            submit(&t.client, &t.env, &business, (submitted + 1) as u32);
+            submitted += 1;
+        }
+        assert_eq!(t.client.get_business_count(&business), target_count);
+        assert_eq!(t.client.get_volume_discount(&business), expected_bps, "Failed at count {}", target_count);
+        assert_eq!(t.client.get_fee_quote(&business), compute_fee(1_000_000, 0, expected_bps));
+    }
+}
+
+#[test]
 fn test_get_volume_discount_empty_brackets_returns_zero() {
     let t = setup_with_fees(1_000_000);
     let business = Address::generate(&t.env);
