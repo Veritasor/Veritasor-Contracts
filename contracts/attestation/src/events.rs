@@ -164,6 +164,10 @@ pub const TOPIC_EPOCH_CHECKPOINT: Symbol = symbol_short!("ep_ckpt");
 pub const TOPIC_EPOCH_ADVANCED: Symbol = symbol_short!("ep_adv");
 /// Topic: backfill checkpoint emitted every N submissions (global counter)
 pub const TOPIC_BACKFILL_CHECKPOINT: Symbol = symbol_short!("bkf_chk");
+/// Topic: relayer added to delegated-submission allowlist
+pub const TOPIC_RELAYER_ADDED: Symbol = symbol_short!("rl_add");
+/// Topic: relayer removed from delegated-submission allowlist
+pub const TOPIC_RELAYER_REMOVED: Symbol = symbol_short!("rl_rem");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -1980,4 +1984,82 @@ pub fn emit_backfill_checkpoint(
         state_commitment: state_commitment.clone(),
     };
     env.events().publish((TOPIC_BACKFILL_CHECKPOINT,), event);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Delegated Relayer Allowlist Events
+// ════════════════════════════════════════════════════════════════════
+
+/// Normalized payload for `RelayerAdded` events.
+///
+/// Emitted when the admin adds an address to the delegated-submission
+/// relayer allowlist.
+///
+/// | Event Catalog | Topic | Secondary topic |
+/// |---|---|--|
+/// | RelayerAdded | `rl_add` | `relayer` |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RelayerAddedEvent {
+    /// Address added to the allowlist.
+    pub relayer: Address,
+    /// Admin address that performed the operation.
+    pub added_by: Address,
+}
+
+/// Normalized payload for `RelayerRemoved` events.
+///
+/// Emitted when the admin removes an address from the delegated-submission
+/// relayer allowlist.
+///
+/// | Event Catalog | Topic | Secondary topic |
+/// |---|---|--|
+/// | RelayerRemoved | `rl_rem` | `relayer` |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RelayerRemovedEvent {
+    /// Address removed from the allowlist.
+    pub relayer: Address,
+    /// Admin address that performed the operation.
+    pub removed_by: Address,
+}
+
+/// Emit a `RelayerAdded` event.
+///
+/// # Arguments
+///
+/// * `env`      – Soroban execution environment.
+/// * `relayer`  – Address added to the allowlist.
+/// * `added_by` – Admin address that authorised the addition.
+///
+/// # Events
+///
+/// Publishes `(rl_add, relayer)` → `RelayerAddedEvent`.
+pub fn emit_relayer_added(env: &Env, relayer: &Address, added_by: &Address) {
+    let event = RelayerAddedEvent {
+        relayer: relayer.clone(),
+        added_by: added_by.clone(),
+    };
+    env.events()
+        .publish((TOPIC_RELAYER_ADDED, relayer.clone()), event);
+}
+
+/// Emit a `RelayerRemoved` event.
+///
+/// # Arguments
+///
+/// * `env`         – Soroban execution environment.
+/// * `relayer`     – Address removed from the allowlist.
+/// * `removed_by`  – Admin address that authorised the removal.
+///
+/// # Events
+///
+/// Publishes `(rl_rem, relayer)` → `RelayerRemovedEvent`.
+pub fn emit_relayer_removed(env: &Env, relayer: &Address, removed_by: &Address) {
+    let event = RelayerRemovedEvent {
+        relayer: relayer.clone(),
+        removed_by: removed_by.clone(),
+    };
+    env.events()
+        .publish((TOPIC_RELAYER_REMOVED, relayer.clone()), event);
 }

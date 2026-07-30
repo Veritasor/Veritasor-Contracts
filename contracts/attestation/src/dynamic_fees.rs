@@ -165,6 +165,14 @@ pub enum DataKey {
     ArchivedAttestation(Address, soroban_sdk::String),
     /// Lightweight archive pointer.
     ArchivePointer(Address, soroban_sdk::String),
+
+    // ── Delegated relayer allowlist ───────────────────────────────
+    /// Whether `Address` is an allowlisted relayer.
+    ///
+    /// Value is `bool` (`true` = allowlisted).  Removing the key (rather
+    /// than setting it to `false`) is the canonical way to de-list a
+    /// relayer, so `is_allowlisted` checks `has` rather than `get`.
+    RelayerAllowlist(Address),
 }
 
 // ════════════════════════════════════════════════════════════════════

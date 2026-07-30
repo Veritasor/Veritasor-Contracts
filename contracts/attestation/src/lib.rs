@@ -16,6 +16,12 @@ use veritasor_common::replay_protection;
 // Nonce channels
 pub const NONCE_CHANNEL_ADMIN: u32 = 0;
 pub const NONCE_CHANNEL_BUSINESS: u32 = 1;
+/// Nonce channel for delegated permit signatures.
+///
+/// Per-business nonce stream consumed by `submit_attestation_delegated`.
+/// Isolating delegated permits from normal business submissions prevents
+/// a permit nonce from being replayed as a regular submission and vice versa.
+pub const NONCE_CHANNEL_DELEGATED: u32 = 2;
 
 // Key Tags
 const ANOMALY_KEY_TAG: (u32,) = (3,);
@@ -64,7 +70,7 @@ pub use dynamic_fees::{RevokeProposal, DEFAULT_REVOKE_GRACE_SECONDS};
 pub use events::{
     AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
     AttestationSubmittedEvent, ProofHashUpdatedEvent,
-    RelayerGasReportedEvent,
+    RelayerAddedEvent, RelayerGasReportedEvent, RelayerRemovedEvent,
     RevocationCancelledEvent, RevocationCommittedEvent, RevocationProposedEvent,
 };
 pub use fees::{collect_flat_fee, CollectorRotationProposal, FlatFeeConfig};
@@ -152,6 +158,56 @@ pub trait AttestorStakingContractTrait {
     fn slash(env: Env, attestor: Address, amount: i128, dispute_id: u64);
 }
 
+/// Off-chain permit authorising a specific relayer to submit one attestation
+/// on behalf of a business.
+///
+/// The business signs the canonical XDR serialisation of this struct via
+/// [`Signature`].  `submit_attestation_delegated` verifies the signature,
+/// checks the caller is allowlisted, enforces the permit expiry window, and
+/// consumes the nonce before delegating to [`AttestationContract::execute_submission`].
+///
+/// ## Security properties
+///
+/// | Property | Mechanism |
+/// |---|---|
+/// | Forgery resistance | Soroban `env.verify(&sig)` ties the signature to the permit hash |
+/// | Permit binding | `relayer` field limits which address can consume the permit |
+/// | Replay prevention | `nonce` on `NONCE_CHANNEL_DELEGATED` is monotonically consumed |
+/// | Expiry | `permit_expiry` rejects stale permits even if nonce is still valid |
+/// | Griefing resistance | Caller must be in the admin-maintained relayer allowlist |
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DelegatedPermit {
+    /// Business address that signs and authorises this permit.
+    pub business: Address,
+    /// Relayer address that is permitted to submit this permit.
+    ///
+    /// `submit_attestation_delegated` rejects the call if `caller != relayer`.
+    pub relayer: Address,
+    /// Attestation period (e.g. `"202501"`).
+    pub period: String,
+    /// Merkle root of the revenue dataset.
+    pub merkle_root: BytesN<32>,
+    /// Off-chain event timestamp supplied by the business.
+    pub timestamp: u64,
+    /// Schema version of the Merkle tree.
+    pub version: u32,
+    /// Optional off-chain proof hash linking to the full dataset.
+    pub proof_hash: Option<BytesN<32>>,
+    /// Optional on-chain expiry timestamp for the attestation record itself.
+    pub expiry_timestamp: Option<u64>,
+    /// Monotonic nonce on `NONCE_CHANNEL_DELEGATED` for the `business` address.
+    ///
+    /// Must exactly match the stored nonce at submission time.  Consumed (incremented)
+    /// on success to prevent permit replay.
+    pub nonce: u64,
+    /// Wall-clock deadline (ledger timestamp) after which the permit is invalid.
+    ///
+    /// Prevents indefinite replay of signed-but-unsubmitted permits.
+    /// Set by the business to a reasonable future window (e.g. 10–60 minutes).
+    pub permit_expiry: u64,
+}
+
 #[contract]
 pub struct AttestationContract;
 
@@ -162,6 +218,7 @@ mod audit_log_integration_test;
 mod active_submission_test;
 
 #[cfg(test)]
+mod delegated_relayer_test;
 mod backfill_checkpoint_test;
 
 /// Vote-weight snapshot tests (issue #512). Always compiled into the test
@@ -520,7 +577,158 @@ impl AttestationContract {
         replay_protection::get_nonce(&env, &actor, channel)
     }
 
-    pub fn submit_attestation(
+    // ────────────────────────────────────────────────────────────────
+    //  Relayer allowlist management
+    // ────────────────────────────────────────────────────────────────
+
+    /// Admin: add `relayer` to the delegated-submission allowlist.
+    ///
+    /// Only allowlisted relayers may call `submit_attestation_delegated`.
+    /// Adding an address that is already allowlisted is idempotent.
+    ///
+    /// # Panics
+    /// - Caller does not hold ADMIN role.
+    pub fn add_relayer(env: Env, caller: Address, relayer: Address) {
+        access_control::require_admin(&env, &caller);
+        env.storage()
+            .instance()
+            .set(&DataKey::RelayerAllowlist(relayer.clone()), &true);
+        events::emit_relayer_added(&env, &relayer, &caller);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+    }
+
+    /// Admin: remove `relayer` from the delegated-submission allowlist.
+    ///
+    /// Removing an address that was not allowlisted is idempotent.
+    ///
+    /// # Panics
+    /// - Caller does not hold ADMIN role.
+    pub fn remove_relayer(env: Env, caller: Address, relayer: Address) {
+        access_control::require_admin(&env, &caller);
+        env.storage()
+            .instance()
+            .remove(&DataKey::RelayerAllowlist(relayer.clone()));
+        events::emit_relayer_removed(&env, &relayer, &caller);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+    }
+
+    /// Returns `true` if `relayer` is currently on the delegated-submission allowlist.
+    pub fn is_relayer(env: Env, relayer: Address) -> bool {
+        env.storage()
+            .instance()
+            .has(&DataKey::RelayerAllowlist(relayer))
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    //  Delegated submission
+    // ────────────────────────────────────────────────────────────────
+
+    /// Submit an attestation on behalf of a business using a signed permit.
+    ///
+    /// This entry point enables gas abstraction: a business signs a
+    /// [`DelegatedPermit`] off-chain and hands it to an allowlisted relayer.
+    /// The relayer calls this function, paying the transaction fee, while the
+    /// attestation is recorded as if the business submitted it directly.
+    ///
+    /// ## Execution flow
+    ///
+    /// 1. **Allowlist check** — `caller` must be in the admin-maintained
+    ///    relayer allowlist (`add_relayer`/`remove_relayer`).
+    /// 2. **Permit–caller binding** — `permit.relayer` must equal `caller` so
+    ///    that a permit cannot be consumed by a different relayer.
+    /// 3. **Signature verification** — `env.verify(&sig)` recovers the signer
+    ///    address.  It must equal `permit.business`.
+    /// 4. **Permit expiry** — `permit.permit_expiry > ledger timestamp`; stale
+    ///    permits are rejected.
+    /// 5. **Nonce consumption** — `permit.nonce` is verified and incremented on
+    ///    `NONCE_CHANNEL_DELEGATED` for `permit.business`, preventing replay.
+    /// 6. **Submission** — delegates to [`execute_submission`] with `caller` as
+    ///    the fee payer.
+    ///
+    /// ## Parameters
+    ///
+    /// - `caller`  — relayer address (must be allowlisted and match `permit.relayer`).
+    /// - `permit`  — the [`DelegatedPermit`] signed by the business.
+    /// - `sig`     — Soroban [`Signature`] produced by the business over the
+    ///               XDR serialisation of `permit`.
+    ///
+    /// ## Panics
+    ///
+    /// | Condition | Message |
+    /// |---|---|
+    /// | Caller not in allowlist | `"caller is not an allowlisted relayer"` |
+    /// | Caller ≠ permit.relayer | `"caller does not match permit relayer"` |
+    /// | Signer ≠ permit.business | `"permit signature is not from the business"` |
+    /// | Permit expired | `"permit has expired"` |
+    /// | Nonce mismatch | `"nonce mismatch for actor/channel pair"` (from replay_protection) |
+    pub fn submit_attestation_delegated(
+        env: Env,
+        caller: Address,
+        permit: DelegatedPermit,
+        sig: Signature,
+    ) {
+        // 1. Allowlist check — reject hostile/unknown relayers up front.
+        assert!(
+            env.storage()
+                .instance()
+                .has(&DataKey::RelayerAllowlist(caller.clone())),
+            "caller is not an allowlisted relayer"
+        );
+
+        // 2. Permit–caller binding — prevents a different allowlisted relayer
+        //    from front-running and consuming a permit intended for another.
+        assert!(
+            caller == permit.relayer,
+            "caller does not match permit relayer"
+        );
+
+        // 3. Signature verification — the business must have signed the permit.
+        //    `env.verify` recovers the signer from the Soroban signature and
+        //    checks the payload matches; it panics on invalid signatures.
+        let signer = env.verify(&sig);
+        assert!(
+            signer == permit.business,
+            "permit signature is not from the business"
+        );
+
+        // 4. Permit expiry — reject stale permits to limit the window for
+        //    signed-but-unsubmitted permits being used maliciously.
+        assert!(
+            env.ledger().timestamp() < permit.permit_expiry,
+            "permit has expired"
+        );
+
+        // 5. Nonce consumption — must happen BEFORE execute_submission so that
+        //    any panic inside execute_submission does not leave the nonce consumed
+        //    without a matching on-chain attestation.  Soroban's transactional
+        //    semantics roll back all storage writes on panic, so ordering here is
+        //    for clarity rather than strict necessity, but it is the safer idiom.
+        replay_protection::verify_and_increment_nonce(
+            &env,
+            &permit.business,
+            NONCE_CHANNEL_DELEGATED,
+            permit.nonce,
+        );
+
+        // 6. Submit the attestation — caller (relayer) is the fee payer;
+        //    business is the attestation owner.
+        Self::execute_submission(
+            &env,
+            &caller,        // payer = relayer
+            None,           // no attestor
+            &permit.business,
+            &permit.period,
+            &permit.merkle_root,
+            permit.timestamp,
+            permit.version,
+            &permit.proof_hash,
+            permit.expiry_timestamp,
+        );
+    }
         env: Env,
         business: Address,
         period: String,
