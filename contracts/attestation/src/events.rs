@@ -164,6 +164,8 @@ pub const TOPIC_EPOCH_CHECKPOINT: Symbol = symbol_short!("ep_ckpt");
 pub const TOPIC_EPOCH_ADVANCED: Symbol = symbol_short!("ep_adv");
 /// Topic: backfill checkpoint emitted every N submissions (global counter)
 pub const TOPIC_BACKFILL_CHECKPOINT: Symbol = symbol_short!("bkf_chk");
+/// Topic: WASM upgrade executed via multisig proposal
+pub const TOPIC_WASM_UPGRADE_EXECUTED: Symbol = symbol_short!("wasm_upg");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -1980,4 +1982,52 @@ pub fn emit_backfill_checkpoint(
         state_commitment: state_commitment.clone(),
     };
     env.events().publish((TOPIC_BACKFILL_CHECKPOINT,), event);
+}
+
+// ── WASM Upgrade ───────────────────────────────────────────────────
+
+/// Normalized payload for `WasmUpgradeExecuted` events.
+///
+/// Emitted once per successful multisig-governed WASM swap.  Off-chain
+/// indexers can monitor this event to build an audit trail of all
+/// on-chain bytecode changes.
+///
+/// | Event Catalog          | Topic      | Secondary topic |
+/// |------------------------|------------|-----------------|
+/// | `WasmUpgradeExecuted`  | `wasm_upg` | *(none)*        |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct WasmUpgradeExecutedEvent {
+    /// SHA-256 hash of the new WASM bytecode that was installed.
+    /// Matches the hash committed to in the `UpgradeWasm` proposal at
+    /// creation time and verified on-chain before the swap.
+    pub new_wasm_hash: BytesN<32>,
+    /// Ledger sequence at which the upgrade was executed.
+    pub executed_at_sequence: u32,
+    /// Ledger timestamp at which the upgrade was executed.
+    pub executed_at_timestamp: u64,
+}
+
+/// Emit a `WasmUpgradeExecuted` event.
+///
+/// Called by `upgrade_tool::execute_wasm_upgrade` after the WASM swap
+/// succeeds.  This is a key audit event; governance observers should
+/// confirm that `new_wasm_hash` matches the hash from the signed release
+/// manifest before trusting the new bytecode.
+///
+/// # Arguments
+///
+/// * `env`           – Soroban execution environment.
+/// * `new_wasm_hash` – SHA-256 hash of the installed WASM bytecode.
+///
+/// # Events
+///
+/// Publishes `(wasm_upg,)` → `WasmUpgradeExecutedEvent`.
+pub fn emit_wasm_upgrade_executed(env: &Env, new_wasm_hash: &BytesN<32>) {
+    let event = WasmUpgradeExecutedEvent {
+        new_wasm_hash: new_wasm_hash.clone(),
+        executed_at_sequence: env.ledger().sequence(),
+        executed_at_timestamp: env.ledger().timestamp(),
+    };
+    env.events().publish((TOPIC_WASM_UPGRADE_EXECUTED,), event);
 }

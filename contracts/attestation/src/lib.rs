@@ -54,6 +54,7 @@ pub mod fees;
 pub mod multisig;
 pub mod rate_limit;
 pub mod registry;
+pub mod upgrade_tool;
 
 pub use access_control::{ROLE_ADMIN, ROLE_ATTESTOR, ROLE_BUSINESS, ROLE_OPERATOR};
 pub use dispute::{
@@ -2729,6 +2730,21 @@ impl AttestationContract {
                 dynamic_fees::set_admin(env, new_admin);
                 access_control::swap_admin(env, &old_admin, new_admin, executor);
                 events::emit_key_rotation_emergency(env, &old_admin, new_admin);
+            }
+            ProposalAction::UpgradeWasm(_hash) => {
+                // UpgradeWasm proposals must be executed via `execute_upgrade`,
+                // not through the generic `execute_proposal` path, because the
+                // WASM bytecode cannot be carried inside a stored `Proposal`
+                // (it would exceed instance storage limits).
+                //
+                // Governance flow:
+                //   1. create_proposal(UpgradeWasm(expected_hash))
+                //   2. N × approve_proposal(...)
+                //   3. execute_upgrade(executor, proposal_id, new_wasm, nonce)
+                //
+                // Calling execute_proposal on an UpgradeWasm proposal is an
+                // operational error; redirect the caller.
+                panic!("UpgradeWasm proposals must be executed via execute_upgrade, not execute_proposal");
             }
         }
     }

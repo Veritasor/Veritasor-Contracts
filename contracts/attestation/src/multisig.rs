@@ -36,7 +36,7 @@
 //! See `docs/attestation-vote-weight-snapshot.md` for the full threat model,
 //! security notes, and migration considerations.
 
-use soroban_sdk::{contracttype, signature, Signature, Address, Env, Vec};
+use soroban_sdk::{contracttype, signature, Signature, Address, BytesN, Env, Vec};
 
 use crate::events;
 use crate::access_control::{is_paused, set_paused};
@@ -145,6 +145,16 @@ pub enum ProposalAction {
     EmergencyRotateAdmin(Address), // new_admin
     /// Emergency pause bypass (requires two independent hardware keys)
     EmergencyPause,
+    /// Swap the contract WASM to the bytecode whose SHA-256 hash is provided.
+    ///
+    /// The 32-byte hash is committed to at proposal-creation time and
+    /// verified on-chain before the WASM swap is applied.  This closes the
+    /// "executor substitution" attack surface: an executor who provides
+    /// different bytecode at execution time will have the hash check fail.
+    ///
+    /// Off-chain tooling (`scripts/prepare_upgrade.sh`) verifies the
+    /// signed manifest and computes the hash before emitting this proposal.
+    UpgradeWasm(BytesN<32>),
 }
 
 /// Proposal state
@@ -339,6 +349,7 @@ fn action_tag(action: &ProposalAction) -> u32 {
         ProposalAction::UpdateFeeConfig(_, _, _, _) => 8,
         ProposalAction::EmergencyRotateAdmin(_) => 9,
         ProposalAction::EmergencyPause => 10,
+        ProposalAction::UpgradeWasm(_) => crate::upgrade_tool::UPGRADE_WASM_ACTION_TAG,
     }
 }
 
