@@ -179,6 +179,13 @@ pub enum DataKey {
     ArchivePointer(Address, soroban_sdk::String),
     /// Admin-configurable retention policy for archival compaction.
     CompactionRetentionEpochs,
+    // ── Storage TTL management ───────────────────────────────────
+    /// Admin-toggleable on-read TTL bump for hot `AttestationData` entries.
+    ///
+    /// When enabled (the default), every read of an attestation extends the
+    /// entry's persistent TTL so hot entries do not fall out of persistent
+    /// storage during Soroban archival.
+    TtlBumpOnRead,
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -218,6 +225,26 @@ pub fn set_revoke_grace_seconds(env: &Env, seconds: u64) {
     env.storage()
         .instance()
         .set(&DataKey::RevokeGraceSeconds, &seconds);
+}
+
+/// Whether reads of `AttestationData` entries extend their persistent TTL.
+///
+/// Defaults to `true`: hot entries stay in persistent storage across reads.
+/// The admin can disable it via [`set_ttl_bump_on_read`] to avoid the gas
+/// cost of the bump for cold data.
+pub fn get_ttl_bump_on_read(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::TtlBumpOnRead)
+        .unwrap_or(true)
+}
+
+/// Set the on-read TTL bump toggle (admin enforcement is the caller's
+/// responsibility).
+pub fn set_ttl_bump_on_read(env: &Env, enabled: bool) {
+    env.storage()
+        .instance()
+        .set(&DataKey::TtlBumpOnRead, &enabled);
 }
 
 /// Store a revoke proposal.

@@ -171,6 +171,8 @@ pub const TOPIC_EPOCH_CHECKPOINT: Symbol = symbol_short!("ep_ckpt");
 pub const TOPIC_BACKFILL_CHECKPOINT: Symbol = symbol_short!("bkf_chk");
 /// Topic: archival compaction completed
 pub const TOPIC_ARCHIVAL_COMPACTED: Symbol = symbol_short!("arc_cmp");
+/// Topic: persistent TTL extended on read of a hot attestation entry
+pub const TOPIC_TTL_BUMPED_ON_READ: Symbol = symbol_short!("ttl_bmpr");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -2159,4 +2161,18 @@ pub fn emit_rehydrated_from_archive(
 ) {
     let topics = (TOPIC_REHYDRATED_FROM_ARCHIVE, business.clone(), period.clone());
     env.events().publish(topics, source_epoch);
+}
+
+/// Emit a `TtlBumpedOnRead` event.
+///
+/// Call after a hot read path (`get_attestation` / `get_business_attestations`)
+/// extends the persistent TTL of an `AttestationData` entry while the
+/// `TTL_BUMP_ON_READ` toggle is enabled.
+///
+/// # Events
+///
+/// Publishes `(ttl_bmpr, business, period)` → `()`.
+pub fn emit_ttl_bumped_on_read(env: &Env, business: &Address, period: &String) {
+    let topics = (TOPIC_TTL_BUMPED_ON_READ, business.clone(), period.clone());
+    env.events().publish(topics, ());
 }

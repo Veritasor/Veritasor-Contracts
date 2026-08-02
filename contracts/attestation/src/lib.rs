@@ -1105,12 +1105,15 @@ impl AttestationContract {
                 .persistent()
                 .get::<_, AttestationData>(&DataKey::Attestation(business.clone(), period.clone()))
         {
-            let current_config = network_config::get_config(&env);
-            env.storage().persistent().extend_ttl(
-                &DataKey::Attestation(business.clone(), period.clone()),
-                current_config.min_persistent_entry_ttl,
-                current_config.max_entry_ttl,
-            );
+            if dynamic_fees::get_ttl_bump_on_read(&env) {
+                let current_config = network_config::get_config(&env);
+                env.storage().persistent().extend_ttl(
+                    &DataKey::Attestation(business.clone(), period.clone()),
+                    current_config.min_persistent_entry_ttl,
+                    current_config.max_entry_ttl,
+                );
+                events::emit_ttl_bumped_on_read(&env, &business, &period);
+            }
             return Some(att_data);
         }
 
@@ -1122,11 +1125,14 @@ impl AttestationContract {
             // Rehydrate back to active storage
             let active_key = DataKey::Attestation(business.clone(), period.clone());
             env.storage().persistent().set(&active_key, &archived_att_data);
-            env.storage().persistent().extend_ttl(
-                &active_key,
-                current_config.min_persistent_entry_ttl,
-                current_config.max_entry_ttl,
-            );
+            if dynamic_fees::get_ttl_bump_on_read(&env) {
+                env.storage().persistent().extend_ttl(
+                    &active_key,
+                    current_config.min_persistent_entry_ttl,
+                    current_config.max_entry_ttl,
+                );
+                events::emit_ttl_bumped_on_read(&env, &business, &period);
+            }
 
             // Emit rehydrate event
             events::emit_rehydrated_from_archive(&env, &business, &period, archived_att_data.3);
@@ -1515,12 +1521,15 @@ impl AttestationContract {
                 .persistent()
                 .get::<_, AttestationData>(&DataKey::Attestation(business.clone(), period.clone()))
             {
-                let current_config = network_config::get_config(&env);
-                env.storage().persistent().extend_ttl(
-                    &DataKey::Attestation(business.clone(), period.clone()),
-                    current_config.min_persistent_entry_ttl,
-                    current_config.max_entry_ttl,
-                );
+                if dynamic_fees::get_ttl_bump_on_read(&env) {
+                    let current_config = network_config::get_config(&env);
+                    env.storage().persistent().extend_ttl(
+                        &DataKey::Attestation(business.clone(), period.clone()),
+                        current_config.min_persistent_entry_ttl,
+                        current_config.max_entry_ttl,
+                    );
+                    events::emit_ttl_bumped_on_read(&env, &business, &period);
+                }
                 result.push_back((period.clone(), att_data.clone(), Self::get_revocation_info(env.clone(), business.clone(), period.clone())));
                 found = true;
             }
@@ -1904,6 +1913,23 @@ impl AttestationContract {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+    }
+
+    /// Toggle the on-read TTL bump for hot `AttestationData` entries.
+    ///
+    /// When enabled (the default), every read of an attestation via
+    /// `get_attestation` / `get_business_attestations` extends the entry's
+    /// persistent TTL and emits a `TtlBumpedOnRead` event. Disabling it stops
+    /// the on-read bump (e.g. to save gas for cold data).
+    ///
+    /// # Authorization
+    /// Caller must be the contract admin.
+    ///
+    /// # Panics
+    /// - `"not admin"` — caller lacks admin role.
+    pub fn set_ttl_bump_on_read(env: Env, caller: Address, enabled: bool) {
+        access_control::require_admin(&env, &caller);
+        dynamic_fees::set_ttl_bump_on_read(&env, enabled);
     }
 
     /// Bump the instance TTL for a specific business's AttestationRange entry.
