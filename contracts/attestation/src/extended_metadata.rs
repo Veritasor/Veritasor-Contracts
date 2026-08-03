@@ -28,7 +28,7 @@
 //! - Metadata is removed when the corresponding attestation is revoked,
 //!   preventing dead-storage accumulation.
 
-use soroban_sdk::{contracttype, xdr::FromXdr, Address, Bytes, Env, String, TryFromVal, TryIntoVal};
+use soroban_sdk::{contracttype, xdr::FromXdr, Address, Bytes, Env, String};
 
 use crate::dynamic_fees::DataKey;
 
