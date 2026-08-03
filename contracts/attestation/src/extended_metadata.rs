@@ -28,7 +28,7 @@
 //! - Metadata is removed when the corresponding attestation is revoked,
 //!   preventing dead-storage accumulation.
 
-use soroban_sdk::{contracttype, xdr::FromXdr, Address, Env, String, TryFromVal, TryIntoVal};
+use soroban_sdk::{contracttype, xdr::FromXdr, Address, Bytes, Env, String, TryFromVal, TryIntoVal};
 
 use crate::dynamic_fees::DataKey;
 
@@ -88,12 +88,8 @@ pub fn deserialize_metadata_bytes(
     env: &Env,
     bytes: &[u8],
 ) -> Result<AttestationMetadata, MetadataDeserializationError> {
-    let sc_val: soroban_sdk::xdr::ScVal = soroban_sdk::xdr::FromXdr::from_xdr(bytes, &Default::default())
-        .map_err(|_| MetadataDeserializationError::InvalidEncoding)?;
-    let val = sc_val
-        .try_into_val(env)
-        .map_err(|_| MetadataDeserializationError::InvalidEncoding)?;
-    AttestationMetadata::try_from_val(env, &val)
+    let soroban_bytes = Bytes::from_slice(env, bytes);
+    AttestationMetadata::from_xdr(env, &soroban_bytes)
         .map_err(|_| MetadataDeserializationError::InvalidEncoding)
 }
 

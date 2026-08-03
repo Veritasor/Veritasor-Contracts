@@ -235,7 +235,7 @@ impl AttestationContract {
     /// - A pending fee config is already scheduled (cancel it first)
     pub fn propose_fee_config(
         env: Env,
-        caller: Address,
+        _caller: Address,
         token: Address,
         collector: Address,
         base_fee: i128,
@@ -281,7 +281,7 @@ impl AttestationContract {
     /// - Caller does not have ADMIN role
     /// - No pending fee config exists
     /// - Timelock has not yet expired
-    pub fn commit_fee_config(env: Env, caller: Address, nonce: u64) {
+    pub fn commit_fee_config(env: Env, _caller: Address, nonce: u64) {
         let admin = dynamic_fees::require_admin(&env);
         replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
         let pending =
@@ -307,7 +307,7 @@ impl AttestationContract {
     /// # Panics
     /// - Caller does not have ADMIN role
     /// - No pending fee config exists
-    pub fn cancel_pending_fee_config(env: Env, caller: Address, nonce: u64) {
+    pub fn cancel_pending_fee_config(env: Env, _caller: Address, nonce: u64) {
         let admin = dynamic_fees::require_admin(&env);
         replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
         assert!(
