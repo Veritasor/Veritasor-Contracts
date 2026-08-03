@@ -2296,11 +2296,7 @@ fn assert_multi_period_within_budget(n: u64, total_cpu: u64, total_mem: u64, lab
 /// Each range i occupies [i*1000+1, i*1000+999] so ranges are strictly
 /// non-overlapping.  A unique 32-byte merkle root is derived from `i` so the
 /// RootIndex reverse-lookup table is also populated correctly.
-fn setup_multi_period_ranges(
-    env: &Env,
-    client: &AttestationContractClient,
-    n: usize,
-) -> Address {
+fn setup_multi_period_ranges(env: &Env, client: &AttestationContractClient, n: usize) -> Address {
     let business = Address::generate(env);
 
     for i in 0..n {
@@ -2320,9 +2316,9 @@ fn setup_multi_period_ranges(
             &end,
             &root,
             &1_700_000_000u64, // timestamp
-            &1u32,              // version
-            &None,              // no proof hash
-            &None,              // no expiry
+            &1u32,             // version
+            &None,             // no proof hash
+            &None,             // no expiry
         );
     }
 
@@ -2392,7 +2388,12 @@ fn bench_get_multi_period_ranges_n100() {
     let result = client.get_multi_period_ranges(&business);
     let after = BudgetSnapshot::capture(&env);
 
-    assert_eq!(result.len(), 100, "Expected 100 ranges, got {}", result.len());
+    assert_eq!(
+        result.len(),
+        100,
+        "Expected 100 ranges, got {}",
+        result.len()
+    );
 
     let cost = before.delta(&after);
     cost.print("get_multi_period_ranges (n=100)");
@@ -2418,7 +2419,12 @@ fn bench_get_multi_period_ranges_n500() {
     let result = client.get_multi_period_ranges(&business);
     let after = BudgetSnapshot::capture(&env);
 
-    assert_eq!(result.len(), 500, "Expected 500 ranges, got {}", result.len());
+    assert_eq!(
+        result.len(),
+        500,
+        "Expected 500 ranges, got {}",
+        result.len()
+    );
 
     let cost = before.delta(&after);
     cost.print("get_multi_period_ranges (n=500, upper-bound stress)");
@@ -2488,12 +2494,7 @@ fn bench_get_multi_period_ranges_sweep() {
         let cost = before.delta(&after);
         print_multi_period_csv_row(n as u64, cost.cpu_insns, cost.mem_bytes);
 
-        assert_multi_period_within_budget(
-            n as u64,
-            cost.cpu_insns,
-            cost.mem_bytes,
-            "bench_sweep",
-        );
+        assert_multi_period_within_budget(n as u64, cost.cpu_insns, cost.mem_bytes, "bench_sweep");
 
         // Track per-range cost at N=1 for linear-growth comparison.
         if n == 1 {
@@ -2593,7 +2594,11 @@ fn regression_get_multi_period_ranges_budget() {
         let (env, client, _admin) = setup_basic();
         let business = Address::generate(&env);
         let result = client.get_multi_period_ranges(&business);
-        assert_eq!(result.len(), 0, "regression: zero-range must return empty Vec");
+        assert_eq!(
+            result.len(),
+            0,
+            "regression: zero-range must return empty Vec"
+        );
     }
 
     // Non-zero sizes: correctness + budget

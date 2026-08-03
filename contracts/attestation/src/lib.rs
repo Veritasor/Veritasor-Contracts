@@ -808,8 +808,7 @@ impl AttestationContract {
             // ── Backfill checkpoint per batch item ───────────
             let global_count = dynamic_fees::increment_backfill_count(env);
             if global_count % BACKFILL_CHECKPOINT_INTERVAL == 0 {
-                let commitment =
-                    compute_backfill_commitment(env, global_count, &item.merkle_root);
+                let commitment = compute_backfill_commitment(env, global_count, &item.merkle_root);
                 events::emit_backfill_checkpoint(env, global_count, &commitment);
             }
 
@@ -2627,6 +2626,8 @@ mod revoke_reason_test;
 #[cfg(test)]
 mod schema_export_test;
 #[cfg(all(test, feature = "full-tests"))]
+mod security_invariant_test;
+#[cfg(all(test, feature = "full-tests"))]
 mod test;
 #[cfg(all(test, feature = "full-tests"))]
 mod tier_bounds_test;
@@ -2638,5 +2639,3 @@ mod ttl_test;
 mod verify_attestation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod verify_attestations_batch_test;
-#[cfg(all(test, feature = "full-tests"))]
-mod security_invariant_test;

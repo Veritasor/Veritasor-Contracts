@@ -653,9 +653,7 @@ pub fn handle_epoch_rollover(env: &Env) {
 
     if !was_stored {
         // First ever submission — initialise epoch to 1.
-        env.storage()
-            .instance()
-            .set(&DataKey::EpochCounter, &1u64);
+        env.storage().instance().set(&DataKey::EpochCounter, &1u64);
         env.storage()
             .instance()
             .set(&DataKey::LastFeeBucket, &current_bucket);
@@ -679,9 +677,7 @@ pub fn handle_epoch_rollover(env: &Env) {
         let now = env.ledger().timestamp();
         for _b in (last_bucket + 1)..=current_bucket {
             epoch += 1;
-            env.storage()
-                .instance()
-                .set(&DataKey::EpochCounter, &epoch);
+            env.storage().instance().set(&DataKey::EpochCounter, &epoch);
             crate::events::emit_epoch_advanced(env, epoch, now);
         }
         env.storage()
@@ -691,11 +687,7 @@ pub fn handle_epoch_rollover(env: &Env) {
 }
 
 /// Increment the per-period submission counter and return the new value.
-pub fn increment_epoch_submissions(
-    env: &Env,
-    period: &soroban_sdk::String,
-    delta: u64,
-) -> u64 {
+pub fn increment_epoch_submissions(env: &Env, period: &soroban_sdk::String, delta: u64) -> u64 {
     let key = DataKey::EpochSubmissions(period.clone());
     let count: u64 = env.storage().instance().get(&key).unwrap_or(0u64);
     let new = count + delta;

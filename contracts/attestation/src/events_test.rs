@@ -1633,8 +1633,8 @@ fn test_edge_case_new_event_topic_coverage() {
     let required_topics = [
         "att_sub", "att_rev", "att_mig", "att_cl", "role_gr", "role_rv", "paused", "unpaus",
         "fee_cfg", "ff_cfg", "rate_lm", "kr_prop", "kr_conf", "kr_canc", "kr_emer", "biz_reg",
-        "biz_apr", "biz_sus", "biz_rea", "ph_upd", "att_exp", "mul_iss",
-        "ep_ckpt", "ep_adv", "bkf_chk",
+        "biz_apr", "biz_sus", "biz_rea", "ph_upd", "att_exp", "mul_iss", "ep_ckpt", "ep_adv",
+        "bkf_chk",
     ];
 
     for expected in &required_topics {

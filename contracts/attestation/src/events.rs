@@ -1789,11 +1789,7 @@ pub fn emit_epoch_advanced(env: &Env, epoch: u64, at_ts: u64) {
 /// # Events
 ///
 /// Publishes `(bkf_chk,)` → `BackfillCheckpointEvent`.
-pub fn emit_backfill_checkpoint(
-    env: &Env,
-    submission_count: u64,
-    state_commitment: &BytesN<32>,
-) {
+pub fn emit_backfill_checkpoint(env: &Env, submission_count: u64, state_commitment: &BytesN<32>) {
     let event = BackfillCheckpointEvent {
         submission_count,
         state_commitment: state_commitment.clone(),
