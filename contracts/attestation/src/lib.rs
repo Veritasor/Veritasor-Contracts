@@ -1016,7 +1016,7 @@ impl AttestationContract {
 
     /// Cleanup orphaned revocation index entries for a business.
     pub fn cleanup_revocation_index(env: Env, business: Address) -> u32 {
-        let mut periods = dispute::get_revoked_periods(&env, &business);
+        let periods = dispute::get_revoked_periods(&env, &business);
         if periods.is_empty() {
             return 0;
         }
