@@ -96,6 +96,8 @@ pub enum DataKey {
     // ── Attestation data ────────────────────────────────────────
     /// Attestation record keyed by (business, period).
     Attestation(Address, soroban_sdk::String),
+    /// Attestor address keyed by (business, period).
+    Attestor(Address, soroban_sdk::String),
     /// Revocation status keyed by (business, period).
     Revoked(Address, soroban_sdk::String),
     /// Extended metadata (currency, net/gross) keyed by (business, period).
@@ -106,6 +108,12 @@ pub enum DataKey {
     AttestorStakingContract,
     /// Address of the audit log contract for slash events.
     AuditLogContract,
+    /// Pending staking contract rebinding with activation timestamp.
+    ///
+    /// Written by `propose_staking_contract`; consumed by
+    /// `commit_staking_contract` or removed by
+    /// `cancel_pending_staking_contract`.
+    PendingStakingContract,
 
     // ── Fee system ──────────────────────────────────────────────
     /// Contract administrator address.
@@ -139,6 +147,11 @@ pub enum DataKey {
     SubmissionTimestamps(Address),
     IsPaused,
 
+    // ── Relayer gas metering ───────────────────────────────────
+    /// Per-relayer gas accumulation counter (CPU instructions).
+    /// Keyed by relayer address.
+    RelayerGasAccumulator(Address),
+
     // ── Time-locked revocation (grace-window appeal path) ──────
     /// Pending revocation proposal keyed by (business, period).
     ///
@@ -168,6 +181,21 @@ pub enum DataKey {
     ArchivedAttestation(Address, soroban_sdk::String),
     /// Lightweight archive pointer record keyed by (business, period).
     ArchivePointer(Address, soroban_sdk::String),
+    /// Per-epoch count of successful cleanup operations (removed entries).
+    ///
+    /// Keyed by fee-bucket epoch from [`DataKey::EpochCounter`]. Operators
+    /// read this via `get_cleanup_count_for_epoch` and observe
+    /// `CleanupSummary` events emitted on each epoch boundary.
+    CleanupCountForEpoch(u64),
+    // ── Archive Tier ─────────────────────────────────────────────
+    /// Global archive index.
+    ArchiveIndex,
+    /// Full attestation record stored in the archive.
+    ArchivedAttestation(Address, soroban_sdk::String),
+    /// Lightweight archive pointer.
+    ArchivePointer(Address, soroban_sdk::String),
+    /// Admin-configurable retention policy for archival compaction.
+    CompactionRetentionEpochs,
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -581,8 +609,149 @@ pub fn collect_fee_from(env: &Env, payer: &Address, business: &Address) -> i128 
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  Archive tier helpers
+//  Epoch Counter
 // ════════════════════════════════════════════════════════════════════
+
+/// Gets the current fee bucket epoch. Returns 0 if never initialized.
+pub fn get_epoch(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::EpochCounter)
+        .unwrap_or(0u64)
+}
+
+/// Increments the epoch counter by one, persists it, and emits boundary events.
+///
+/// Private — only called from `handle_epoch_rollover`.
+/// Guarantees the counter is strictly monotonically increasing.
+///
+/// On each boundary:
+/// 1. Emit `CleanupSummary` for the **ending** epoch with its persisted
+///    [`DataKey::CleanupCountForEpoch`] value (including zero).
+/// 2. Advance the epoch and emit `EpochAdvanced` for the new value.
+fn advance_epoch(env: &Env) -> u64 {
+    let ending_epoch = get_epoch(env);
+    let removed = get_cleanup_count_for_epoch(env, ending_epoch);
+    crate::events::emit_cleanup_summary(env, ending_epoch, removed);
+
+    let new_epoch = ending_epoch + 1;
+    env.storage()
+        .instance()
+        .set(&DataKey::EpochCounter, &new_epoch);
+    crate::events::emit_epoch_advanced(env, new_epoch);
+    new_epoch
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Per-epoch cleanup metrics
+// ════════════════════════════════════════════════════════════════════
+
+/// Returns the number of successful cleanups recorded for `epoch`.
+///
+/// Missing keys read as `0` so epochs with no cleanup activity still have a
+/// well-defined metric (and emit `CleanupSummary` with `removed_count = 0`).
+pub fn get_cleanup_count_for_epoch(env: &Env, epoch: u64) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::CleanupCountForEpoch(epoch))
+        .unwrap_or(0u64)
+}
+
+/// Increments the cleanup counter for the **current** fee-bucket epoch by one.
+///
+/// Called only from successful cleanup paths after storage has been removed.
+/// The counter is monotonically non-decreasing per epoch and cannot be
+/// decremented or reset by external callers.
+pub fn increment_cleanup_count(env: &Env) {
+    let epoch = get_epoch(env);
+    let next = get_cleanup_count_for_epoch(env, epoch).saturating_add(1);
+    env.storage()
+        .instance()
+        .set(&DataKey::CleanupCountForEpoch(epoch), &next);
+}
+
+/// Checks for a fee-bucket window rollover and advances the epoch counter if
+/// one (or more) windows have elapsed since the last recorded bucket.
+///
+/// Called on every attestation submission (single and batch paths).
+///
+/// ## Algorithm
+///
+/// `LastFeeBucket` stores an `Option<u64>` sentinel:
+/// - `None`  → first-ever call; initialize to the current bucket and emit epoch 1.
+/// - `Some(last)` where `current > last` → `(current - last)` windows elapsed;
+///   advance the epoch once per window and emit one `EpochAdvanced` event each.
+/// - `Some(last)` where `current == last` → same window; no-op.
+///
+/// ## Security invariants
+/// - `EpochCounter` is monotonically non-decreasing; it only ever increases.
+/// - Multiple rollovers in a single transaction each produce a separate event.
+/// - The sentinel uses `has()` rather than a zero-value sentinel so that bucket
+///   index 0 (timestamps 0–86 399 s) is handled correctly without false triggers.
+pub fn handle_epoch_rollover(env: &Env) {
+    let current_bucket = env.ledger().timestamp() / FEE_BUCKET_WINDOW_SECONDS;
+
+    let initialized = env
+        .storage()
+        .instance()
+        .has(&DataKey::LastFeeBucket);
+
+    if !initialized {
+        // First-ever call: record the current bucket and start epoch 1.
+        advance_epoch(env);
+    } else {
+        let last_bucket: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::LastFeeBucket)
+            .unwrap();
+
+        if current_bucket > last_bucket {
+            // One or more full windows have elapsed — advance once per window.
+            for _ in 0..(current_bucket - last_bucket) {
+                advance_epoch(env);
+            }
+        }
+        // current_bucket == last_bucket → same window, nothing to do.
+    }
+
+    // Always persist the current bucket so the next call has a reference point.
+    env.storage()
+        .instance()
+        .set(&DataKey::LastFeeBucket, &current_bucket);
+}
+
+//  Archive tier types and helpers
+// ════════════════════════════════════════════════════════════════════
+
+/// Lightweight pointer preserved after an attestation is moved to the archive tier.
+///
+/// Written under [`DataKey::ArchivePointer(business, period)`] at archival time.
+/// After compaction the full `ArchivedAttestation` entry is removed; only this
+/// pointer (containing the Merkle commitment root) is retained.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ArchivePointerRecord {
+    /// Merkle commitment root — the historical proof retained after compaction.
+    pub merkle_root: soroban_sdk::BytesN<32>,
+    /// Monotonically increasing ordinal assigned at archival time.
+    pub archive_index: u64,
+    /// Ledger timestamp when the attestation was moved to the archive tier.
+    pub archived_at: u64,
+}
+
+/// Admin-configurable retention policy for archival compaction.
+///
+/// Stored under [`DataKey::CompactionRetentionEpochs`].
+/// When `None` (default), compaction is disabled and `compact_archival` is a no-op.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct CompactionRetentionPolicy {
+    /// Minimum number of epochs an archived attestation must have been in the
+    /// archive tier before its full data may be compacted away.
+    /// Must be > 0.
+    pub min_epochs: u64,
+}
 
 /// Read the current global archive index (0 if never set).
 pub fn get_archive_index(env: &Env) -> u64 {
@@ -649,16 +818,16 @@ pub fn get_archive_pointer(
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  Epoch tracking (fee-bucket window rollover)
+//  Relayer Gas Metering
 // ════════════════════════════════════════════════════════════════════
 
-/// Return the current epoch counter. Starts at 0 and advances to 1 on
-/// the first submission, then increments on each fee-bucket window rollover.
-pub fn get_epoch(env: &Env) -> u64 {
+/// Get the accumulated gas (CPU instructions) for a relayer.
+/// Returns 0 if the relayer has no prior activity.
+pub fn get_relayer_gas(env: &Env, relayer: &Address) -> u64 {
     env.storage()
         .instance()
-        .get(&DataKey::EpochCounter)
-        .unwrap_or(0u64)
+        .get(&DataKey::RelayerGasAccumulator(relayer.clone()))
+        .unwrap_or(0)
 }
 
 /// Check whether the fee-bucket window has rolled over since the last
@@ -711,33 +880,52 @@ pub fn increment_epoch_submissions(env: &Env, period: &soroban_sdk::String, delt
     env.storage().instance().set(&key, &new);
     new
 }
-
-/// Add `fee` to the per-period fee accumulator and return the new total.
-pub fn accumulate_epoch_fees(env: &Env, period: &soroban_sdk::String, fee: i128) -> i128 {
-    let key = DataKey::EpochFees(period.clone());
-    let total: i128 = env.storage().instance().get(&key).unwrap_or(0i128);
-    let new = total + fee;
-    env.storage().instance().set(&key, &new);
-    new
+/// Add gas (CPU instructions) to a relayer's accumulator.
+/// This is called after a delegated submission to attribute the gas cost to the relayer.
+pub fn add_relayer_gas(env: &Env, relayer: &Address, gas: u64) {
+    let current = get_relayer_gas(env, relayer);
+    let new_total = current.saturating_add(gas);
+    env.storage()
+        .instance()
+        .set(&DataKey::RelayerGasAccumulator(relayer.clone()), &new_total);
 }
 
 // ════════════════════════════════════════════════════════════════════
-//  Backfill checkpoint counter (global running total)
+//  Compaction retention policy helpers
 // ════════════════════════════════════════════════════════════════════
 
-/// Return the global running submission count.
-pub fn get_backfill_count(env: &Env) -> u64 {
+/// Read the compaction retention policy, if configured.
+pub fn get_compaction_retention(env: &Env) -> Option<CompactionRetentionPolicy> {
     env.storage()
         .instance()
-        .get(&DataKey::BackfillSubmissionCount)
-        .unwrap_or(0u64)
+        .get(&DataKey::CompactionRetentionEpochs)
 }
 
-/// Increment the global submission counter and return the *new* value.
-pub fn increment_backfill_count(env: &Env) -> u64 {
-    let count = get_backfill_count(env) + 1;
+/// Persist the compaction retention policy.
+pub fn set_compaction_retention(env: &Env, policy: &CompactionRetentionPolicy) {
     env.storage()
         .instance()
-        .set(&DataKey::BackfillSubmissionCount, &count);
-    count
+        .set(&DataKey::CompactionRetentionEpochs, policy);
+}
+
+/// Remove the compaction retention policy (disables compaction).
+pub fn clear_compaction_retention(env: &Env) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::CompactionRetentionEpochs);
+}
+
+/// Remove the full archived attestation data, leaving only the pointer.
+///
+/// Called by `compact_archival` after verifying the retention policy.
+/// The `ArchivePointer` (Merkle commitment) is preserved; only the
+/// `ArchivedAttestation` (full data) is deleted.
+pub fn remove_archived_attestation(
+    env: &Env,
+    business: &Address,
+    period: &soroban_sdk::String,
+) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::ArchivedAttestation(business.clone(), period.clone()));
 }

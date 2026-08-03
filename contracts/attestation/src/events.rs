@@ -42,7 +42,12 @@
 //! | `BusinessApproved`          | `biz_apr`      | `business`        |
 //! | `BusinessSuspended`         | `biz_sus`      | `business`        |
 //! | `BusinessReactivated`       | `biz_rea`      | `business`        |
+//! | `ApprovalRevoked`           | `appr_rv`      | `proposal_id`     |
 //! | `EpochCheckpoint`           | `ep_ckpt`      | *(none)*          |
+//! | `EpochAdvanced`             | `ep_adv`       | *(none)*          |
+//! | `CleanupSummary`            | `cl_sum`       | *(none)*          |
+//! | `BackfillCheckpoint`        | `bkf_chk`      | *(none)*          |
+//! | `DisputeRolledBack`         | `dsp_rb`       | `business`        |
 //!
 //! ## Indexer Compatibility Contract
 //!
@@ -133,6 +138,11 @@ pub const TOPIC_KEY_ROTATION_CONFIRMED: Symbol = symbol_short!("kr_conf");
 pub const TOPIC_KEY_ROTATION_CANCELLED: Symbol = symbol_short!("kr_canc");
 /// Topic: emergency key rotation executed
 pub const TOPIC_KEY_ROTATION_EMERGENCY: Symbol = symbol_short!("kr_emer");
+/// Topic: analytics rotation completed
+pub const TOPIC_REHYDRATED_FROM_ARCHIVE: Symbol = symbol_short!("rehydrate");
+pub const TOPIC_ANALYTICS_ROTATION_COMPLETED: Symbol = symbol_short!("anly_cm");
+/// Topic: emergency pause triggered (dual-key bypass)
+pub const TOPIC_EMERGENCY_PAUSE_TRIGGERED: Symbol = symbol_short!("emr_pse");
 /// Topic: business registered
 pub const TOPIC_BIZ_REGISTERED: Symbol = symbol_short!("biz_reg");
 /// Topic: business approved
@@ -143,12 +153,18 @@ pub const TOPIC_BIZ_SUSPENDED: Symbol = symbol_short!("biz_sus");
 pub const TOPIC_BIZ_REACTIVATE: Symbol = symbol_short!("biz_rea");
 /// Topic: proof hash updated
 pub const TOPIC_PROOF_HASH_UPDATED: Symbol = symbol_short!("ph_upd");
+/// Topic: fee bucket epoch advanced
+pub const TOPIC_EPOCH_ADVANCED: Symbol = symbol_short!("ep_adv");
+/// Topic: per-epoch cleanup summary at fee-bucket boundary
+pub const TOPIC_CLEANUP_SUMMARY: Symbol = symbol_short!("cl_sum");
 /// Topic: revocation proposed (grace window started)
 pub const TOPIC_REVOCATION_PROPOSED: Symbol = symbol_short!("rv_prop");
 /// Topic: revocation proposal cancelled (appeal succeeded)
 pub const TOPIC_REVOCATION_CANCELLED: Symbol = symbol_short!("rv_canc");
 /// Topic: revocation committed (grace window elapsed, revocation finalised)
 pub const TOPIC_REVOCATION_COMMITTED: Symbol = symbol_short!("rv_cmmt");
+/// Topic: multisig approval revoked before quorum reached
+pub const TOPIC_APPROVAL_REVOKED: Symbol = symbol_short!("appr_rv");
 /// Topic: epoch checkpoint emitted after each submission (per-period)
 pub const TOPIC_EPOCH_CHECKPOINT: Symbol = symbol_short!("ep_ckpt");
 /// Topic: epoch advanced on fee-bucket window rollover
@@ -161,6 +177,8 @@ pub const TOPIC_PAUSE_SCHEDULED: Symbol = symbol_short!("p_sched");
 pub const TOPIC_PAUSE_SCHEDULED_CANCELLED: Symbol = symbol_short!("p_canc");
 /// Topic: backfill checkpoint emitted every N submissions (global counter)
 pub const TOPIC_BACKFILL_CHECKPOINT: Symbol = symbol_short!("bkf_chk");
+/// Topic: archival compaction completed
+pub const TOPIC_ARCHIVAL_COMPACTED: Symbol = symbol_short!("arc_cmp");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -442,6 +460,16 @@ pub struct PauseScheduledCancelledEvent {
     pub caller: Address,
 }
 
+/// Normalized payload for `EmergencyPauseTriggered` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EmergencyPauseTriggeredEvent {
+    /// First hardware key signer.
+    pub signer1: Address,
+    /// Second hardware key signer (distinct from signer1).
+    pub signer2: Address,
+}
+
 // ── Fee configuration ─────────────────────────────────────────────
 
 /// Normalized payload for `FeeConfigChanged` events.
@@ -651,6 +679,65 @@ pub struct BusinessReactivatedEvent {
     pub reactivated_by: Address,
 }
 
+/// Normalized payload for `PermitCancelled` events.
+///
+/// Emitted when a delegated-submission permit is cancelled and its nonce
+/// is burned, permanently invalidating any pre-signed permit using that
+/// nonce value for the business on `NONCE_CHANNEL_PERMIT`.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PermitCancelledEvent {
+    /// Business whose permit was cancelled.
+    pub business: Address,
+    /// Nonce value that was burned.
+    pub nonce: u64,
+    /// The expiry timestamp that was declared in the `CancelPermit` payload.
+    /// `0` means the cancel permit had no expiry (never-expiring).
+    pub permit_expiry_ts: u64,
+}
+
+/// Normalized payload for `EpochAdvanced` events.
+///
+/// Emitted once per fee-bucket window rollover. Indexers use `epoch` as a
+/// monotonic cursor to align analytics windows with on-chain state.
+///
+/// ## Security
+/// - `epoch` is strictly monotonic: it only ever increases.
+/// - `at_ts` is the ledger timestamp at the moment of the rollover.
+/// - Multiple rollovers in a single transaction each produce a separate event.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EpochAdvancedEvent {
+    /// New epoch number (1-based, monotonically non-decreasing).
+    pub epoch: u64,
+    /// Ledger timestamp when the epoch was advanced.
+    pub at_ts: u64,
+}
+
+/// Normalized payload for `CleanupSummary` events.
+///
+/// Emitted at each fee-bucket epoch boundary with the number of successful
+/// cleanup operations recorded for the **ending** epoch. Operators use this
+/// to monitor cleanup health without scanning every `AttestationCleanedUp`
+/// event.
+///
+/// ## Security
+/// - Only emitted from the contract's epoch-rollover path.
+/// - `removed_count` is the persisted `CleanupCountForEpoch(epoch)` value
+///   (including `0` when no cleanups occurred).
+/// - The counter is incremented only after a successful cleanup removes
+///   storage; failed / unauthorized cleanup attempts do not affect it.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CleanupSummaryEvent {
+    /// Epoch that just ended (the epoch whose cleanup count is reported).
+    pub epoch: u64,
+    /// Number of successful cleanup operations in that epoch.
+    pub removed_count: u64,
+    /// Ledger timestamp when the summary was emitted.
+    pub at_ts: u64,
+}
+
 /// Normalized payload for `ProofHashUpdated` events.
 ///
 /// Emitted when an attestation's proof hash is updated by an admin.
@@ -684,6 +771,25 @@ pub struct ProposalCleanedEvent {
     pub cleaned_at: u32,
 }
 
+/// Normalized payload for `DisputeRolledBack` events.
+///
+/// Emitted when an open dispute exceeds the configurable resolution deadline
+/// and is automatically rolled back to the pre-dispute attestation state.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DisputeRolledBackEvent {
+    /// Unique identifier of the dispute that was rolled back.
+    pub dispute_id: u64,
+    /// Business address associated with the dispute.
+    pub business: Address,
+    /// Period identifier of the disputed attestation.
+    pub period: String,
+    /// Ledger timestamp when the rollback occurred.
+    pub rolled_back_at: u64,
+    /// The deadline threshold in seconds that was exceeded.
+    pub deadline_seconds: u64,
+}
+
 /// Normalized payload for `SlashTriggered` events.
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -691,6 +797,32 @@ pub struct SlashTriggeredEvent {
     pub attestor: Address,
     pub amount: i128,
     pub dispute_id: u64,
+}
+
+/// Normalized payload for `RelayerGasReported` events.
+///
+/// Emitted when a delegated submission (attestor or batch attestor) reports
+/// the gas consumed to the relayer's accumulator.
+///
+/// This provides a clean billing surface for relayer operators to track
+/// their infrastructure costs.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RelayerGasReportedEvent {
+    /// Relayer address that submitted the attestation on behalf of a business.
+    pub relayer: Address,
+    /// Business on whose behalf the submission was made.
+    pub business: Address,
+    /// Period identifier of the submitted attestation.
+    pub period: String,
+    /// CPU instructions consumed by the delegated submission.
+    pub cpu_instructions: u64,
+    /// Memory bytes consumed by the delegated submission.
+    pub memory_bytes: u64,
+    /// Total accumulated CPU instructions for this relayer.
+    pub total_cpu_instructions: u64,
+    /// Total accumulated memory bytes for this relayer.
+    pub total_memory_bytes: u64,
 }
 
 // ── Attestation lifecycle ─────────────────────────────────────────
@@ -845,6 +977,31 @@ pub fn emit_attestation_cleaned_up(env: &Env, business: &Address, period: &Strin
         .publish((TOPIC_ATTESTATION_CLEANED_UP, business.clone()), event);
 }
 
+/// Emit a `PermitCancelled` event.
+///
+/// Call this after a delegated-submission permit has been cancelled and its
+/// nonce burned on `NONCE_CHANNEL_PERMIT`.  Off-chain indexers can use the
+/// `business` secondary topic to monitor cancellations per business.
+///
+/// # Arguments
+///
+/// * `env`      – Soroban execution environment.
+/// * `business` – Business whose permit was cancelled.
+/// * `nonce`    – Nonce value that was burned.
+///
+/// # Events
+///
+/// Publishes `(perm_canc, business)` → `PermitCancelledEvent`.
+pub fn emit_permit_cancelled(env: &Env, business: &Address, nonce: u64, permit_expiry_ts: u64) {
+    let event = PermitCancelledEvent {
+        business: business.clone(),
+        nonce,
+        permit_expiry_ts,
+    };
+    env.events()
+        .publish((TOPIC_PERMIT_CANCELLED, business.clone()), event);
+}
+
 /// Emit a `SlashTriggered` event.
 pub fn emit_slash_triggered(env: &Env, attestor: &Address, amount: i128, dispute_id: u64) {
     let event = SlashTriggeredEvent {
@@ -854,6 +1011,48 @@ pub fn emit_slash_triggered(env: &Env, attestor: &Address, amount: i128, dispute
     };
     env.events()
         .publish((TOPIC_SLASH_TRIGGERED, attestor.clone()), event);
+}
+
+/// Emit a `RelayerGasReported` event.
+///
+/// Call this after a delegated submission (attestor or batch attestor) to
+/// attribute the gas cost to the relayer's accumulator.
+///
+/// # Arguments
+///
+/// * `env`                 – Soroban execution environment.
+/// * `relayer`             – Relayer address that submitted the attestation.
+/// * `business`            – Business on whose behalf the submission was made.
+/// * `period`              – Period identifier of the submitted attestation.
+/// * `cpu_instructions`    – CPU instructions consumed by this submission.
+/// * `memory_bytes`        – Memory bytes consumed by this submission.
+/// * `total_cpu_instructions` – Total accumulated CPU instructions for this relayer.
+/// * `total_memory_bytes`     – Total accumulated memory bytes for this relayer.
+///
+/// # Events
+///
+/// Publishes `(rl_gas, relayer)` → `RelayerGasReportedEvent`.
+pub fn emit_relayer_gas_reported(
+    env: &Env,
+    relayer: &Address,
+    business: &Address,
+    period: &String,
+    cpu_instructions: u64,
+    memory_bytes: u64,
+    total_cpu_instructions: u64,
+    total_memory_bytes: u64,
+) {
+    let event = RelayerGasReportedEvent {
+        relayer: relayer.clone(),
+        business: business.clone(),
+        period: period.clone(),
+        cpu_instructions,
+        memory_bytes,
+        total_cpu_instructions,
+        total_memory_bytes,
+    };
+    env.events()
+        .publish((TOPIC_RELAYER_GAS_REPORTED, relayer.clone()), event);
 }
 
 /// Normalized payload for `AttestationExpiryExtended` events.
@@ -1088,6 +1287,25 @@ pub fn emit_pause_scheduled_cancelled(env: &Env, caller: &Address) {
     };
     env.events()
         .publish((TOPIC_PAUSE_SCHEDULED_CANCELLED,), event);
+}
+
+/// Emit an `EmergencyPauseTriggered` event.
+///
+/// # Arguments
+///
+/// * `env`      – Soroban execution environment.
+/// * `signer1`  – First hardware key signer.
+/// * `signer2`  – Second hardware key signer (must be distinct from signer1).
+///
+/// # Events
+///
+/// Publishes `(emer_pause,)` → `EmergencyPauseTriggeredEvent`.
+pub fn emit_emergency_pause_triggered(env: &Env, signer1: &Address, signer2: &Address) {
+    let event = EmergencyPauseTriggeredEvent {
+        signer1: signer1.clone(),
+        signer2: signer2.clone(),
+    };
+    env.events().publish((TOPIC_EMERGENCY_PAUSE_TRIGGERED,), event);
 }
 
 // ── Fee configuration ─────────────────────────────────────────────
@@ -1341,6 +1559,29 @@ pub fn emit_key_rotation_cancelled(
     env.events().publish((TOPIC_KEY_ROTATION_CANCELLED,), event);
 }
 
+/// Emit an `AnalyticsRotationCompleted` event.
+///
+/// # Arguments
+///
+/// * `env` - Soroban execution environment.
+/// * `old_analytics` - Address being rotated out of the certified analytics set.
+/// * `new_analytics` - Address being rotated into the certified analytics set.
+///
+/// # Events
+///
+/// Publishes `(anly_cm,)` → `AnalyticsRotationCompletedEvent`.
+pub fn emit_analytics_rotation_completed(
+    env: &Env,
+    old_analytics: &Address,
+    new_analytics: &Address,
+) {
+    let event = AnalyticsRotationCompletedEvent {
+        old_analytics: old_analytics.clone(),
+        new_analytics: new_analytics.clone(),
+    };
+    env.events().publish((TOPIC_ANALYTICS_ROTATION_COMPLETED,), event);
+}
+
 /// Emit a `KeyRotationEmergency` event.
 ///
 /// Unlike the normal timelock flow, emergency rotations bypass the
@@ -1489,6 +1730,11 @@ pub fn emit_proof_hash_updated(
         .publish((TOPIC_PROOF_HASH_UPDATED, business.clone()), event);
 }
 
+/// Emit an `EpochAdvanced` event.
+///
+/// Call this after the fee bucket window has rolled over and the epoch counter
+/// has been incremented. Each rollover window produces one event, so multiple
+/// rollovers in a single transaction emit multiple events.
 // ── Time-locked revocation (grace-window appeal) ──────────────────
 
 /// Normalized payload for `RevocationProposed` events.
@@ -1662,6 +1908,50 @@ pub fn emit_revocation_committed(
         .publish((TOPIC_REVOCATION_COMMITTED, business.clone()), event);
 }
 
+// ── Multisig approvals ────────────────────────────────────────────
+
+/// Normalized payload for `ApprovalRevoked` events.
+///
+/// Emitted when an approver withdraws their approval from a pending
+/// multisig proposal before quorum has been reached (and before execution).
+///
+/// | Event Catalog | Topic   | Secondary topic |
+/// |---------------|---------|-----------------|
+/// | ApprovalRevoked | `appr_rv` | `proposal_id` |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ApprovalRevokedEvent {
+    /// Unique identifier of the proposal.
+    pub proposal_id: u64,
+    /// Address that revoked their approval.
+    pub approver: Address,
+}
+
+/// Emit an `ApprovalRevoked` event.
+///
+/// Call this after an approver's vote has been removed from a pending
+/// multisig proposal (swap-and-pop from the approvals list, count
+/// decremented). Idempotent revocations (approval didn't exist) should
+/// not call this — only emit on an actual state change.
+///
+/// # Arguments
+///
+/// * `env`         – Soroban execution environment.
+/// * `proposal_id` – Unique identifier of the proposal.
+/// * `approver`    – Address that revoked their approval.
+///
+/// # Events
+///
+/// Publishes `(appr_rv, proposal_id)` → `ApprovalRevokedEvent`.
+pub fn emit_approval_revoked(env: &Env, proposal_id: u64, approver: &Address) {
+    let event = ApprovalRevokedEvent {
+        proposal_id,
+        approver: approver.clone(),
+    };
+    env.events()
+        .publish((TOPIC_APPROVAL_REVOKED, proposal_id), event);
+}
+
 // ════════════════════════════════════════════════════════════════════
 //  Epoch & Backfill Checkpoints
 // ════════════════════════════════════════════════════════════════════
@@ -1688,23 +1978,6 @@ pub struct EpochCheckpointEvent {
     pub fees_collected: i128,
     /// Ledger timestamp at checkpoint emission.
     pub checkpoint_timestamp: u64,
-}
-
-/// Normalized payload for `EpochAdvanced` events.
-///
-/// Emitted when the fee-bucket window rolls over, incrementing the
-/// monotonic epoch counter. One event is emitted per elapsed window.
-///
-/// | Event Catalog | Topic | Secondary topic |
-/// |---|---|--|
-/// | EpochAdvanced | `ep_adv` | *(none)* |
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct EpochAdvancedEvent {
-    /// New epoch value after the rollover.
-    pub epoch: u64,
-    /// Ledger timestamp at which the rollover was detected.
-    pub at_ts: u64,
 }
 
 /// Normalized payload for `BackfillCheckpoint` events.
@@ -1769,15 +2042,42 @@ pub fn emit_epoch_checkpoint(
 /// # Arguments
 ///
 /// * `env`   – Soroban execution environment.
+/// * `epoch` – The new epoch number (monotonically non-decreasing).
 /// * `epoch` – New epoch value.
 /// * `at_ts` – Ledger timestamp at emission.
 ///
 /// # Events
 ///
 /// Publishes `(ep_adv,)` → `EpochAdvancedEvent`.
-pub fn emit_epoch_advanced(env: &Env, epoch: u64, at_ts: u64) {
-    let event = EpochAdvancedEvent { epoch, at_ts };
+pub fn emit_epoch_advanced(env: &Env, epoch: u64) {
+    let event = EpochAdvancedEvent {
+        epoch,
+        at_ts: env.ledger().timestamp(),
+    };
     env.events().publish((TOPIC_EPOCH_ADVANCED,), event);
+}
+
+/// Emit a `CleanupSummary` event at an epoch boundary.
+///
+/// Called from the fee-bucket rollover path immediately before the epoch
+/// counter advances. Reports cleanups recorded for the ending epoch.
+///
+/// # Arguments
+///
+/// * `env`           – Soroban execution environment.
+/// * `epoch`         – Ending epoch whose cleanup count is reported.
+/// * `removed_count` – Persisted cleanup count for that epoch (may be 0).
+///
+/// # Events
+///
+/// Publishes `(cl_sum,)` → `CleanupSummaryEvent`.
+pub fn emit_cleanup_summary(env: &Env, epoch: u64, removed_count: u64) {
+    let event = CleanupSummaryEvent {
+        epoch,
+        removed_count,
+        at_ts: env.ledger().timestamp(),
+    };
+    env.events().publish((TOPIC_CLEANUP_SUMMARY,), event);
 }
 
 /// Emit a `BackfillCheckpoint` event.
@@ -1979,4 +2279,60 @@ pub fn emit_revocation_index_cleaned(env: &Env, business: &Address, cleaned_coun
     };
     env.events()
         .publish((symbol_short!("rv_cln"), business.clone()), event);
+// ════════════════════════════════════════════════════════════════════
+//  Archival Compaction
+// ════════════════════════════════════════════════════════════════════
+
+/// Normalized payload for `ArchivalCompacted` events.
+///
+/// Emitted once per `compact_archival` call that removes at least one entry.
+/// Indexers can use this to track storage reclamation and audit the compaction
+/// history without replaying individual attestation events.
+///
+/// | Event Catalog | Topic | Secondary topic |
+/// |---|---|--|
+/// | ArchivalCompacted | `arc_cmp` | *(none)* |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ArchivalCompactedEvent {
+    /// Number of archived attestation full-data entries removed in this call.
+    pub compacted_count: u32,
+    /// Minimum epoch age threshold used for this compaction run.
+    pub min_epochs: u64,
+    /// Ledger timestamp when compaction ran.
+    pub compacted_at: u64,
+    /// Admin address that triggered the compaction.
+    pub compacted_by: Address,
+}
+
+/// Emit an `ArchivalCompacted` event.
+///
+/// Call this after `compact_archival` has removed at least one full-data entry.
+///
+/// # Events
+///
+/// Publishes `(arc_cmp,)` → `ArchivalCompactedEvent`.
+pub fn emit_archival_compacted(
+    env: &Env,
+    compacted_count: u32,
+    min_epochs: u64,
+    compacted_by: &Address,
+) {
+    let event = ArchivalCompactedEvent {
+        compacted_count,
+        min_epochs,
+        compacted_at: env.ledger().timestamp(),
+        compacted_by: compacted_by.clone(),
+    };
+    env.events().publish((TOPIC_ARCHIVAL_COMPACTED,), event);
+}
+
+pub fn emit_rehydrated_from_archive(
+    env: &Env,
+    business: &Address,
+    period: &String,
+    source_epoch: u32,
+) {
+    let topics = (TOPIC_REHYDRATED_FROM_ARCHIVE, business.clone(), period.clone());
+    env.events().publish(topics, source_epoch);
 }

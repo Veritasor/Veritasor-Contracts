@@ -1,5 +1,4 @@
 #![cfg(test)]
-
 extern crate std;
 
 use super::*;

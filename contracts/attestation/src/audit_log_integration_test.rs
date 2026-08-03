@@ -1,4 +1,3 @@
-#![cfg(test)]
 extern crate std;
 
 use crate::{events::SlashTriggeredEvent, AttestationContract, AttestationContractClient};
@@ -6,6 +5,10 @@ use soroban_sdk::{
     bytes, symbol_short,
     testutils::{Address as _, Ledger},
     vec, Address, Env, IntoVal, String,
+use crate::{AttestationContract, AttestationContractClient, events::SlashTriggeredEvent};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    Address, Env, String,
 };
 
 // We need to define mock interfaces for the external contracts if we don't have them in scope,
@@ -24,6 +27,9 @@ impl MockAuditLog {
         nonce: u64,
         actor: Address,
         source_contract: Address,
+        _nonce: u64,
+        actor: Address,
+        _source_contract: Address,
         action: String,
         payload: String,
     ) -> u64 {
@@ -50,6 +56,10 @@ impl MockStaking {
             &soroban_sdk::Symbol::new(&env, "slashed_attestor"),
             &attestor,
         );
+    pub fn slash(env: Env, attestor: Address, amount: i128, _dispute_id: u64) -> u32 {
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::Symbol::new(&env, "slashed_attestor"), &attestor);
         env.storage()
             .instance()
             .set(&soroban_sdk::Symbol::new(&env, "slashed_amount"), &amount);

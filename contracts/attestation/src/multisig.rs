@@ -36,13 +36,16 @@
 //! See `docs/attestation-vote-weight-snapshot.md` for the full threat model,
 //! security notes, and migration considerations.
 
-use soroban_sdk::{contracttype, Address, Env, Vec};
+use soroban_sdk::{contracttype, signature, symbol_short, Signature, Address, Env, String, Symbol, Vec};
 
 use crate::events;
+use crate::access_control::{is_paused, set_paused};
 
 /// Default proposal expiry, expressed in ledger sequences after creation.
 pub const DEFAULT_PROPOSAL_EXPIRY: u32 = 100_000;
 
+/// Cooldown period for quorum (threshold) changes, in ledger sequences.
+pub const PROPOSAL_COOLDOWN_LEDGERS: u32 = 1_000;
 /// Default grace period after proposal expiry before auto-cleanup (ledger sequences)
 pub const DEFAULT_PROPOSAL_EXPIRY_GRACE: u32 = 10_000;
 
@@ -66,6 +69,8 @@ pub enum MultisigKey {
     NextProposalId,
     /// Expiry ledger for a proposal
     ProposalExpiry(u64),
+    /// Ledger sequence of the last quorum change
+    LastQuorumChange,
     /// Admin-configurable grace period in ledger sequences after expiry
     ProposalExpiryGrace,
     /// Immutable vote-weight snapshot captured at proposal creation.
@@ -133,6 +138,8 @@ pub enum ProposalAction {
     UpdateFeeConfig(Address, Address, i128, bool),
     /// Emergency admin key rotation (bypasses timelock)
     EmergencyRotateAdmin(Address), // new_admin
+    /// Emergency pause bypass (requires two independent hardware keys)
+    EmergencyPause,
 }
 
 /// Proposal state
@@ -147,6 +154,28 @@ pub enum ProposalStatus {
     Rejected,
     /// Proposal expired before execution
     Expired,
+}
+
+/// A single reviewable change described by a proposal preview.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProposalChange {
+    pub kind: Symbol,
+    pub detail: String,
+}
+
+/// Preview outcome for a proposal without mutating on-chain state.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProposalEffect {
+    pub proposal_id: u64,
+    pub would_execute: bool,
+    pub error: Option<String>,
+    pub change_count: u32,
+    pub changes: Vec<ProposalChange>,
+    pub predicted_status: ProposalStatus,
+    pub approvals: u32,
+    pub required_approvals: u32,
 }
 
 /// Full proposal data
@@ -222,6 +251,19 @@ pub fn is_multisig_initialized(env: &Env) -> bool {
 pub fn create_proposal(env: &Env, proposer: &Address, action: ProposalAction) -> u64 {
     proposer.require_auth();
     assert!(is_owner(env, proposer), "only owners can create proposals");
+
+    // Cooldown check for ChangeThreshold
+    if let ProposalAction::ChangeThreshold(_) = action {
+        let last_change: u32 = env
+            .storage()
+            .instance()
+            .get(&MultisigKey::LastQuorumChange)
+            .unwrap_or(0);
+        assert!(
+            env.ledger().sequence() >= last_change + PROPOSAL_COOLDOWN_LEDGERS,
+            "quorum change cooldown has not elapsed"
+        );
+    }
 
     let id: u64 = env
         .storage()
@@ -313,6 +355,7 @@ fn action_tag(action: &ProposalAction) -> u32 {
         ProposalAction::RevokeRole(_, _) => 7,
         ProposalAction::UpdateFeeConfig(_, _, _, _) => 8,
         ProposalAction::EmergencyRotateAdmin(_) => 9,
+        ProposalAction::EmergencyPause => 10,
     }
 }
 
@@ -331,6 +374,107 @@ pub fn get_vote_weight_snapshot(env: &Env, id: u64) -> Option<VoteWeightSnapshot
 
 pub fn get_proposal(env: &Env, id: u64) -> Option<Proposal> {
     env.storage().instance().get(&MultisigKey::Proposal(id))
+}
+
+pub fn preview_proposal(env: &Env, id: u64) -> ProposalEffect {
+    let proposal = match get_proposal(env, id) {
+        Some(proposal) => proposal,
+        None => {
+            return ProposalEffect {
+                proposal_id: id,
+                would_execute: false,
+                error: Some(String::from_str(env, "proposal not found")),
+                change_count: 0,
+                changes: Vec::new(env),
+                predicted_status: ProposalStatus::Pending,
+                approvals: 0,
+                required_approvals: 0,
+            };
+        }
+    };
+
+    let approvals = get_approval_count(env, id);
+    let required_approvals = effective_threshold(env, id);
+
+    if is_proposal_expired(env, id) {
+        return ProposalEffect {
+            proposal_id: id,
+            would_execute: false,
+            error: Some(String::from_str(env, "proposal has expired")),
+            change_count: 0,
+            changes: Vec::new(env),
+            predicted_status: ProposalStatus::Expired,
+            approvals,
+            required_approvals,
+        };
+    }
+
+    if proposal.status != ProposalStatus::Pending {
+        return ProposalEffect {
+            proposal_id: id,
+            would_execute: false,
+            error: Some(String::from_str(env, "proposal is not pending")),
+            change_count: 0,
+            changes: Vec::new(env),
+            predicted_status: proposal.status.clone(),
+            approvals,
+            required_approvals,
+        };
+    }
+
+    if approvals < required_approvals {
+        return ProposalEffect {
+            proposal_id: id,
+            would_execute: false,
+            error: Some(String::from_str(env, "proposal not approved")),
+            change_count: 0,
+            changes: Vec::new(env),
+            predicted_status: ProposalStatus::Pending,
+            approvals,
+            required_approvals,
+        };
+    }
+
+    let mut changes = Vec::new(env);
+    let detail = match &proposal.action {
+        ProposalAction::Pause => String::from_str(env, "pause the contract"),
+        ProposalAction::Unpause => String::from_str(env, "unpause the contract"),
+        ProposalAction::AddOwner(_) => String::from_str(env, "add owner"),
+        ProposalAction::RemoveOwner(_) => String::from_str(env, "remove owner"),
+        ProposalAction::ChangeThreshold(_) => String::from_str(env, "change threshold"),
+        ProposalAction::GrantRole(_, _) => String::from_str(env, "grant role"),
+        ProposalAction::RevokeRole(_, _) => String::from_str(env, "revoke role"),
+        ProposalAction::UpdateFeeConfig(_, _, _, _) => String::from_str(env, "update fee config"),
+        ProposalAction::EmergencyRotateAdmin(_) => String::from_str(env, "rotate admin"),
+        ProposalAction::EmergencyPause => String::from_str(env, "trigger emergency pause"),
+    };
+
+    changes.push_back(ProposalChange {
+        kind: match &proposal.action {
+            ProposalAction::Pause => symbol_short!("pause"),
+            ProposalAction::Unpause => symbol_short!("unpause"),
+            ProposalAction::AddOwner(_) => symbol_short!("add_owner"),
+            ProposalAction::RemoveOwner(_) => symbol_short!("remove_owner"),
+            ProposalAction::ChangeThreshold(_) => symbol_short!("threshold"),
+            ProposalAction::GrantRole(_, _) => symbol_short!("grant_role"),
+            ProposalAction::RevokeRole(_, _) => symbol_short!("revoke_role"),
+            ProposalAction::UpdateFeeConfig(_, _, _, _) => symbol_short!("fee_config"),
+            ProposalAction::EmergencyRotateAdmin(_) => symbol_short!("rotate_admin"),
+            ProposalAction::EmergencyPause => symbol_short!("emergency_pause"),
+        },
+        detail,
+    });
+
+    ProposalEffect {
+        proposal_id: id,
+        would_execute: true,
+        error: None,
+        change_count: 1,
+        changes,
+        predicted_status: ProposalStatus::Executed,
+        approvals,
+        required_approvals,
+    }
 }
 
 pub fn get_approvals(env: &Env, id: u64) -> Vec<Address> {
@@ -483,6 +627,14 @@ pub fn mark_executed(env: &Env, id: u64) {
     );
     assert!(is_proposal_approved(env, id), "proposal not approved");
     proposal.status = ProposalStatus::Executed;
+
+    // Update last quorum change
+    if let ProposalAction::ChangeThreshold(_) = proposal.action {
+        env.storage()
+            .instance()
+            .set(&MultisigKey::LastQuorumChange, &env.ledger().sequence());
+    }
+
     env.storage()
         .instance()
         .set(&MultisigKey::Proposal(id), &proposal);
@@ -522,6 +674,48 @@ pub fn remove_owner(env: &Env, owner: &Address) {
         "cannot remove owner: would drop below threshold"
     );
     set_owners(env, &next);
+}
+
+/// Emergency pause bypass requiring two independent hardware keys.
+/// Bypasses multisig time-locks for zero-day incident response.
+///
+/// This function allows immediate emergency pausing of the contract
+/// by requiring two distinct hardware key signatures from the owner
+/// set (or appropriate privileges), providing strong security while
+/// eliminating review window delays.
+///
+/// # Arguments
+/// * `sig1` - First hardware key signature
+/// * `sig2` - Second hardware key signature (must be from different key)
+///
+/// # Events
+/// Emits EmergencyPauseTriggered event on success
+///
+/// # Panics
+/// - If either signature is invalid
+/// - If signatures come from the same key
+/// - If either key is not in owner set
+/// - If contract is already paused
+pub fn emergency_pause(env: &Env, sig1: &Signature, sig2: &Signature) {
+    // Verify both signatures are valid and from owners
+    let addr1 = env.verify(sig1);
+    let addr2 = env.verify(sig2);
+
+    // Ensure distinct signers (different hardware keys)
+    assert!(addr1 != addr2, "both signatures must come from distinct keys");
+
+    // Validate both addresses are in owner set
+    let owners = get_owners(env);
+    assert!(owners.contains(&addr1), "first signature not from owner");
+    assert!(owners.contains(&addr2), "second signature not from owner");
+
+    // Verify contract is not already paused before proceeding
+    if is_paused(env) {
+        panic!("contract already paused");
+    }
+
+    // Execute pause using access control module
+    access_control::emergency_pause_execute(env, &addr1, &addr2);
 }
 
 pub fn get_next_proposal_id(env: &Env) -> u64 {
@@ -576,7 +770,7 @@ pub fn cleanup_expired_proposals(env: &Env, limit: u32) -> u32 {
                     // proposal's intended lifetime.
                     env.storage()
                         .instance()
-                        .remove(&MultisigKey::VoteWeightSnapshot(id));
+                        .remove(&MultisigKey::VoteWeightSnapshot(id as u64));
                     events::emit_proposal_cleaned(env, id, &action, cleaned_at);
                     cleaned += 1;
                 }
@@ -584,4 +778,20 @@ pub fn cleanup_expired_proposals(env: &Env, limit: u32) -> u32 {
         }
     }
     cleaned
+}
+
+pub fn revoke_approval(env: &Env, approver: &Address, id: u64) {
+    approver.require_auth();
+    let proposal = get_proposal(env, id).expect("proposal not found");
+    if is_proposal_expired(env, id) { panic!("proposal has expired"); }
+    assert!(proposal.status == ProposalStatus::Pending, "cannot revoke approval: proposal already executed or rejected");
+    let mut approvals = get_approvals(env, id);
+    let pos = approvals.iter().position(|a| a == approver);
+    if let Some(idx) = pos {
+        let last = approvals.len() - 1;
+        if idx != last { let last_addr = approvals.get(last).unwrap(); approvals.set(idx, last_addr); }
+        approvals.pop_back();
+        env.storage().instance().set(&MultisigKey::Approvals(id), &approvals);
+        events::emit_approval_revoked(env, id, approver);
+    }
 }

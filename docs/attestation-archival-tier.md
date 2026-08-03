@@ -137,22 +137,84 @@ stellar contract invoke --id $CONTRACT_ID -- \
 
 ---
 
+## Archival Compaction (`compact_archival`)
+
+### Overview
+
+After attestations are moved to the archive tier, their full `AttestationData` continues to consume storage rent. `compact_archival` removes this full data for entries whose expiry is more than N epochs in the past, retaining only the lightweight `ArchivePointerRecord` (Merkle commitment root).
+
+### Retention Policy
+
+Before calling `compact_archival`, the admin must configure a retention policy:
+
+```bash
+# Require attestations to be at least 30 epochs past expiry before compaction
+stellar contract invoke --id $CONTRACT_ID -- \
+  set_compaction_retention \
+  --caller $ADMIN \
+  --min_epochs 30
+```
+
+### `compact_archival(caller, candidates, limit) → u32`
+
+Admin-only. Removes full archived data for eligible entries.
+
+**Eligibility criteria (all must hold)**
+
+| Condition | Reason |
+|-----------|--------|
+| `ArchivedAttestation` entry exists | Full data must be present to compact |
+| `ArchivePointer` entry exists | Commitment must be retained after compaction |
+| `expiry_timestamp` is set | No-expiry entries are retained indefinitely |
+| `current_epoch - (expiry_ts / WINDOW) >= min_epochs` | Retention window has elapsed |
+
+**What is preserved**: `DataKey::ArchivePointer` (Merkle root, archive index, archived_at timestamp).
+
+**What is removed**: `DataKey::ArchivedAttestation` (full attestation tuple).
+
+**Security**
+
+- Admin-only: unauthorized callers panic.
+- `limit = 0` rejected.
+- No retention policy configured → panics (prevents accidental mass-deletion).
+- Entries without expiry are never compacted.
+- Idempotent: already-compacted entries are silently skipped.
+- Commitment root is always preserved — historical Merkle proofs remain verifiable.
+
+**Events**: Emits `ArchivalCompacted` (`arc_cmp`) when at least one entry is compacted.
+
+### Storage key lifecycle
+
+```
+Active:    DataKey::Attestation(biz, period)          ← full data, active tier
+    ↓ move_to_archive
+Archived:  DataKey::ArchivedAttestation(biz, period)  ← full data, archive tier
+           DataKey::ArchivePointer(biz, period)        ← commitment only
+    ↓ compact_archival
+Compacted: DataKey::ArchivePointer(biz, period)        ← commitment only (retained forever)
+```
+
+---
+
 ## Test Coverage
 
-See `contracts/attestation/src/archival_tier_test.rs` for 15 integration tests covering:
+See `contracts/attestation/src/archival_tier_test.rs` for 15 integration tests covering the archival tier, and `contracts/attestation/src/compact_archival_test.rs` for 15 compaction tests covering:
 
-- Basic archival and active-key removal
-- Read-through via `get_attestation`
-- Age threshold filtering (young attestations skipped)
-- `limit` cap enforcement
-- Sequential `archive_index` increments
-- Idempotency (re-archiving skipped)
-- Non-existent candidates skipped silently
-- `merkle_root` preserved correctly in pointer
-- `age_threshold_seconds = 0` rejected
-- `limit = 0` rejected
-- Non-admin caller rejected
-- Empty candidates list returns 0
-- Multiple businesses archived independently
-- Full data fidelity (`archived == original`)
-- Mixed eligibility (only old entries moved)
+- Retention policy set/get/clear
+- Zero min_epochs rejected
+- Non-admin access rejected
+- Zero limit rejected
+- No retention policy panics
+- Empty candidates returns 0
+- Non-archived candidate skipped
+- Active attestation not compacted
+- No-expiry attestation never compacted
+- Not-old-enough entry skipped
+- Eligible entry compacted
+- Commitment (pointer) preserved after compaction
+- `get_attestation` returns None after compaction
+- Limit caps compaction count
+- Multiple businesses compacted independently
+- Idempotency (already-compacted skipped)
+- Mixed eligibility (only eligible entries compacted)
+- `verify_attestation` returns false after compaction

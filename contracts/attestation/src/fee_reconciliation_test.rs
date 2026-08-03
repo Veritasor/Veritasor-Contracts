@@ -9,10 +9,12 @@ use std::format;
 
 use super::*;
 use crate::dynamic_fees::compute_fee;
+use crate::events::{AttestationSubmittedEvent, TOPIC_ATTESTATION_SUBMITTED};
 use proptest::prelude::*;
 use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::Events as _;
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
-use soroban_sdk::{vec, Address, Env, String};
+use soroban_sdk::{vec, Address, BytesN, Env, String, Symbol, TryFromVal};
 
 struct Ctx {
     env: Env,
@@ -263,5 +265,91 @@ proptest! {
             .get_attestation(&business, &String::from_str(&ctx.env, "2026-prop"))
             .unwrap();
         prop_assert_eq!(stored.3, quote);
+    }
+
+    /// Invariant: sum of collector balance deltas across all submissions equals
+    /// sum of `fee_paid` from all `AttestationSubmittedEvent` events.
+    ///
+    /// Guards against silent event drift where the actual fee transfer diverges
+    /// from what the event payload reports.
+    #[test]
+    fn prop_fee_collected_matches_event_sum(
+        base_fee in 0i128..=1_000_000i128,
+        tier_bps in 0u32..=10_000u32,
+        vol_bps in 0u32..=10_000u32,
+        flat_amount in 0i128..=10_000i128,
+        flat_enabled in proptest::bool::ANY,
+        num_submissions in 0u32..=10u32,
+    ) {
+        let ctx = fresh_ctx();
+        let business = Address::generate(&ctx.env);
+        let collector = Address::generate(&ctx.env);
+        let token = deploy_and_fund(&ctx.env, &business, 1_000_000_000_000);
+
+        ctx.client.configure_fees(&token, &collector, &base_fee, &true);
+        ctx.client.set_tier_discount(&1, &tier_bps);
+        ctx.client.set_business_tier(&business, &1);
+        if vol_bps > 0 {
+            let thresholds = vec![&ctx.env, 1u64];
+            let discounts = vec![&ctx.env, vol_bps];
+            ctx.client.set_volume_brackets(&thresholds, &discounts);
+        }
+        ctx.client.configure_flat_fee(&token, &collector, &flat_amount, &flat_enabled);
+
+        let contract_id = ctx.client.address.clone();
+        let token_client = TokenClient::new(&ctx.env, &token);
+        let mut cumulative_event_fee: i128 = 0;
+        let initial_collector_balance = token_client.balance(&collector);
+
+        for i in 0..num_submissions {
+            let fee_quote = ctx.client.get_fee_quote(&business);
+            let fund_needed = fee_quote.saturating_mul(2).saturating_add(10_000_000);
+            StellarAssetClient::new(&ctx.env, &token).mint(&business, &fund_needed);
+
+            let period_str = std::format!("pi-{i}");
+            let period = String::from_str(&ctx.env, &period_str);
+            let root = BytesN::from_array(&ctx.env, &[i as u8; 32]);
+            ctx.client.submit_attestation(
+                &business,
+                &period,
+                &root,
+                &1_700_000_000u64,
+                &1u32,
+                &0i128,
+                &None,
+                &None,
+            );
+
+            let last_fee = ctx
+                .env
+                .events()
+                .all()
+                .iter()
+                .rev()
+                .find_map(|(cid, topics, data)| {
+                    if &cid != &contract_id || topics.len() != 2 {
+                        return None;
+                    }
+                    let sym = Symbol::try_from_val(&ctx.env, &topics.get(0).unwrap()).ok()?;
+                    if sym != TOPIC_ATTESTATION_SUBMITTED {
+                        return None;
+                    }
+                    AttestationSubmittedEvent::try_from_val(&ctx.env, &data).ok()
+                })
+                .map(|ev| ev.fee_paid)
+                .unwrap_or(0);
+
+            let stored = ctx.client.get_attestation(&business, &period).unwrap();
+            prop_assert_eq!(stored.3, fee_quote, "stored fee_paid must match quote");
+
+            cumulative_event_fee += last_fee;
+            let collector_delta =
+                token_client.balance(&collector) - initial_collector_balance;
+            prop_assert_eq!(
+                collector_delta,
+                cumulative_event_fee,
+                "cumulative collector delta must equal cumulative event fee_paid after submission {i}"
+            );
+        }
     }
 }
