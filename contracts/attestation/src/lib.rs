@@ -8,10 +8,12 @@ extern crate std;
 
 use core::cmp::Ordering;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, token, Address, BytesN, Env, String, Symbol, TryIntoVal,
-    Vec,
+    contract, contractimpl, contracttype, token, Address, BytesN, Env, IntoVal, String, Symbol,
+    TryIntoVal, Vec,
 };
 
+use crate::dynamic_fees::{ArchivePointerRecord, PendingFeeConfig, FEE_TIMELOCK_SECONDS};
+use crate::multisig::VoteWeightSnapshot;
 use veritasor_common::replay_protection;
 
 // Nonce channels
@@ -2002,15 +2004,7 @@ impl AttestationContract {
 
         // Execute the slash
         let staking_client = AttestorStakingClient::new(&env, &staking_addr);
-        let mut args = soroban_sdk::vec![&env];
-        args.push_back(attestor.into_val(&env));
-        args.push_back(amount.into_val(&env));
-        args.push_back(dispute_id.into_val(&env));
-        let _ = env.invoke_contract::<soroban_sdk::Val>(
-            &staking_addr,
-            &soroban_sdk::Symbol::new(&env, "slash"),
-            args,
-        );
+        let _ = staking_client.slash(&attestor, &amount, &dispute_id);
 
         events::emit_slash_triggered(&env, &attestor, amount, dispute_id);
 

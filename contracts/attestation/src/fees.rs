@@ -55,6 +55,12 @@ pub enum FlatFeeDataKey {
     Dao,
     /// Pending collector rotation proposal.
     CollectorRotationProposal,
+    /// Current flat fee epoch number.
+    CurrentEpoch,
+    /// Epoch snapshot configuration keyed by epoch number.
+    EpochSnapshot(u64),
+    /// Historical epoch history list.
+    EpochHistory,
 }
 
 /// Retrieve the current flat fee configuration from instance storage.

@@ -45,7 +45,8 @@
 //! - Only the admin who called `restore_dry_run` can call `restore_commit`.
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec,
+    contract, contractimpl, contracttype, symbol_short, xdr::ToXdr, Address, BytesN, Env, String,
+    Symbol, Vec,
 };
 
 /// Maximum UTF-8 byte length for period/epoch identifiers.
@@ -56,6 +57,12 @@ pub const MAX_BUSINESS_PERIODS: u32 = 512;
 
 /// Maximum indexed businesses per epoch.
 pub const MAX_EPOCH_BUSINESSES: u32 = 512;
+
+/// Maximum entries allowed in a single restore dry-run batch.
+pub const MAX_RESTORE_BATCH: usize = 100;
+
+/// Validity window (in ledgers) for a pending restore dry-run commitment (~24 hours).
+pub const RESTORE_COMMIT_WINDOW_LEDGERS: u32 = 17_280;
 
 // ════════════════════════════════════════════════════════════════════
 //  TTL constants
@@ -822,6 +829,11 @@ impl AttestationSnapshotContract {
     }
 
     // ── Internal ────────────────────────────────────────────────────
+
+    pub fn compute_batch_hash(env: &Env, entries: &Vec<RestoreEntry>) -> BytesN<32> {
+        let encoded = entries.to_xdr(env);
+        env.crypto().sha256(&encoded).into()
+    }
 
     fn require_admin(env: &Env, caller: &Address) {
         caller.require_auth();

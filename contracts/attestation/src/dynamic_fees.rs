@@ -47,7 +47,16 @@
 //! 4. **Arithmetic safety**: `compute_fee` panics on negative `base_fee` or
 //!    any intermediate overflow, and enforces the result in `[0, base_fee]`.
 
-use soroban_sdk::{contracttype, token, Address, Env, Symbol, Val, Vec};
+use soroban_sdk::{contracttype, token, Address, BytesN, Env, Symbol, Val, Vec};
+
+/// Lightweight pointer record stored when an attestation is moved to the archive tier.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ArchivePointerRecord {
+    pub merkle_root: BytesN<32>,
+    pub archive_index: u64,
+    pub archived_at: u64,
+}
 
 // ════════════════════════════════════════════════════════════════════
 //  Tier bounds
@@ -151,6 +160,14 @@ pub enum DataKey {
     EpochFees(soroban_sdk::String),
     /// Global running submission count for backfill checkpointing.
     BackfillSubmissionCount,
+
+    // ── Archival tier ───────────────────────────────────────────
+    /// Global archive index counter.
+    ArchiveIndex,
+    /// Full archived attestation record keyed by (business, period).
+    ArchivedAttestation(Address, soroban_sdk::String),
+    /// Lightweight archive pointer record keyed by (business, period).
+    ArchivePointer(Address, soroban_sdk::String),
 }
 
 // ════════════════════════════════════════════════════════════════════

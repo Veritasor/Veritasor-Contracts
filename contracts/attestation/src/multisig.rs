@@ -554,7 +554,8 @@ pub fn cleanup_expired_proposals(env: &Env, limit: u32) -> u32 {
     } else {
         next_id as u32
     };
-    for id in 0..max {
+    for id_u32 in 0..max {
+        let id = id_u32 as u64;
         let expiry_key = MultisigKey::ProposalExpiry(id);
         if let Some(expiry) = env.storage().instance().get::<_, u32>(&expiry_key) {
             if current_seq > expiry + grace {

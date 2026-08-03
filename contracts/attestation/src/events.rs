@@ -153,6 +153,12 @@ pub const TOPIC_REVOCATION_COMMITTED: Symbol = symbol_short!("rv_cmmt");
 pub const TOPIC_EPOCH_CHECKPOINT: Symbol = symbol_short!("ep_ckpt");
 /// Topic: epoch advanced on fee-bucket window rollover
 pub const TOPIC_EPOCH_ADVANCED: Symbol = symbol_short!("ep_adv");
+/// Topic: attestor slashed
+pub const TOPIC_SLASH_TRIGGERED: Symbol = symbol_short!("slsh_trg");
+/// Topic: pause scheduled
+pub const TOPIC_PAUSE_SCHEDULED: Symbol = symbol_short!("p_sched");
+/// Topic: pause scheduled cancelled
+pub const TOPIC_PAUSE_SCHEDULED_CANCELLED: Symbol = symbol_short!("p_canc");
 /// Topic: backfill checkpoint emitted every N submissions (global counter)
 pub const TOPIC_BACKFILL_CHECKPOINT: Symbol = symbol_short!("bkf_chk");
 
@@ -1795,4 +1801,181 @@ pub fn emit_backfill_checkpoint(env: &Env, submission_count: u64, state_commitme
         state_commitment: state_commitment.clone(),
     };
     env.events().publish((TOPIC_BACKFILL_CHECKPOINT,), event);
+}
+
+// ── Additional Event Definitions ─────────────────────────────────────
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AdminWeightChangedEvent {
+    pub account: Address,
+    pub old_weight: u32,
+    pub new_weight: u32,
+    pub changed_by: Address,
+}
+
+pub fn emit_admin_weight_changed(
+    env: &Env,
+    account: &Address,
+    old_weight: u32,
+    new_weight: u32,
+    changed_by: &Address,
+) {
+    let event = AdminWeightChangedEvent {
+        account: account.clone(),
+        old_weight,
+        new_weight,
+        changed_by: changed_by.clone(),
+    };
+    env.events().publish((symbol_short!("adm_wt"), account.clone()), event);
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AttestorLockedForDisputeEvent {
+    pub attestor: Address,
+    pub business: Address,
+    pub period: String,
+    pub dispute_id: u64,
+}
+
+pub fn emit_attestor_locked_for_dispute(
+    env: &Env,
+    attestor: &Address,
+    business: &Address,
+    period: &String,
+    dispute_id: u64,
+) {
+    let event = AttestorLockedForDisputeEvent {
+        attestor: attestor.clone(),
+        business: business.clone(),
+        period: period.clone(),
+        dispute_id,
+    };
+    env.events().publish((symbol_short!("att_lck"), attestor.clone()), event);
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VoteWeightSnapshotCreatedEvent {
+    pub proposal_id: u64,
+    pub total_weight: u32,
+    pub threshold: u32,
+    pub owners_count: u32,
+}
+
+pub fn emit_vote_weight_snapshot_created(
+    env: &Env,
+    proposal_id: u64,
+    total_weight: u32,
+    threshold: u32,
+    owners_count: u32,
+) {
+    let event = VoteWeightSnapshotCreatedEvent {
+        proposal_id,
+        total_weight,
+        threshold,
+        owners_count,
+    };
+    env.events().publish((symbol_short!("vw_snap"),), event);
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct OwnerRecoveryPhraseAcknowledgedEvent {
+    pub owner: Address,
+}
+
+pub fn emit_owner_recovery_phrase_acknowledged(env: &Env, owner: &Address) {
+    let event = OwnerRecoveryPhraseAcknowledgedEvent {
+        owner: owner.clone(),
+    };
+    env.events().publish((symbol_short!("rec_ack"), owner.clone()), event);
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ProposalCleanedEvent {
+    pub proposal_id: u64,
+    pub action: ProposalAction,
+    pub cleaned_at: u32,
+}
+
+pub fn emit_proposal_cleaned(
+    env: &Env,
+    proposal_id: u64,
+    action: &ProposalAction,
+    cleaned_at: u32,
+) {
+    let event = ProposalCleanedEvent {
+        proposal_id,
+        action: action.clone(),
+        cleaned_at,
+    };
+    env.events().publish((symbol_short!("prop_cln"),), event);
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CollectorRotationProposedEvent {
+    pub old_collector: Address,
+    pub new_collector: Address,
+    pub token: Address,
+    pub escrowed_amount: i128,
+}
+
+pub fn emit_collector_rotation_proposed(
+    env: &Env,
+    old_collector: &Address,
+    new_collector: &Address,
+    token: &Address,
+    escrowed_amount: i128,
+) {
+    let event = CollectorRotationProposedEvent {
+        old_collector: old_collector.clone(),
+        new_collector: new_collector.clone(),
+        token: token.clone(),
+        escrowed_amount,
+    };
+    env.events().publish((TOPIC_COLLECTOR_ROTATION_PROPOSED,), event);
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CollectorRotationAcceptedEvent {
+    pub old_collector: Address,
+    pub new_collector: Address,
+    pub token: Address,
+    pub amount: i128,
+}
+
+pub fn emit_collector_rotation_accepted(
+    env: &Env,
+    old_collector: &Address,
+    new_collector: &Address,
+    token: &Address,
+    amount: i128,
+) {
+    let event = CollectorRotationAcceptedEvent {
+        old_collector: old_collector.clone(),
+        new_collector: new_collector.clone(),
+        token: token.clone(),
+        amount,
+    };
+    env.events().publish((TOPIC_COLLECTOR_ROTATION_ACCEPTED,), event);
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RevocationIndexCleanedEvent {
+    pub business: Address,
+    pub cleaned_count: u32,
+}
+
+pub fn emit_revocation_index_cleaned(env: &Env, business: &Address, cleaned_count: u32) {
+    let event = RevocationIndexCleanedEvent {
+        business: business.clone(),
+        cleaned_count,
+    };
+    env.events().publish((symbol_short!("rv_cln"), business.clone()), event);
 }
