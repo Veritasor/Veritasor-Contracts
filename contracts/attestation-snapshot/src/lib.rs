@@ -59,7 +59,7 @@ pub const MAX_BUSINESS_PERIODS: u32 = 512;
 pub const MAX_EPOCH_BUSINESSES: u32 = 512;
 
 /// Maximum entries allowed in a single restore dry-run batch.
-pub const MAX_RESTORE_BATCH: usize = 100;
+pub const MAX_RESTORE_BATCH: u32 = 100;
 
 /// Validity window (in ledgers) for a pending restore dry-run commitment (~24 hours).
 pub const RESTORE_COMMIT_WINDOW_LEDGERS: u32 = 17_280;
@@ -586,7 +586,7 @@ impl AttestationSnapshotContract {
             // Compute a batch fingerprint: SHA-256 of the concatenated
             // business+period strings. This ties the commit to the exact
             // set of entries validated by the dry-run.
-            let batch_hash = Self::compute_batch_hash(&env, &entries);
+            let batch_hash = compute_batch_hash(&env, &entries);
             let token = PendingRestoreToken {
                 batch_hash,
                 expires_at_ledger: deadline,
@@ -643,7 +643,7 @@ impl AttestationSnapshotContract {
             "pending restore token has expired; call restore_dry_run again"
         );
 
-        let incoming_hash = Self::compute_batch_hash(&env, &entries);
+        let incoming_hash = compute_batch_hash(&env, &entries);
         assert!(
             incoming_hash == token.batch_hash,
             "snapshot_bytes hash mismatch; batch was altered since dry-run"
@@ -830,11 +830,6 @@ impl AttestationSnapshotContract {
 
     // ── Internal ────────────────────────────────────────────────────
 
-    pub fn compute_batch_hash(env: &Env, entries: &Vec<RestoreEntry>) -> BytesN<32> {
-        let encoded = entries.to_xdr(env);
-        env.crypto().sha256(&encoded).into()
-    }
-
     fn require_admin(env: &Env, caller: &Address) {
         caller.require_auth();
         let admin: Address = env
@@ -937,6 +932,11 @@ impl AttestationSnapshotContract {
         epochs.push_back(epoch.clone());
         env.storage().instance().set(&key, &epochs);
     }
+}
+
+fn compute_batch_hash(env: &Env, entries: &Vec<RestoreEntry>) -> BytesN<32> {
+    let encoded = entries.clone().to_xdr(env);
+    env.crypto().sha256(&encoded).into()
 }
 
 #[cfg(test)]

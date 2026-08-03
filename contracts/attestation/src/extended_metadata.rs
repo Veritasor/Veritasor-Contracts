@@ -88,7 +88,7 @@ pub fn deserialize_metadata_bytes(
     env: &Env,
     bytes: &[u8],
 ) -> Result<AttestationMetadata, MetadataDeserializationError> {
-    let sc_val = soroban_sdk::xdr::ScVal::from_xdr(bytes, soroban_sdk::xdr::Limits::none())
+    let sc_val = soroban_sdk::xdr::ScVal::from_xdr(bytes, &Default::default())
         .map_err(|_| MetadataDeserializationError::InvalidEncoding)?;
     let val = sc_val
         .try_into_val(env)

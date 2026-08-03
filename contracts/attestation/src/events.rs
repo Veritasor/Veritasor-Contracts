@@ -1861,7 +1861,8 @@ pub struct VoteWeightSnapshotCreatedEvent {
     pub proposal_id: u64,
     pub total_weight: u32,
     pub threshold: u32,
-    pub owners_count: u32,
+    pub created_at: u32,
+    pub action_tag: u32,
 }
 
 pub fn emit_vote_weight_snapshot_created(
@@ -1869,13 +1870,15 @@ pub fn emit_vote_weight_snapshot_created(
     proposal_id: u64,
     total_weight: u32,
     threshold: u32,
-    owners_count: u32,
+    created_at: u32,
+    action_tag: u32,
 ) {
     let event = VoteWeightSnapshotCreatedEvent {
         proposal_id,
         total_weight,
         threshold,
-        owners_count,
+        created_at,
+        action_tag,
     };
     env.events().publish((symbol_short!("vw_snap"),), event);
 }
@@ -1891,14 +1894,6 @@ pub fn emit_owner_recovery_phrase_acknowledged(env: &Env, owner: &Address) {
         owner: owner.clone(),
     };
     env.events().publish((symbol_short!("rec_ack"), owner.clone()), event);
-}
-
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct ProposalCleanedEvent {
-    pub proposal_id: u64,
-    pub action: ProposalAction,
-    pub cleaned_at: u32,
 }
 
 pub fn emit_proposal_cleaned(

@@ -8,8 +8,7 @@ extern crate std;
 
 use core::cmp::Ordering;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, token, Address, BytesN, Env, IntoVal, String, Symbol,
-    TryIntoVal, Vec,
+    contract, contractimpl, contracttype, token, Address, BytesN, Env, String, Symbol, Vec,
 };
 
 use crate::dynamic_fees::{ArchivePointerRecord, PendingFeeConfig, FEE_TIMELOCK_SECONDS};
@@ -1016,10 +1015,10 @@ impl AttestationContract {
     }
 
     /// Cleanup orphaned revocation index entries for a business.
-    pub fn cleanup_revocation_index(env: Env, business: Address) -> Result<u32, ()> {
+    pub fn cleanup_revocation_index(env: Env, business: Address) -> u32 {
         let mut periods = dispute::get_revoked_periods(&env, &business);
         if periods.is_empty() {
-            return Ok(0);
+            return 0;
         }
 
         let mut cleaned_count = 0;
@@ -1040,7 +1039,7 @@ impl AttestationContract {
             events::emit_revocation_index_cleaned(&env, &business, cleaned_count);
         }
 
-        Ok(cleaned_count)
+        cleaned_count
     }
 
     pub fn get_revocation_info(
