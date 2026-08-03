@@ -59,6 +59,7 @@ pub enum DataKey {
     VotesAgainst(u64),
     HasVoted(u64, Address),
     AttestationFeeConfig,
+    AttestationPaused,
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -383,6 +384,12 @@ fn apply_action(env: &Env, action: &ProposalAction) {
             env.storage()
                 .instance()
                 .set(&DataKey::ProposalDuration, &dur);
+        }
+        ProposalAction::PauseAttestation => {
+            env.storage().instance().set(&DataKey::AttestationPaused, &true);
+        }
+        ProposalAction::UnpauseAttestation => {
+            env.storage().instance().set(&DataKey::AttestationPaused, &false);
         }
     }
 }
