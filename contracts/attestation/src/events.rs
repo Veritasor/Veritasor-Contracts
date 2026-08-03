@@ -1827,7 +1827,8 @@ pub fn emit_admin_weight_changed(
         new_weight,
         changed_by: changed_by.clone(),
     };
-    env.events().publish((symbol_short!("adm_wt"), account.clone()), event);
+    env.events()
+        .publish((symbol_short!("adm_wt"), account.clone()), event);
 }
 
 #[contracttype]
@@ -1852,7 +1853,8 @@ pub fn emit_attestor_locked_for_dispute(
         period: period.clone(),
         dispute_id,
     };
-    env.events().publish((symbol_short!("att_lck"), attestor.clone()), event);
+    env.events()
+        .publish((symbol_short!("att_lck"), attestor.clone()), event);
 }
 
 #[contracttype]
@@ -1893,7 +1895,8 @@ pub fn emit_owner_recovery_phrase_acknowledged(env: &Env, owner: &Address) {
     let event = OwnerRecoveryPhraseAcknowledgedEvent {
         owner: owner.clone(),
     };
-    env.events().publish((symbol_short!("rec_ack"), owner.clone()), event);
+    env.events()
+        .publish((symbol_short!("rec_ack"), owner.clone()), event);
 }
 
 pub fn emit_proposal_cleaned(
@@ -1932,7 +1935,8 @@ pub fn emit_collector_rotation_proposed(
         token: token.clone(),
         escrowed_amount,
     };
-    env.events().publish((TOPIC_COLLECTOR_ROTATION_PROPOSED,), event);
+    env.events()
+        .publish((TOPIC_COLLECTOR_ROTATION_PROPOSED,), event);
 }
 
 #[contracttype]
@@ -1957,7 +1961,8 @@ pub fn emit_collector_rotation_accepted(
         token: token.clone(),
         amount,
     };
-    env.events().publish((TOPIC_COLLECTOR_ROTATION_ACCEPTED,), event);
+    env.events()
+        .publish((TOPIC_COLLECTOR_ROTATION_ACCEPTED,), event);
 }
 
 #[contracttype]
@@ -1972,5 +1977,6 @@ pub fn emit_revocation_index_cleaned(env: &Env, business: &Address, cleaned_coun
         business: business.clone(),
         cleaned_count,
     };
-    env.events().publish((symbol_short!("rv_cln"), business.clone()), event);
+    env.events()
+        .publish((symbol_short!("rv_cln"), business.clone()), event);
 }

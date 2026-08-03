@@ -386,10 +386,14 @@ fn apply_action(env: &Env, action: &ProposalAction) {
                 .set(&DataKey::ProposalDuration, &dur);
         }
         ProposalAction::PauseAttestation => {
-            env.storage().instance().set(&DataKey::AttestationPaused, &true);
+            env.storage()
+                .instance()
+                .set(&DataKey::AttestationPaused, &true);
         }
         ProposalAction::UnpauseAttestation => {
-            env.storage().instance().set(&DataKey::AttestationPaused, &false);
+            env.storage()
+                .instance()
+                .set(&DataKey::AttestationPaused, &false);
         }
     }
 }
