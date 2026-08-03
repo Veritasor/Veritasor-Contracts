@@ -810,7 +810,6 @@ name = "lender-consumer"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk",
- "veritasor-attestation",
  "veritasor-lender-access-list",
 ]
 
@@ -1620,6 +1619,7 @@ name = "veritasor-aggregated-attestations"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk",
+ "veritasor-attestation",
  "veritasor-attestation-snapshot",
  "veritasor-common",
 ]
@@ -1628,6 +1628,7 @@ dependencies = [
 name = "veritasor-attestation"
 version = "0.1.0"
 dependencies = [
+ "arbitrary",
  "hex",
  "proptest",
  "serde",
@@ -1637,6 +1638,7 @@ dependencies = [
  "syn 2.0.119",
  "veritasor-attestor-staking",
  "veritasor-common",
+ "veritasor-integration-registry",
 ]
 
 [[package]]
@@ -1683,11 +1685,6 @@ name = "veritasor-common"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk",
- "veritasor-aggregated-attestations",
- "veritasor-attestation",
- "veritasor-attestation-snapshot",
- "veritasor-integration-registry",
- "veritasor-protocol-dao",
 ]
 
 [[package]]
