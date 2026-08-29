@@ -1127,41 +1127,34 @@ impl AttestationContract {
             }
         }
     }
-
     pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
+        // Active tier lives in instance storage (see `execute_submission`).
+        let active_key = DataKey::Attestation(business.clone(), period.clone());
         if let Some(att_data) = env
             .storage()
-            .persistent()
-            .get::<_, AttestationData>(&DataKey::Attestation(business.clone(), period.clone()))
+            .instance()
+            .get::<_, AttestationData>(&active_key)
         {
-            let current_config = network_config::get_config(&env);
-            env.storage().persistent().extend_ttl(
-                &DataKey::Attestation(business.clone(), period.clone()),
-                current_config.min_persistent_entry_ttl,
-                current_config.max_entry_ttl,
-            );
+            env.storage()
+                .instance()
+                .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
             return Some(att_data);
         }
 
-        // Try reading from archive
+        // Try reading from the archival tier and rehydrate back to active
+        // (instance) storage.
         let archive_key = DataKey::AttestationSnapshot(business.clone(), period.clone());
         if let Some(archived_att_data) = env
             .storage()
             .persistent()
             .get::<_, AttestationData>(&archive_key)
         {
-            let current_config = network_config::get_config(&env);
-
-            // Rehydrate back to active storage
-            let active_key = DataKey::Attestation(business.clone(), period.clone());
             env.storage()
-                .persistent()
+                .instance()
                 .set(&active_key, &archived_att_data);
-            env.storage().persistent().extend_ttl(
-                &active_key,
-                current_config.min_persistent_entry_ttl,
-                current_config.max_entry_ttl,
-            );
+            env.storage()
+                .instance()
+                .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
 
             // Emit rehydrate event
             events::emit_rehydrated_from_archive(&env, &business, &period, archived_att_data.3);
@@ -1547,59 +1540,46 @@ impl AttestationContract {
     ) -> AttestationStatusResult {
         let mut result = Vec::new(&env);
         for period in periods.iter() {
-            let mut found = false;
+            // Active tier lives in instance storage (see `execute_submission`).
+            let active_key = DataKey::Attestation(business.clone(), period.clone());
             if let Some(att_data) = env
                 .storage()
-                .persistent()
-                .get::<_, AttestationData>(&DataKey::Attestation(business.clone(), period.clone()))
+                .instance()
+                .get::<_, AttestationData>(&active_key)
             {
-                let current_config = network_config::get_config(&env);
-                env.storage().persistent().extend_ttl(
-                    &DataKey::Attestation(business.clone(), period.clone()),
-                    current_config.min_persistent_entry_ttl,
-                    current_config.max_entry_ttl,
-                );
+                env.storage()
+                    .instance()
+                    .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
                 result.push_back((
                     period.clone(),
                     Some(att_data.clone()),
                     Self::get_revocation_info(env.clone(), business.clone(), period.clone()),
                 ));
-                found = true;
+                continue;
             }
 
-            if !found {
-                let archive_key = DataKey::AttestationSnapshot(business.clone(), period.clone());
-                if let Some(archived_att_data) = env
-                    .storage()
-                    .persistent()
-                    .get::<_, AttestationData>(&archive_key)
-                {
-                    let current_config = network_config::get_config(&env);
+            // Archival tier: rehydrate back to active (instance) storage.
+            let archive_key = DataKey::AttestationSnapshot(business.clone(), period.clone());
+            if let Some(archived_att_data) = env
+                .storage()
+                .persistent()
+                .get::<_, AttestationData>(&archive_key)
+            {
+                env.storage()
+                    .instance()
+                    .set(&active_key, &archived_att_data);
+                env.storage()
+                    .instance()
+                    .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
 
-                    let active_key = DataKey::Attestation(business.clone(), period.clone());
-                    env.storage()
-                        .persistent()
-                        .set(&active_key, &archived_att_data);
-                    env.storage().persistent().extend_ttl(
-                        &active_key,
-                        current_config.min_persistent_entry_ttl,
-                        current_config.max_entry_ttl,
-                    );
+                events::emit_rehydrated_from_archive(&env, &business, &period, archived_att_data.3);
+                env.storage().persistent().remove(&archive_key);
 
-                    events::emit_rehydrated_from_archive(
-                        &env,
-                        &business,
-                        &period,
-                        archived_att_data.3,
-                    );
-                    env.storage().persistent().remove(&archive_key);
-
-                    result.push_back((
-                        period.clone(),
-                        Some(archived_att_data),
-                        Self::get_revocation_info(env.clone(), business.clone(), period.clone()),
-                    ));
-                }
+                result.push_back((
+                    period.clone(),
+                    Some(archived_att_data),
+                    Self::get_revocation_info(env.clone(), business.clone(), period.clone()),
+                ));
             }
         }
         result
@@ -1611,9 +1591,15 @@ impl AttestationContract {
         period: String,
         merkle_root: BytesN<32>,
     ) -> bool {
-        if let Some((stored_root, _, _, _, _, _)) =
+        if let Some((stored_root, _, _, _, _, expiry_timestamp)) =
             Self::get_attestation(env.clone(), business.clone(), period.clone())
         {
+            // Expired attestations do not verify.
+            if let Some(expiry) = expiry_timestamp {
+                if env.ledger().timestamp() >= expiry {
+                    return false;
+                }
+            }
             stored_root == merkle_root && !dispute::is_attestation_revoked(&env, &business, &period)
         } else {
             false
@@ -1690,12 +1676,17 @@ impl AttestationContract {
             let (business, period, provided_root) = item;
 
             // Retrieve stored attestation data
-            if let Some((stored_root, _, _, _, _, _)) =
+            if let Some((stored_root, _, _, _, _, expiry_timestamp)) =
                 Self::get_attestation(env.clone(), business.clone(), period.clone())
             {
-                // Verify: root must match AND attestation must not be revoked
-                let is_valid = stored_root == provided_root
+                // Verify: root must match, not revoked, and not expired
+                let mut is_valid = stored_root == provided_root
                     && !dispute::is_attestation_revoked(&env, &business, &period);
+                if let Some(expiry) = expiry_timestamp {
+                    if env.ledger().timestamp() >= expiry {
+                        is_valid = false;
+                    }
+                }
                 results.push_back(is_valid);
             } else {
                 // Attestation not found: return false

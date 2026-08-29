@@ -337,8 +337,14 @@ impl RevocationReason {
         if s.len() < n {
             return false;
         }
+        // `copy_into_slice` requires a slice of exactly the string's length,
+        // so only known codes (all ≤ 16 bytes) can match; anything longer
+        // cannot be a known reason and falls through to `Other`.
+        if s.len() > 16 {
+            return false;
+        }
         let mut buf = [0u8; 16]; // prefix is at most 16 bytes
-        s.copy_into_slice(&mut buf[..n as usize]);
+        s.copy_into_slice(&mut buf[..s.len() as usize]);
         for (i, &p) in prefix.iter().enumerate() {
             let b = buf[i];
             // Lowercase both bytes (ASCII only).
