@@ -3764,8 +3764,6 @@ mod business_count_role_parity_test;
 mod cleanup_expired_attestation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod cleanup_metrics_test;
-#[cfg(all(test, feature = "full-tests"))]
-mod cleanup_metrics_test;
 #[cfg(test)]
 mod compact_archival_test;
 #[cfg(all(test, feature = "full-tests"))]

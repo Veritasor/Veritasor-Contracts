@@ -552,11 +552,11 @@ fn test_verify_merkle_proof_valid_proof() {
     // Parent = sha256(min(leaf1, leaf2) || max(leaf1, leaf2))
     let mut combined = soroban_sdk::Bytes::new(&env);
     if leaf1 < leaf2 {
-        combined.append(&leaf1.into());
-        combined.append(&leaf2.into());
+        combined.append(&leaf1.clone().into());
+        combined.append(&leaf2.clone().into());
     } else {
-        combined.append(&leaf2.into());
-        combined.append(&leaf1.into());
+        combined.append(&leaf2.clone().into());
+        combined.append(&leaf1.clone().into());
     }
     let root = env.crypto().sha256(&combined).into();
 
@@ -573,7 +573,7 @@ fn test_verify_merkle_proof_valid_proof() {
     );
 
     // Verify proof for leaf1 with proof containing leaf2
-    let proof = soroban_sdk::Vec::new(&env);
+    let mut proof = soroban_sdk::Vec::new(&env);
     proof.push_back(leaf2);
     let is_valid = client.verify_merkle_proof(&business, &period, &leaf1, &proof);
     assert!(is_valid);
@@ -590,11 +590,11 @@ fn test_verify_merkle_proof_invalid_proof() {
 
     let mut combined = soroban_sdk::Bytes::new(&env);
     if leaf1 < leaf2 {
-        combined.append(&leaf1.into());
-        combined.append(&leaf2.into());
+        combined.append(&leaf1.clone().into());
+        combined.append(&leaf2.clone().into());
     } else {
-        combined.append(&leaf2.into());
-        combined.append(&leaf1.into());
+        combined.append(&leaf2.clone().into());
+        combined.append(&leaf1.clone().into());
     }
     let root = env.crypto().sha256(&combined).into();
 
@@ -611,7 +611,7 @@ fn test_verify_merkle_proof_invalid_proof() {
 
     // Test with wrong leaf
     let wrong_leaf = BytesN::from_array(&env, &[99u8; 32]);
-    let proof = soroban_sdk::Vec::new(&env);
+    let mut proof = soroban_sdk::Vec::new(&env);
     proof.push_back(leaf2);
     let is_valid = client.verify_merkle_proof(&business, &period, &wrong_leaf, &proof);
     assert!(!is_valid);
@@ -642,11 +642,11 @@ fn test_verify_merkle_proof_revoked_attestation() {
 
     let mut combined = soroban_sdk::Bytes::new(&env);
     if leaf1 < leaf2 {
-        combined.append(&leaf1.into());
-        combined.append(&leaf2.into());
+        combined.append(&leaf1.clone().into());
+        combined.append(&leaf2.clone().into());
     } else {
-        combined.append(&leaf2.into());
-        combined.append(&leaf1.into());
+        combined.append(&leaf2.clone().into());
+        combined.append(&leaf1.clone().into());
     }
     let root = env.crypto().sha256(&combined).into();
 
@@ -662,10 +662,16 @@ fn test_verify_merkle_proof_revoked_attestation() {
     );
 
     // Revoke the attestation
-    client.revoke_attestation(&admin, &business, &period);
+    client.revoke_attestation(
+        &admin,
+        &business,
+        &period,
+        &String::from_str(&env, "revoked"),
+        &0u64,
+    );
 
     // Should return false for revoked attestation
-    let proof = soroban_sdk::Vec::new(&env);
+    let mut proof = soroban_sdk::Vec::new(&env);
     proof.push_back(leaf2);
     let is_valid = client.verify_merkle_proof(&business, &period, &leaf1, &proof);
     assert!(!is_valid);
@@ -708,11 +714,11 @@ fn test_verify_merkle_proof_empty_proof_multiple_leaves() {
 
     let mut combined = soroban_sdk::Bytes::new(&env);
     if leaf1 < leaf2 {
-        combined.append(&leaf1.into());
-        combined.append(&leaf2.into());
+        combined.append(&leaf1.clone().into());
+        combined.append(&leaf2.clone().into());
     } else {
-        combined.append(&leaf2.into());
-        combined.append(&leaf1.into());
+        combined.append(&leaf2.clone().into());
+        combined.append(&leaf1.clone().into());
     }
     let root = env.crypto().sha256(&combined).into();
 
