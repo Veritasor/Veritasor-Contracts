@@ -171,40 +171,8 @@ pub const TOPIC_EPOCH_CHECKPOINT: Symbol = symbol_short!("ep_ckpt");
 pub const TOPIC_BACKFILL_CHECKPOINT: Symbol = symbol_short!("bkf_chk");
 /// Topic: archival compaction completed
 pub const TOPIC_ARCHIVAL_COMPACTED: Symbol = symbol_short!("arc_cmp");
-/// Topic: delegated submission permit cancelled (nonce burned)
-pub const TOPIC_PERMIT_CANCELLED: Symbol = symbol_short!("perm_canc");
-/// Topic: attestor slash triggered
-pub const TOPIC_SLASH_TRIGGERED: Symbol = symbol_short!("slsh_trg");
-/// Topic: relayer gas metering reported
-pub const TOPIC_RELAYER_GAS_REPORTED: Symbol = symbol_short!("rl_gas");
-/// Topic: pause scheduled (time-locked)
-pub const TOPIC_PAUSE_SCHEDULED: Symbol = symbol_short!("p_sch");
-/// Topic: scheduled pause cancelled
-pub const TOPIC_PAUSE_SCHEDULED_CANCELLED: Symbol = symbol_short!("p_canc");
-/// Topic: expired multisig proposal cleaned
-pub const TOPIC_PROPOSAL_CLEANED: Symbol = symbol_short!("prop_cln");
-/// Topic: dispute rolled back after deadline
-pub const TOPIC_DISPUTE_ROLLED_BACK: Symbol = symbol_short!("dsp_rb");
-/// Topic: staking contract rebinding proposed (time-locked)
-pub const TOPIC_STAKING_CONTRACT_PROPOSED: Symbol = symbol_short!("stk_prop");
-/// Topic: staking contract rebinding committed
-pub const TOPIC_STAKING_CONTRACT_COMMITTED: Symbol = symbol_short!("stk_comm");
-/// Topic: staking contract rebinding cancelled
-pub const TOPIC_STAKING_CONTRACT_CANCELLED: Symbol = symbol_short!("stk_canc");
-/// Topic: DAO controller rotation proposed (two-phase)
-pub const TOPIC_DAO_ROTATION_PROPOSED: Symbol = symbol_short!("dao_prop");
-/// Topic: DAO controller rotation accepted
-pub const TOPIC_DAO_ROTATION_ACCEPTED: Symbol = symbol_short!("dao_acc");
-/// Topic: admin voting weight changed
-pub const TOPIC_ADMIN_WEIGHT_CHANGED: Symbol = symbol_short!("adm_wgt");
-/// Topic: attestor locked for an active dispute
-pub const TOPIC_ATTESTOR_LOCKED_FOR_DISPUTE: Symbol = symbol_short!("att_lck");
-/// Topic: vote-weight snapshot created at proposal creation
-pub const TOPIC_VOTE_WEIGHT_SNAPSHOT_CREATED: Symbol = symbol_short!("vw_snap");
-/// Topic: new multisig owner acknowledged recovery-phrase custody
-pub const TOPIC_OWNER_RECOVERY_PHRASE_ACKNOWLEDGED: Symbol = symbol_short!("rpy_ack");
-/// Topic: orphaned revocation index entries cleaned
-pub const TOPIC_REVOCATION_INDEX_CLEANED: Symbol = symbol_short!("rv_cln");
+/// Topic: reputation gating check performed
+pub const TOPIC_REPUTATION_GATE_CHECK: Symbol = symbol_short!("rep_gat");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -246,6 +214,30 @@ pub struct AttestationSubmittedEvent {
     pub proof_hash: Option<BytesN<32>>,
     /// Optional Unix timestamp after which this attestation expires.
     pub expiry_timestamp: Option<u64>,
+}
+
+// ── Reputation gating ─────────────────────────────────────────
+
+/// Normalized payload for `ReputationGateCheck` events.
+///
+/// Emitted whenever a submission is checked against reputation gating (if enabled).
+/// This event is emitted regardless of whether the check passes or fails, allowing
+/// operators to observe gating behavior without leaking sensitive implementation details.
+///
+/// | Event Catalog | Topic   | Secondary topic |
+/// |---------------|---------|-----------------|
+/// | ReputationGateCheck | `rep_gat` | `attestor` (or business if attestor absent) |
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ReputationGateCheckEvent {
+    /// Attestor (or business) whose reputation was checked.
+    pub attestor: Address,
+    /// Current reputation score of the attestor.
+    pub score: u64,
+    /// Minimum reputation score required for submission.
+    pub min_reputation: u64,
+    /// Whether the check passed (`true`) or failed (`false`).
+    pub allowed: bool,
 }
 
 // ── Revocation reason code ────────────────────────────────────────
@@ -2553,4 +2545,70 @@ pub fn emit_revocation_index_cleaned(env: &Env, business: &Address, cleaned_coun
         (TOPIC_REVOCATION_INDEX_CLEANED, business.clone()),
         cleaned_count,
     );
+}
+
+/// Emit a `ReputationGateCheck` event.
+///
+/// Called whenever a reputation gating check is performed (if enabled). Emitted
+/// regardless of pass/fail to maintain observability. Only called when
+/// reputation gating is enabled.
+///
+/// * `env`              – Soroban execution environment.
+/// * `attestor`         – Address whose reputation was checked.
+/// * `score`            – Current reputation score.
+/// * `min_reputation`   – Minimum required score.
+/// * `allowed`          – Whether the check passed.
+///
+/// # Events
+///
+/// Publishes `(rep_gat, attestor)` → `ReputationGateCheckEvent`.
+pub fn emit_reputation_gate_check(
+    env: &Env,
+    attestor: &Address,
+    score: u64,
+    min_reputation: u64,
+    allowed: bool,
+) {
+    let event = ReputationGateCheckEvent {
+        attestor: attestor.clone(),
+        score,
+        min_reputation,
+        allowed,
+    };
+    env.events()
+        .publish((TOPIC_REPUTATION_GATE_CHECK, attestor.clone()), event);
+}
+
+/// Emit a `ReputationGateCheck` event.
+///
+/// Called whenever a reputation gating check is performed (if enabled). Emitted
+/// regardless of pass/fail to maintain observability. Only called when
+/// reputation gating is enabled.
+///
+/// # Arguments
+///
+/// * `env`              – Soroban execution environment.
+/// * `attestor`         – Address whose reputation was checked.
+/// * `score`            – Current reputation score.
+/// * `min_reputation`   – Minimum required score.
+/// * `allowed`          – Whether the check passed.
+///
+/// # Events
+///
+/// Publishes `(rep_gat, attestor)` → `ReputationGateCheckEvent`.
+pub fn emit_reputation_gate_check(
+    env: &Env,
+    attestor: &Address,
+    score: u64,
+    min_reputation: u64,
+    allowed: bool,
+) {
+    let event = ReputationGateCheckEvent {
+        attestor: attestor.clone(),
+        score,
+        min_reputation,
+        allowed,
+    };
+    env.events()
+        .publish((TOPIC_REPUTATION_GATE_CHECK, attestor.clone()), event);
 }

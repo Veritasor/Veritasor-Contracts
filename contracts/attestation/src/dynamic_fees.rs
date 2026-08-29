@@ -187,6 +187,14 @@ pub enum DataKey {
     ArchivePointer(Address, soroban_sdk::String),
     /// Admin-configurable retention policy for archival compaction.
     CompactionRetentionEpochs,
+
+    // ── Reputation gating ──────────────────────────────────────────
+    /// Optional contract address providing reputation scores.
+    /// If `None`, reputation gating is disabled (passthrough).
+    ReputationContract,
+    /// Minimum reputation score required for attestor submission.
+    /// Only enforced when `ReputationContract` is set.
+    MinReputation,
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -960,4 +968,46 @@ pub fn remove_archived_attestation(env: &Env, business: &Address, period: &sorob
             business.clone(),
             period.clone(),
         ));
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Reputation Gating Configuration
+// ════════════════════════════════════════════════════════════════════
+
+/// Get the optional reputation contract address.
+/// Returns `None` if reputation gating is disabled.
+pub fn get_reputation_contract(env: &Env) -> Option<Address> {
+    env.storage()
+        .instance()
+        .get(&DataKey::ReputationContract)
+}
+
+/// Set the reputation contract address (enables reputation gating).
+pub fn set_reputation_contract(env: &Env, contract: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ReputationContract, contract);
+}
+
+/// Clear the reputation contract (disables reputation gating).
+pub fn clear_reputation_contract(env: &Env) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::ReputationContract);
+}
+
+/// Get the minimum reputation score required for submission.
+/// Returns a sensible default (0) if not explicitly configured.
+pub fn get_min_reputation(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::MinReputation)
+        .unwrap_or(0)
+}
+
+/// Set the minimum reputation score required for submission (admin-only).
+pub fn set_min_reputation(env: &Env, min_score: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::MinReputation, &min_score);
 }

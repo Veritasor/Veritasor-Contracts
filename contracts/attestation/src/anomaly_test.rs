@@ -193,8 +193,11 @@ fn set_anomaly_overwrite_with_zero_stores_zero() {
 // ── Admin-only authorization ──────────────────────────────────────────────────
 
 /// A non-admin caller must be rejected with the access-control panic message.
+/// set_anomaly checks score <= ANOMALY_SCORE_MAX first, then checks the
+/// combined "admin OR authorized analytics" gate, which panics with this
+/// exact message when neither condition is met.
 #[test]
-#[should_panic(expected = "caller does not have ADMIN role")]
+#[should_panic(expected = "caller is not authorized analytics or admin")]
 fn set_anomaly_non_admin_caller_panics() {
     let env = Env::default();
     let (_admin, client) = setup(&env);

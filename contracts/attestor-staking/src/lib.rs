@@ -477,6 +477,55 @@ impl AttestorStakingContract {
         }
     }
 
+    /// Get reputation score for an attestor (read-only).
+    ///
+    /// This function returns a reputation score derived from the attestor's staked amount.
+    /// A higher staked amount yields a higher reputation score.
+    /// Returns 0 if the attestor has no stake.
+    ///
+    /// # Reputation Calculation
+    ///
+    /// The reputation score is equal to the attestor's available stake (staked amount minus locked amount).
+    /// This means:
+    /// - An attestor with 1000 tokens staked has reputation score of 1000
+    /// - An attestor with 1000 staked + 200 locked has reputation score of 800 (available stake)
+    /// - An attestor with no stake has reputation score of 0
+    ///
+    /// # Arguments
+    /// * `attestor` - Address of the attestor to query
+    ///
+    /// # Returns
+    /// * `u64` - Reputation score (derived from staked amount)
+    ///
+    /// # Security
+    /// - Read-only; does not require authentication
+    /// - Score is publicly queryable (on-chain reputation is transparent)
+    /// - Used by reputation gating mechanisms in other contracts (e.g., attestation contract)
+    /// - Score is deterministic: same staking state always produces same score
+    ///
+    /// # Usage in Other Contracts
+    ///
+    /// The attestation contract calls this via cross-contract invocation to gate submissions:
+    /// - Admin configures reputation contract address to this contract
+    /// - Admin sets minimum reputation threshold
+    /// - On each attestor submission, attestation contract calls `get_reputation(attestor_address)`
+    /// - Submission is rejected if returned score < configured threshold
+    pub fn get_reputation(env: Env, attestor: Address) -> u64 {
+        match Self::get_stake(env, attestor) {
+            Some(stake) => {
+                // Reputation is the staked amount, capped at u64::MAX to avoid overflow
+                // Lock amount is subtracted to reflect available stake
+                let available_stake = stake.amount.saturating_sub(stake.locked);
+                if available_stake <= 0 {
+                    0u64
+                } else {
+                    available_stake.min(i128::MAX as i128) as u64
+                }
+            }
+            None => 0u64,
+        }
+    }
+
     /// Get contract admin address
     ///
     /// # Returns

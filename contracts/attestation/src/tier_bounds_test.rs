@@ -1,6 +1,29 @@
 //! Tests for tier bounds enforcement in set_business_tier and set_tier_discount.
 //! Issue #318: validate tier and discount bounds at write time.
 //! Issue #498: regression test for zero discount at MIN_TIER.
+//! Issue #788: confirm tier 9 (MAX_TIER) succeeds, tier 10 panics, and panic
+//!             messages are stable across both setters.
+//!
+//! ## Coverage summary
+//!
+//! | Test | Scenario |
+//! |------|----------|
+//! | set_business_tier_zero_accepted          | MIN_TIER (0) accepted |
+//! | set_business_tier_one_accepted           | tier 1 accepted |
+//! | set_business_tier_at_max_accepted        | MAX_TIER (9) accepted |
+//! | set_business_tier_above_max_panics       | MAX_TIER+1 rejected |
+//! | set_business_tier_u32_max_panics         | u32::MAX rejected |
+//! | set_tier_discount_zero_accepted          | discount at tier 0 |
+//! | set_tier_discount_one_accepted           | discount at tier 1 |
+//! | set_tier_discount_at_max_tier_accepted   | discount at MAX_TIER |
+//! | set_tier_discount_above_max_panics       | tier > MAX_TIER rejected |
+//! | set_tier_discount_u32_max_panics         | u32::MAX tier rejected |
+//! | test_tier_checked_before_discount_bps    | tier guard fires first |
+//! | test_discount_over_100_pct_rejected      | >10 000 bps rejected |
+//! | test_unconfigured_tier_discount_returns_zero | default = 0 bps |
+//! | test_set_business_tier_overwritten       | second write wins |
+//! | test_set_tier_discount_overwritten       | second write wins |
+//! | test_tier_min_zero_discount              | MIN_TIER always 0 discount |
 
 extern crate std;
 
