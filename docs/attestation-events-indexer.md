@@ -134,6 +134,33 @@ For any breaking event schema change:
 3. Update indexer documentation before release.
 4. Communicate migration impact to downstream indexers.
 
+## Schema Guard (CI Enforcement)
+
+`scripts/check_event_schema.sh` enforces the versioning rules above in CI (GitHub Actions job `event-schema-guard`).
+
+It fingerprints the canonical form of every `#[contracttype]` struct and enum in `contracts/attestation/src/events.rs` and compares it against the committed baseline `contracts/attestation/event_schema_snapshot.txt`.
+
+When the wire shape changes, the guard classifies the divergence:
+
+- Breaking (rename, reorder, removal, field type change, new or removed type, enum variant change): `EVENT_SCHEMA_VERSION` MUST be incremented.
+- Non-breaking (appending `Option<...>` fields at the end of a struct): `EVENT_SCHEMA_VERSION` MUST NOT be incremented.
+
+A pure version bump with no schema change is rejected.
+
+After an intentional schema change, regenerate and commit the snapshot:
+
+    ./scripts/check_event_schema.sh --update
+
+Inspect the current version, fingerprint, and canonical schema with:
+
+    ./scripts/check_event_schema.sh --dump
+
+The guard ships self-tests covering every classification path and edge case:
+
+    ./scripts/test_event_schema.sh
+
+Exit codes: `0` = in sync / success, `1` = policy or consistency failure, `2` = tool error (missing or unparseable input).
+
 ## Duplicate Event Handling Guidance
 
 Indexers should treat `(contract_id, ledger, tx_hash, event_index)` as the unique event identity.

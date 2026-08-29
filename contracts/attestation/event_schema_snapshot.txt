@@ -1,0 +1,250 @@
+# Veritasor attestation event schema snapshot
+# Auto-generated guard file - do not edit by hand.
+# Source of truth: contracts/attestation/src/events.rs
+# Regenerate with:   ./scripts/check_event_schema.sh --update
+# Run the guard with: ./scripts/check_event_schema.sh
+#
+# Divergence from this snapshot fails CI unless EVENT_SCHEMA_VERSION
+# is bumped for breaking changes. See docs/attestation-events-indexer.md.
+EVENT_SCHEMA_VERSION: 1
+EVENT_SCHEMA_FINGERPRINT: sha256:cc3d11775dd2428f574b5b1d48061cde2f5e4154808817150bcabe6a56b17f6d
+
+# ---- canonical event schema (sorted by type) ----
+struct AdminSwappedEvent {
+  old_admin:Address
+  new_admin:Address
+  swapped_by:Address
+}
+struct ApprovalRevokedEvent {
+  proposal_id:u64
+  approver:Address
+}
+struct ArchivalCompactedEvent {
+  compacted_count:u32
+  min_epochs:u64
+  compacted_at:u64
+  compacted_by:Address
+}
+struct AttestationCleanedUpEvent {
+  business:Address
+  period:String
+  cleanup_timestamp:u64
+}
+struct AttestationExpiryExtendedEvent {
+  business:Address
+  period:String
+  old_expiry:Option<u64>
+  new_expiry:u64
+}
+struct AttestationMigratedEvent {
+  business:Address
+  period:String
+  old_merkle_root:BytesN<32>
+  new_merkle_root:BytesN<32>
+  old_version:u32
+  new_version:u32
+  migrated_by:Address
+}
+struct AttestationRevokedEvent {
+  business:Address
+  period:String
+  revoked_by:Address
+  reason:String
+  reason_code:RevocationReason
+}
+struct AttestationSubmittedEvent {
+  business:Address
+  period:String
+  merkle_root:BytesN<32>
+  timestamp:u64
+  version:u32
+  fee_paid:i128
+  proof_hash:Option<BytesN<32>>
+  expiry_timestamp:Option<u64>
+}
+struct BackfillCheckpointEvent {
+  submission_count:u64
+  state_commitment:BytesN<32>
+}
+struct BusinessApprovedEvent {
+  business:Address
+  approved_by:Address
+}
+struct BusinessReactivatedEvent {
+  business:Address
+  reactivated_by:Address
+}
+struct BusinessRegisteredEvent {
+  business:Address
+}
+struct BusinessSuspendedEvent {
+  business:Address
+  suspended_by:Address
+  reason:Symbol
+}
+struct CleanupSummaryEvent {
+  epoch:u64
+  removed_count:u64
+  at_ts:u64
+}
+struct DisputeRolledBackEvent {
+  dispute_id:u64
+  business:Address
+  period:String
+  rolled_back_at:u64
+  deadline_seconds:u64
+}
+struct EmergencyPauseTriggeredEvent {
+  signer1:Address
+  signer2:Address
+}
+struct EpochAdvancedEvent {
+  epoch:u64
+  at_ts:u64
+}
+struct EpochCheckpointEvent {
+  period:String
+  state_root:BytesN<32>
+  submissions_count:u64
+  fees_collected:i128
+  checkpoint_timestamp:u64
+}
+struct FeeConfigCancelledEvent {
+  cancelled_by:Address
+}
+struct FeeConfigChangedEvent {
+  token:Address
+  collector:Address
+  base_fee:i128
+  enabled:bool
+  changed_by:Address
+}
+struct FeeConfigCommittedEvent {
+  token:Address
+  collector:Address
+  base_fee:i128
+  enabled:bool
+  committed_by:Address
+}
+struct FeeConfigProposedEvent {
+  token:Address
+  collector:Address
+  base_fee:i128
+  enabled:bool
+  proposed_by:Address
+  effective_at:u64
+}
+struct FlatFeeConfigChangedEvent {
+  token:Address
+  collector:Address
+  amount:i128
+  enabled:bool
+  changed_by:Address
+}
+struct KeyRotationCancelledEvent {
+  cancelled_by:Address
+  proposed_new_admin:Address
+}
+struct KeyRotationConfirmedEvent {
+  old_admin:Address
+  new_admin:Address
+  is_emergency:bool
+}
+struct KeyRotationEmergencyEvent {
+  old_admin:Address
+  new_admin:Address
+}
+struct KeyRotationProposedEvent {
+  old_admin:Address
+  new_admin:Address
+  timelock_until:u32
+  expires_at:u32
+}
+struct MultiPeriodIssuedEvent {
+  business:Address
+  start_period:u32
+  end_period:u32
+  merkle_root:BytesN<32>
+}
+struct PauseChangedEvent {
+  changed_by:Address
+}
+struct PauseScheduledCancelledEvent {
+  caller:Address
+}
+struct PauseScheduledEvent {
+  caller:Address
+  effective_at:u64
+}
+struct PermitCancelledEvent {
+  business:Address
+  nonce:u64
+  permit_expiry_ts:u64
+}
+struct ProofHashUpdatedEvent {
+  business:Address
+  period:String
+  old_proof_hash:Option<BytesN<32>>
+  new_proof_hash:Option<BytesN<32>>
+  updated_by:Address
+}
+struct ProposalCleanedEvent {
+  proposal_id:u64
+  action:ProposalAction
+  cleaned_at:u32
+}
+struct RateLimitConfigChangedEvent {
+  max_submissions:u32
+  window_seconds:u64
+  burst_max_submissions:u32
+  burst_window_seconds:u64
+  enabled:bool
+  changed_by:Address
+}
+struct RelayerGasReportedEvent {
+  relayer:Address
+  business:Address
+  period:String
+  cpu_instructions:u64
+  memory_bytes:u64
+  total_cpu_instructions:u64
+  total_memory_bytes:u64
+}
+struct RevocationCancelledEvent {
+  business:Address
+  period:String
+  cancelled_by:Address
+}
+struct RevocationCommittedEvent {
+  business:Address
+  period:String
+  proposer:Address
+  committed_by:Address
+  committed_at:u64
+  reason:String
+}
+struct RevocationProposedEvent {
+  business:Address
+  period:String
+  proposer:Address
+  proposed_at:u64
+  grace_seconds:u64
+  reason:String
+}
+enum RevocationReason {
+  Dispute
+  Fraud
+  AttestorSlash
+  Admin
+  Other
+}
+struct RoleChangedEvent {
+  account:Address
+  role:u32
+  changed_by:Address
+}
+struct SlashTriggeredEvent {
+  attestor:Address
+  amount:i128
+  dispute_id:u64
+}
