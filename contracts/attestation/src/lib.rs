@@ -1042,9 +1042,7 @@ impl AttestationContract {
 
         access_control::require_not_paused(env);
 
-        if registry::get_status(env, business) == Some(BusinessStatus::Suspended) {
-            panic!("business is suspended");
-        }
+        registry::require_active_business(env, business);
 
         rate_limit::check_rate_limit(env, business);
 
@@ -1175,10 +1173,6 @@ impl AttestationContract {
                 business.require_auth();
             }
             registry::require_active_business(env, &business);
-
-            if registry::get_status(env, &item.business) == Some(BusinessStatus::Suspended) {
-                panic!("business is suspended");
-            }
 
             let pair = (item.business.clone(), item.period.clone());
             for s in seen.iter() {
