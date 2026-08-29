@@ -2567,7 +2567,7 @@ mod proptest_nonce_monotonicity {
     use std::collections::BTreeMap;
 
     use proptest::prelude::*;
-    use proptest_state_machine::{proptest_state_machine, ReferenceStateMachine};
+    use proptest_state_machine::ReferenceStateMachine;
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{Address, Env};
 
@@ -2636,6 +2636,10 @@ mod proptest_nonce_monotonicity {
         ///
         /// For `SkipNonce`: ~13 % chance (always panics).
         fn transitions(state: &Self::State) -> BoxedStrategy<Self::Transition> {
+            // Snapshot the model into owned data so the generated strategies
+            // are `'static` (they must outlive this function).
+            let channels = state.channels.clone();
+
             // Weighted channel pool: well-known channels get higher weight
             // to exercise realistic multi-stream interleaving.
             let channel = prop_oneof![
@@ -2652,8 +2656,9 @@ mod proptest_nonce_monotonicity {
             ];
 
             // Correct nonce submission: use the exact current nonce.
+            let correct_channels = channels.clone();
             let correct_submit = channel.clone().prop_flat_map(move |ch| {
-                let current = state.channels.get(&ch).copied().unwrap_or(0);
+                let current = correct_channels.get(&ch).copied().unwrap_or(0);
                 Just(NonceCommand::SubmitNonce {
                     channel_id: ch,
                     nonce: current,
@@ -2663,8 +2668,9 @@ mod proptest_nonce_monotonicity {
             // Stale nonce: a value below the current nonce for the channel.
             // If current = 0, there is no stale value below 0, so generate
             // an arbitrary wrong value instead.
+            let stale_channels = channels.clone();
             let stale_submit = channel.clone().prop_flat_map(move |ch| {
-                let current = state.channels.get(&ch).copied().unwrap_or(0);
+                let current = stale_channels.get(&ch).copied().unwrap_or(0);
                 if current > 0 {
                     (0..current)
                         .prop_map(move |stale| NonceCommand::SubmitNonce {
@@ -2736,11 +2742,50 @@ mod proptest_nonce_monotonicity {
     /// Proves that the reference model itself is internally consistent:
     /// sequences of arbitrary transitions never violate the model's
     /// monotonicity constraints.
-    proptest_state_machine! {
-        /// Pure model verification: generates transition sequences up to 30
-        /// steps and checks that `apply` never panics and invariants hold.
-        #[proptest_config(ProptestConfig { cases: 256, .. ProptestConfig::default() })]
-        fn proptest_nonce_model_monotonicity(sequential in 1..30usize, NonceStateMachine);
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 256,
+            .. ProptestConfig::default()
+        })]
+
+        #[test]
+        fn proptest_nonce_model_monotonicity(
+            (_init_state, commands) in NonceStateMachine::sequential_strategy(1..30),
+        ) {
+            // Pure model verification: applying every generated command to
+            // the model must never panic and must preserve monotonicity.
+            let mut state = ModelState {
+                channels: BTreeMap::new(),
+            };
+
+            for cmd in &commands {
+                let previous = state.channels.clone();
+                state = NonceStateMachine::apply(state, cmd);
+
+                match *cmd {
+                    NonceCommand::SubmitNonce { channel_id, nonce } => {
+                        let old = previous.get(&channel_id).copied().unwrap_or(0);
+                        if nonce == old {
+                            let new = state
+                                .channels
+                                .get(&channel_id)
+                                .copied()
+                                .unwrap_or(0);
+                            assert!(
+                                new > old,
+                                "MONOTONICITY VIOLATION: channel {} new_nonce {} \
+                                 is not > old_nonce {}",
+                                channel_id, new, old
+                            );
+                        }
+                    }
+                    NonceCommand::SkipNonce { .. } => {
+                        // Skip always fails in the real contract; model
+                        // must be unchanged.
+                    }
+                }
+            }
+        }
     }
 
     // ── 5. Contract-Interacting Proptest ─────────────────────────────────────

@@ -697,19 +697,21 @@ proptest! {
             if admitted {
                 effective_now = effective_now.max(ledger_now);
                 admitted_at.retain(|timestamp| {
-                    *timestamp > effective_now.saturating_sub(window_seconds)
+                    *timestamp >= effective_now.saturating_sub(window_seconds)
                 });
-                admitted_at.push(effective_now);
-
+                // Mirror `check_rate_limit`: the budget is enforced BEFORE the
+                // submission is recorded, so the in-window count must stay
+                // strictly below the budget for an admission to be valid.
                 prop_assert!(
-                    admitted_at.len() <= max_per_window as usize,
+                    admitted_at.len() < max_per_window as usize,
                     "{} admits in a {}-second window with budget {}; ledger_now={}, effective_now={}",
-                    admitted_at.len(),
+                    admitted_at.len() + 1,
                     window_seconds,
                     max_per_window,
                     ledger_now,
                     effective_now,
                 );
+                admitted_at.push(effective_now);
             }
         }
     }

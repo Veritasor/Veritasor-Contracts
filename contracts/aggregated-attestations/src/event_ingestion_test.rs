@@ -423,7 +423,7 @@ fn test_business_without_snapshot_contributes_zero() {
 /// Verify that attempting to register a portfolio with a stale nonce panics,
 /// proving that the replay protection layer is active end-to-end.
 #[test]
-#[should_panic(expected = "replay")]
+#[should_panic(expected = "nonce mismatch")]
 fn test_admin_nonce_replay_rejected() {
     let h = setup_harness();
 

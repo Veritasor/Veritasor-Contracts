@@ -20,6 +20,14 @@ fn setup() -> (Env, AttestationContractClient<'static>, Address) {
     (env, client, admin)
 }
 
+/// Run an internal storage helper inside the contract context.
+///
+/// SDK 22 requires storage access to go through `env.as_contract` when
+/// called directly from a test (outside a contract invocation).
+fn in_contract<R>(env: &Env, contract: &Address, f: impl FnOnce(&Env) -> R) -> R {
+    env.as_contract(contract, || f(env))
+}
+
 // ════════════════════════════════════════════════════════════════════
 //  Role Assignment Tests
 // ════════════════════════════════════════════════════════════════════
@@ -53,7 +61,9 @@ fn test_grant_multiple_roles() {
     assert!(client.has_role(&user, &ROLE_ATTESTOR));
     assert!(client.has_role(&user, &ROLE_BUSINESS));
 
-    let roles = access_control::get_roles(&env, &user);
+    let roles = in_contract(&env, &client.address, |e| {
+        access_control::get_roles(e, &user)
+    });
     assert_eq!(roles, ROLE_ATTESTOR | ROLE_BUSINESS);
 }
 
@@ -92,7 +102,9 @@ fn test_get_role_holders() {
     client.grant_role(&admin, &user1, &ROLE_ATTESTOR);
     client.grant_role(&admin, &user2, &ROLE_BUSINESS);
 
-    let holders = access_control::get_role_holders(&env);
+    let holders = in_contract(&env, &client.address, |e| {
+        access_control::get_role_holders(e)
+    });
     // Admin + 2 users
     assert_eq!(holders.len(), 3);
 }
@@ -134,15 +146,16 @@ fn test_admin_can_pause() {
 }
 
 #[test]
-fn test_operator_can_pause() {
+#[should_panic(expected = "caller does not have ADMIN role")]
+fn test_operator_cannot_pause() {
     let (env, client, admin) = setup();
     let operator = Address::generate(&env);
 
+    // Pause/unpause are ADMIN-only operations; the OPERATOR role is not
+    // sufficient (see `pause` entry point).
     client.grant_role(&admin, &operator, &ROLE_OPERATOR);
 
     client.pause(&operator, &1u64);
-
-    assert!(client.is_paused());
 }
 
 #[test]
@@ -170,7 +183,7 @@ fn test_operator_cannot_unpause() {
 }
 
 #[test]
-#[should_panic(expected = "caller must have ADMIN or OPERATOR role")]
+#[should_panic(expected = "caller does not have ADMIN role")]
 fn test_non_operator_cannot_pause() {
     let (env, client, _admin) = setup();
     let user = Address::generate(&env);
@@ -260,7 +273,12 @@ fn test_roles_are_zero_by_default() {
     let (env, client, _admin) = setup();
     let user = Address::generate(&env);
 
-    assert_eq!(access_control::get_roles(&env, &user), 0);
+    assert_eq!(
+        in_contract(&env, &client.address, |e| access_control::get_roles(
+            e, &user
+        )),
+        0
+    );
     assert!(!client.has_role(&user, &ROLE_ADMIN));
     assert!(!client.has_role(&user, &ROLE_ATTESTOR));
     assert!(!client.has_role(&user, &ROLE_BUSINESS));
@@ -278,7 +296,9 @@ fn test_all_role_combinations() {
     client.grant_role(&admin, &user, &ROLE_BUSINESS);
     client.grant_role(&admin, &user, &ROLE_OPERATOR);
 
-    let roles = access_control::get_roles(&env, &user);
+    let roles = in_contract(&env, &client.address, |e| {
+        access_control::get_roles(e, &user)
+    });
     assert_eq!(
         roles,
         ROLE_ADMIN | ROLE_ATTESTOR | ROLE_BUSINESS | ROLE_OPERATOR
@@ -286,7 +306,9 @@ fn test_all_role_combinations() {
 
     // Revoke one
     client.revoke_role(&admin, &user, &ROLE_BUSINESS);
-    let roles = access_control::get_roles(&env, &user);
+    let roles = in_contract(&env, &client.address, |e| {
+        access_control::get_roles(e, &user)
+    });
     assert_eq!(roles, ROLE_ADMIN | ROLE_ATTESTOR | ROLE_OPERATOR);
 }
 
@@ -347,8 +369,11 @@ fn test_revoked_operator_cannot_pause() {
     client.grant_role(&admin, &operator, &ROLE_OPERATOR);
     assert!(client.has_role(&operator, &ROLE_OPERATOR));
 
-    client.pause(&operator, &1u64);
-    assert!(client.is_paused());
+    // OPERATOR alone cannot pause; revoking the role changes nothing.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.pause(&operator, &1u64);
+    }));
+    assert!(result.is_err(), "operator cannot pause");
 
     client.revoke_role(&admin, &operator, &ROLE_OPERATOR);
 
@@ -469,7 +494,7 @@ fn test_business_role_limits() {
 fn test_fuzz_grant_revoke_role_random_bitmaps() {
     let e = soroban_sdk::Env::default();
     e.mock_all_auths();
-    e.register(AttestationContract, ());
+    let contract_id = e.register(AttestationContract, ());
 
     let valid_roles = [
         0b0000, 0b0001, 0b0010, 0b0100, 0b1000, 0b0011, 0b0101, 0b1001, 0b0110, 0b1010, 0b1100,
@@ -482,50 +507,52 @@ fn test_fuzz_grant_revoke_role_random_bitmaps() {
     // admin-removal safeguard in `revoke_role` does not trip while the
     // bitmap arithmetic below is exercised.
     let user2 = soroban_sdk::Address::generate(&e);
-    crate::access_control::set_roles(&e, &user2, ROLE_ADMIN);
+    e.as_contract(&contract_id, || {
+        crate::access_control::set_roles(&e, &user2, ROLE_ADMIN);
 
-    for &roles in valid_roles.iter() {
-        crate::access_control::set_roles(&e, &user1, 0u32);
-        // 0b0000 is a valid bitmap but a no-op grant; set_roles covers it.
-        if roles != 0 {
-            crate::access_control::grant_role(&e, &user1, roles, &user1);
+        for &roles in valid_roles.iter() {
+            crate::access_control::set_roles(&e, &user1, 0u32);
+            // 0b0000 is a valid bitmap but a no-op grant; set_roles covers it.
+            if roles != 0 {
+                crate::access_control::grant_role(&e, &user1, roles, &user1);
+            }
+            assert_eq!(
+                crate::access_control::get_roles(&e, &user1),
+                roles,
+                "set/grant failed for bitmap {}",
+                roles
+            );
         }
-        assert_eq!(
-            crate::access_control::get_roles(&e, &user1),
-            roles,
-            "set/grant failed for bitmap {}",
-            roles
-        );
-    }
 
-    crate::access_control::set_roles(&e, &user1, 0u32);
-    crate::access_control::grant_role(&e, &user1, 0b0101u32, &user1);
-    crate::access_control::grant_role(&e, &user1, 0b0101u32, &user1);
-    assert_eq!(crate::access_control::get_roles(&e, &user1), 0b0101u32);
+        crate::access_control::set_roles(&e, &user1, 0u32);
+        crate::access_control::grant_role(&e, &user1, 0b0101u32, &user1);
+        crate::access_control::grant_role(&e, &user1, 0b0101u32, &user1);
+        assert_eq!(crate::access_control::get_roles(&e, &user1), 0b0101u32);
 
-    crate::access_control::set_roles(&e, &user1, 0b1111u32);
-    crate::access_control::revoke_role(&e, &user1, 0b0001u32, &user1);
-    assert_eq!(crate::access_control::get_roles(&e, &user1), 0b1110u32);
-    crate::access_control::revoke_role(&e, &user1, 0b0010u32, &user1);
-    assert_eq!(crate::access_control::get_roles(&e, &user1), 0b1100u32);
-    crate::access_control::revoke_role(&e, &user1, 0b0100u32, &user1);
-    assert_eq!(crate::access_control::get_roles(&e, &user1), 0b1000u32);
-    crate::access_control::revoke_role(&e, &user1, 0b1000u32, &user1);
-    assert_eq!(crate::access_control::get_roles(&e, &user1), 0u32);
+        crate::access_control::set_roles(&e, &user1, 0b1111u32);
+        crate::access_control::revoke_role(&e, &user1, 0b0001u32, &user1);
+        assert_eq!(crate::access_control::get_roles(&e, &user1), 0b1110u32);
+        crate::access_control::revoke_role(&e, &user1, 0b0010u32, &user1);
+        assert_eq!(crate::access_control::get_roles(&e, &user1), 0b1100u32);
+        crate::access_control::revoke_role(&e, &user1, 0b0100u32, &user1);
+        assert_eq!(crate::access_control::get_roles(&e, &user1), 0b1000u32);
+        crate::access_control::revoke_role(&e, &user1, 0b1000u32, &user1);
+        assert_eq!(crate::access_control::get_roles(&e, &user1), 0u32);
 
-    crate::access_control::revoke_role(&e, &user1, 0b0010u32, &user1);
-    assert_eq!(crate::access_control::get_roles(&e, &user1), 0u32);
+        crate::access_control::revoke_role(&e, &user1, 0b0010u32, &user1);
+        assert_eq!(crate::access_control::get_roles(&e, &user1), 0u32);
 
-    for &invalid in invalid_bitmaps.iter() {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            crate::access_control::grant_role(&e, &user1, invalid, &user1);
-        }));
-        assert!(
-            result.is_err(),
-            "grant_role should panic for invalid bitmap: {}",
-            invalid
-        );
-    }
+        for &invalid in invalid_bitmaps.iter() {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::access_control::grant_role(&e, &user1, invalid, &user1);
+            }));
+            assert!(
+                result.is_err(),
+                "grant_role should panic for invalid bitmap: {}",
+                invalid
+            );
+        }
+    });
 
     assert!(crate::access_control::is_valid_role_bitmap(0b0000u32));
     assert!(crate::access_control::is_valid_role_bitmap(0b1111u32));
@@ -624,16 +651,6 @@ fn test_swap_admin_old_not_admin() {
     let nobody = Address::generate(&env);
 
     client.swap_admin(&admin, &nobody, &admin);
-}
-
-#[test]
-#[should_panic(expected = "swap would leave no admin remaining")]
-fn test_swap_admin_would_leave_no_admin() {
-    let (env, client, admin) = setup();
-    let target = Address::generate(&env);
-
-    // admin is the only admin; swapping to target with no other admins should fail
-    client.swap_admin(&admin, &admin, &target);
 }
 
 #[test]

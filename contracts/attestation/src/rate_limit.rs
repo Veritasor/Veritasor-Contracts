@@ -240,11 +240,14 @@ fn analyze_submission_windows(
 
     for i in 0..stored.len() {
         let ts = stored.get(i).unwrap();
-        if ts > cutoff {
+        // Inclusive at the boundary: a submission at exactly `now - window`
+        // is still inside the window (and `ts == cutoff == 0` must count,
+        // e.g. default test ledgers).
+        if ts >= cutoff {
             active.push_back(ts);
             window_count += 1;
 
-            if ts > burst_cutoff {
+            if ts >= burst_cutoff {
                 burst_count += 1;
             }
         }

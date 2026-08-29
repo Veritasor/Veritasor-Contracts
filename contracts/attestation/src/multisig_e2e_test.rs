@@ -35,8 +35,12 @@ fn setup_3_of_5() -> MultisigCtx {
     for _ in 0..4 {
         owners.push_back(Address::generate(&env));
     }
-
     client.initialize_multisig(&owners, &3u32, &1u64);
+
+    // Move past the quorum-change cooldown so `ChangeThreshold` proposals
+    // can be created in every test without advancing the ledger each time.
+    env.ledger()
+        .set_sequence_number(2 * crate::multisig::PROPOSAL_COOLDOWN_LEDGERS);
 
     env.as_contract(&contract_id, || {
         env.storage()

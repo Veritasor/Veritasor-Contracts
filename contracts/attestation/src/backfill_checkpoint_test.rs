@@ -62,6 +62,31 @@ fn submit_one(client: &AttestationContractClient, env: &Env, business: &Address,
     );
 }
 
+/// Capture backfill-checkpoint events emitted by a single contract call.
+///
+/// SDK 22 resets the host event buffer at the start of each metered
+/// invocation, so callers must capture events right after each call rather
+/// than reading `env.events().all()` once at the end.
+fn checkpoints_from_call(
+    env: &Env,
+    contract_id: &Address,
+) -> std::vec::Vec<BackfillCheckpointEvent> {
+    env.events()
+        .all()
+        .iter()
+        .filter_map(|(cid, topics, data)| {
+            if &cid != contract_id || topics.len() != 1 {
+                return None;
+            }
+            let sym = Symbol::try_from_val(env, &topics.get(0).unwrap()).ok()?;
+            if sym != TOPIC_BACKFILL_CHECKPOINT {
+                return None;
+            }
+            BackfillCheckpointEvent::try_from_val(env, &data).ok()
+        })
+        .collect()
+}
+
 /// Pull all `BackfillCheckpointEvent` payloads emitted by `contract_id`.
 fn backfill_checkpoints(
     env: &Env,
@@ -127,12 +152,13 @@ fn emits_multiple_checkpoints_across_intervals() {
     let cid = client.address.clone();
     let total = BACKFILL_CHECKPOINT_INTERVAL * 2 + 1;
 
+    let mut cps = std::vec::Vec::new();
     for i in 0..total {
         let b = Address::generate(&env);
         submit_one(&client, &env, &b, i as u8);
+        cps.extend(checkpoints_from_call(&env, &cid));
     }
 
-    let cps = backfill_checkpoints(&env, &cid);
     assert_eq!(cps.len(), 2, "two checkpoints for 2×N + 1 submissions");
     assert_eq!(cps[0].submission_count, BACKFILL_CHECKPOINT_INTERVAL);
     assert_eq!(cps[1].submission_count, BACKFILL_CHECKPOINT_INTERVAL * 2);
@@ -145,13 +171,14 @@ fn large_count_handled() {
     // Submit just past the second checkpoint boundary.
     let total = BACKFILL_CHECKPOINT_INTERVAL * 2 + 5;
 
+    let mut cps = std::vec::Vec::new();
     for i in 0..total {
         let b = Address::generate(&env);
         submit_one(&client, &env, &b, i as u8);
         // Vary the merkle root per submission.
+        cps.extend(checkpoints_from_call(&env, &cid));
     }
 
-    let cps = backfill_checkpoints(&env, &cid);
     assert_eq!(cps.len(), 2);
     assert_eq!(cps[0].submission_count, BACKFILL_CHECKPOINT_INTERVAL);
     assert_eq!(cps[1].submission_count, BACKFILL_CHECKPOINT_INTERVAL * 2);

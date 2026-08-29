@@ -5,7 +5,7 @@ use std::println;
 
 use super::*;
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{testutils::Ledger, Address, BytesN, Env, String, Vec};
+use soroban_sdk::{testutils::Ledger, Address, BytesN, Env, String, Symbol, Vec};
 
 fn setup() -> (Env, AttestationContractClient<'static>, Address) {
     let env = Env::default();
@@ -32,6 +32,19 @@ fn batch_item(
         proof_hash: None,
         expiry_timestamp: None,
     }
+}
+
+/// Register a business so batch submissions (which require an active
+/// business) can succeed.
+fn register_business(client: &AttestationContractClient, admin: &Address, business: &Address) {
+    client.grant_role(admin, business, &ROLE_BUSINESS);
+    client.register_business(
+        business,
+        &BytesN::from_array(&client.env, &[1u8; 32]),
+        &Symbol::new(&client.env, "US"),
+        &Vec::new(&client.env),
+    );
+    client.approve_business(admin, business);
 }
 
 /// Advance the ledger timestamp by `seconds`.
@@ -110,6 +123,8 @@ fn submit_attestations_batch_succeeds_after_unpause() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
 
+    register_business(&client, &admin, &business);
+
     client.pause(&admin, &1u64);
     client.unpause(&admin, &2u64);
 
@@ -173,30 +188,38 @@ fn get_attestation_while_paused() {
 fn schedule_pause_then_auto_applies_on_submission() {
     let (env, client, admin) = setup();
     let business = Address::generate(&env);
+    register_business(&client, &admin, &business);
 
     let now = env.ledger().timestamp();
     let effective_at = now + 4000; // > 1 hour notice (3600 + some buffer)
     client.schedule_pause(&admin, &effective_at, &1u64);
 
     // Before effective_at — submission still works
-    client.submit_attestations_batch(&Vec::new(&env));
+    let mut items = Vec::new(&env);
+    items.push_back(batch_item(&env, &business, "2026-01", &[1u8; 32]));
+    client.submit_attestations_batch(&items);
     assert!(!client.is_paused());
 
     // Advance past effective_at
     advance_time(&env, 4000);
 
-    // Next submission triggers auto-apply and then fails because paused
-    let mut items = Vec::new(&env);
-    items.push_back(batch_item(&env, &business, "2026-02", &[1u8; 32]));
+    // Next submission triggers auto-apply and then fails because paused.
+    // Note: the blocked call panics, so its storage writes (including the
+    // auto-applied pause) are rolled back atomically — the enforcement is
+    // that the submission is rejected, not that the pause flag persists.
+    let mut items2 = Vec::new(&env);
+    items2.push_back(batch_item(&env, &business, "2026-02", &[1u8; 32]));
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.submit_attestations_batch(&items);
+        client.submit_attestations_batch(&items2);
     }));
     assert!(result.is_err());
 
-    // Contract is now paused
-    assert!(client.is_paused());
-    // Pending pause should be cleared
-    assert_eq!(client.get_pending_pause_effective_at(), None);
+    // Pending pause remains scheduled and keeps blocking submissions.
+    assert_eq!(
+        client.get_pending_pause_effective_at(),
+        Some(effective_at),
+        "pending pause survives the rolled-back submission"
+    );
 }
 
 #[test]
@@ -293,6 +316,7 @@ fn cancel_scheduled_pause_before_effective() {
     // Advance past the original effective_at — submission should still work
     advance_time(&env, 7200);
     let business = Address::generate(&env);
+    register_business(&client, &admin, &business);
     let mut items = Vec::new(&env);
     items.push_back(batch_item(&env, &business, "2026-02", &[3u8; 32]));
     client.submit_attestations_batch(&items);
@@ -416,6 +440,7 @@ fn scheduled_pause_does_not_block_before_effective() {
 
     // Should be able to submit while pending
     let business = Address::generate(&env);
+    register_business(&client, &admin, &business);
     let mut items = Vec::new(&env);
     items.push_back(batch_item(&env, &business, "2026-02", &[4u8; 32]));
     client.submit_attestations_batch(&items);
@@ -448,7 +473,10 @@ fn submit_attestation_blocked_by_auto_applied_scheduled_pause() {
         );
     }));
     assert!(result.is_err());
-    assert!(client.is_paused());
+    // The blocked call panics, rolling back its storage writes; the pause
+    // flag is applied by the next successful state-changing call. What is
+    // guaranteed here is that the submission is rejected.
+    assert_eq!(client.get_pending_pause_effective_at(), Some(now + 4000));
 }
 
 #[test]
