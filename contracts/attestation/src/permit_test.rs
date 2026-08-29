@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::{Address as _, Events as _};
 use soroban_sdk::{symbol_short, Address, Env, Symbol, TryFromVal};
 
 use crate::{

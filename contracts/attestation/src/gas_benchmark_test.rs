@@ -52,7 +52,7 @@
 //! a potential regression requiring investigation.
 
 use super::*;
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{token, Address, BytesN, Env, String};
 
 extern crate std;

@@ -24,8 +24,8 @@
 use super::*;
 use crate::events::VoteWeightSnapshotCreatedEvent;
 use crate::multisig::DEFAULT_PROPOSAL_EXPIRY;
-use soroban_sdk::testutils::{Address as _, Ledger};
-use soroban_sdk::{symbol_short, Address, Env, Symbol, TryFromVal, Vec};
+use soroban_sdk::testutils::{Address as _, Events as _, Ledger};
+use soroban_sdk::{symbol_short, vec, Address, Env, Symbol, TryFromVal, Vec};
 
 // ────────────────────────────────────────────────────────────────────
 //  Test setup helpers
@@ -174,9 +174,9 @@ fn vw_snapshot_event_emitted_with_matching_fields() {
     let id = client.create_proposal(&admins_owner0, &ProposalAction::Pause, &0u64);
 
     let events = env.events().all();
-    let new_events: Vec<_> = events
+    let new_events: std::vec::Vec<_> = events
         .iter()
-        .skip(pre)
+        .skip(pre as usize)
         .filter(|(_, topics, _)| {
             topics.len() == 1
                 && Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap()
@@ -191,7 +191,7 @@ fn vw_snapshot_event_emitted_with_matching_fields() {
     );
     let (_cid, _topics, data) = new_events.last().unwrap();
     let payload: VoteWeightSnapshotCreatedEvent =
-        soroban_sdk::FromVal::from_val(&env, &data);
+        soroban_sdk::FromVal::from_val(&env, data);
     assert_eq!(payload.proposal_id, id);
     assert_eq!(payload.owners_count, 3);
     assert_eq!(payload.threshold, 3);
@@ -471,7 +471,6 @@ fn vw_snapshot_removed_for_all_cleaned_proposals() {
     assert_eq!(cleaned, 5);
 
     for id in ids.iter() {
-        let id = id.unwrap();
         assert!(client.get_proposal(&id).is_none());
         assert!(client.get_proposal_snapshot(&id).is_none());
     }
@@ -540,6 +539,7 @@ fn vw_snapshot_action_tag_for_every_variant() {
 
     // (action, expected action_tag)
     let cases: Vec<(ProposalAction, u32)> = vec![
+        &env,
         (ProposalAction::Pause, 1),
         (ProposalAction::Unpause, 2),
         (ProposalAction::AddOwner(new_addr.clone()), 3),
@@ -558,8 +558,8 @@ fn vw_snapshot_action_tag_for_every_variant() {
     ];
 
     let mut nonce: u64 = 0;
-    for (i, (action, expected_tag)) in cases.iter().cloned().enumerate() {
-        let proposer = owners.get(i % 3).unwrap();
+    for (i, (action, expected_tag)) in cases.iter().enumerate() {
+        let proposer = owners.get((i % 3) as u32).unwrap();
         let id = client.create_proposal(&proposer, &action, &nonce);
         nonce += 1;
         let snap = client.get_proposal_snapshot(&id).unwrap();

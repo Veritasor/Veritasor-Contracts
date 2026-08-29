@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{token, Address, BytesN, Env, String};
 use veritasor_attestor_staking::AttestorStakingContract;
 use veritasor_attestor_staking::AttestorStakingContractClient as StakingClient;
@@ -1141,7 +1141,7 @@ fn batch_with_duplicate_fails_entirely() {
 }
 
 #[test]
-fn test_slash_on_invalid_attestation() {
+fn test_slash_on_invalid_attestation_after_duplicate_merge() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -1509,7 +1509,7 @@ fn batch_submission_fails_when_paused() {
 }
 
 #[test]
-fn test_slash_on_invalid_attestation() {
+fn test_slash_on_invalid_attestation_after_duplicate_merge_2() {
     let env = Env::default();
     env.mock_all_auths();
 

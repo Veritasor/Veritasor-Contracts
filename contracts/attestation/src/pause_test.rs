@@ -1,6 +1,8 @@
 //! Pause gate on attestation submission (admin pause / unpause) and
 //! time-locked scheduled pause with mandatory 1-hour notice window.
 
+use std::println;
+
 use super::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{testutils::Ledger, Address, BytesN, Env, String, Vec};
@@ -481,10 +483,6 @@ fn emergency_pause_valid_dual_key() {
     // Create two distinct owner addresses with admin roles
     let owner1 = Address::generate(&env);
     let owner2 = Address::generate(&env);
-    // Note: In a real test, these would need admin roles, but for simplicity
-    // we'll test the emergency_pause call directly with signatures
-    let sig1 = Signature::Ed25519(BytesN::from_array(&env, &[1u8; 64]));
-    let sig2 = Signature::Ed25519(BytesN::from_array(&env, &[2u8; 64]));
 
     // This is a simplified test - in reality, signatures would need to be valid
     // Since we're testing the interface, we'll just test that the method exists
@@ -502,8 +500,6 @@ fn emergency_pause_same_key_violation() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-
-    let sig = Signature::Ed25519(BytesN::from_array(&env, &[1u8; 64]));
 
     // Test that using the same signature for both slots should fail
     // The emergency_pause function should reject duplicate signatures
@@ -524,9 +520,6 @@ fn emergency_pause_non_admin_rejection() {
 
     // Test that non-admin cannot call emergency_pause
     // Even if signatures are valid, role check should fail
-    let sig1 = Signature::Ed25519(BytesN::from_array(&env, &[1u8; 64]));
-    let sig2 = Signature::Ed25519(BytesN::from_array(&env, &[2u8; 64]));
-
     assert!(!client.is_paused());
 
     // Conceptual test - role validation should prevent non-admins from emergency pausing

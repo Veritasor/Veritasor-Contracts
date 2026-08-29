@@ -171,6 +171,40 @@ pub const TOPIC_EPOCH_CHECKPOINT: Symbol = symbol_short!("ep_ckpt");
 pub const TOPIC_BACKFILL_CHECKPOINT: Symbol = symbol_short!("bkf_chk");
 /// Topic: archival compaction completed
 pub const TOPIC_ARCHIVAL_COMPACTED: Symbol = symbol_short!("arc_cmp");
+/// Topic: delegated submission permit cancelled (nonce burned)
+pub const TOPIC_PERMIT_CANCELLED: Symbol = symbol_short!("perm_canc");
+/// Topic: attestor slash triggered
+pub const TOPIC_SLASH_TRIGGERED: Symbol = symbol_short!("slsh_trg");
+/// Topic: relayer gas metering reported
+pub const TOPIC_RELAYER_GAS_REPORTED: Symbol = symbol_short!("rl_gas");
+/// Topic: pause scheduled (time-locked)
+pub const TOPIC_PAUSE_SCHEDULED: Symbol = symbol_short!("p_sch");
+/// Topic: scheduled pause cancelled
+pub const TOPIC_PAUSE_SCHEDULED_CANCELLED: Symbol = symbol_short!("p_canc");
+/// Topic: expired multisig proposal cleaned
+pub const TOPIC_PROPOSAL_CLEANED: Symbol = symbol_short!("prop_cln");
+/// Topic: dispute rolled back after deadline
+pub const TOPIC_DISPUTE_ROLLED_BACK: Symbol = symbol_short!("dsp_rb");
+/// Topic: staking contract rebinding proposed (time-locked)
+pub const TOPIC_STAKING_CONTRACT_PROPOSED: Symbol = symbol_short!("stk_prop");
+/// Topic: staking contract rebinding committed
+pub const TOPIC_STAKING_CONTRACT_COMMITTED: Symbol = symbol_short!("stk_comm");
+/// Topic: staking contract rebinding cancelled
+pub const TOPIC_STAKING_CONTRACT_CANCELLED: Symbol = symbol_short!("stk_canc");
+/// Topic: DAO controller rotation proposed (two-phase)
+pub const TOPIC_DAO_ROTATION_PROPOSED: Symbol = symbol_short!("dao_prop");
+/// Topic: DAO controller rotation accepted
+pub const TOPIC_DAO_ROTATION_ACCEPTED: Symbol = symbol_short!("dao_acc");
+/// Topic: admin voting weight changed
+pub const TOPIC_ADMIN_WEIGHT_CHANGED: Symbol = symbol_short!("adm_wgt");
+/// Topic: attestor locked for an active dispute
+pub const TOPIC_ATTESTOR_LOCKED_FOR_DISPUTE: Symbol = symbol_short!("att_lck");
+/// Topic: vote-weight snapshot created at proposal creation
+pub const TOPIC_VOTE_WEIGHT_SNAPSHOT_CREATED: Symbol = symbol_short!("vw_snap");
+/// Topic: new multisig owner acknowledged recovery-phrase custody
+pub const TOPIC_OWNER_RECOVERY_PHRASE_ACKNOWLEDGED: Symbol = symbol_short!("rpy_ack");
+/// Topic: orphaned revocation index entries cleaned
+pub const TOPIC_REVOCATION_INDEX_CLEANED: Symbol = symbol_short!("rv_cln");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -815,6 +849,155 @@ pub struct RelayerGasReportedEvent {
     pub total_cpu_instructions: u64,
     /// Total accumulated memory bytes for this relayer.
     pub total_memory_bytes: u64,
+}
+
+/// Normalized payload for `CollectorRotationProposed` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CollectorRotationProposedEvent {
+    /// Current collector proposing the rotation.
+    pub old_collector: Address,
+    /// Proposed new collector.
+    pub new_collector: Address,
+    /// Token contract used for the flat fee.
+    pub token: Address,
+    /// Amount of token escrowed at proposal time.
+    pub escrowed_amount: i128,
+}
+
+/// Normalized payload for `CollectorRotationAccepted` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CollectorRotationAcceptedEvent {
+    /// Collector being replaced.
+    pub old_collector: Address,
+    /// Collector that accepted the rotation.
+    pub new_collector: Address,
+    /// Token contract used for the flat fee.
+    pub token: Address,
+    /// Amount of token released from escrow to the new collector.
+    pub escrowed_amount: i128,
+}
+
+/// Normalized payload for `AnalyticsRotationCompleted` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AnalyticsRotationCompletedEvent {
+    /// Analytics/oracle address being replaced.
+    pub old_analytics: Address,
+    /// Analytics/oracle address installed by the rotation.
+    pub new_analytics: Address,
+}
+
+/// Normalized payload for `StakingContractProposed` events.
+///
+/// Emitted when a new attestor staking contract address is proposed; the
+/// rebinding only takes effect after the 24 h timelock elapses and the
+/// proposal is committed.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct StakingContractProposedEvent {
+    /// Proposed staking contract address.
+    pub new_contract: Address,
+    /// Admin that proposed the rebinding.
+    pub proposed_by: Address,
+    /// Ledger timestamp at which the proposal becomes effective.
+    pub effective_at: u64,
+}
+
+/// Normalized payload for `StakingContractCommitted` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct StakingContractCommittedEvent {
+    /// Staking contract address that became live.
+    pub new_contract: Address,
+    /// Admin that committed the rebinding.
+    pub committed_by: Address,
+}
+
+/// Normalized payload for `StakingContractCancelled` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct StakingContractCancelledEvent {
+    /// Staking contract address whose proposal was cancelled.
+    pub cancelled_contract: Address,
+    /// Admin that cancelled the proposal.
+    pub cancelled_by: Address,
+}
+
+/// Normalized payload for `DaoRotationProposed` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DaoRotationProposedEvent {
+    /// Current DAO contract address.
+    pub old_dao: Address,
+    /// Proposed new DAO contract address.
+    pub new_dao: Address,
+}
+
+/// Normalized payload for `DaoRotationAccepted` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DaoRotationAcceptedEvent {
+    /// DAO contract address being replaced.
+    pub old_dao: Address,
+    /// New DAO contract address that accepted the rotation.
+    pub new_dao: Address,
+}
+
+/// Normalized payload for `AdminWeightChanged` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AdminWeightChangedEvent {
+    /// Account whose voting weight changed.
+    pub account: Address,
+    /// Previous voting weight.
+    pub old_weight: u32,
+    /// New voting weight.
+    pub weight: u32,
+    /// Address that performed the change.
+    pub changed_by: Address,
+}
+
+/// Normalized payload for `AttestorLockedForDispute` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AttestorLockedForDisputeEvent {
+    /// Attestor that was locked.
+    pub attestor: Address,
+    /// Business of the disputed attestation.
+    pub business: Address,
+    /// Period of the disputed attestation.
+    pub period: String,
+    /// Unique identifier of the dispute that locked the attestor.
+    pub dispute_id: u64,
+}
+
+/// Normalized payload for `OwnerRecoveryPhraseAcknowledged` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct OwnerRecoveryPhraseAcknowledgedEvent {
+    /// Address that acknowledged recovery-phrase custody of an owner key.
+    pub new_owner: Address,
+}
+
+/// Normalized payload for `VoteWeightSnapshotCreated` events.
+///
+/// Emitted at proposal creation with the frozen vote-weight snapshot used to
+/// defend against flash-vote attacks (issue #512).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VoteWeightSnapshotCreatedEvent {
+    /// Unique identifier of the proposal.
+    pub proposal_id: u64,
+    /// Number of owners captured in the snapshot.
+    pub owners_count: u32,
+    /// Threshold captured in the snapshot.
+    pub threshold: u32,
+    /// Ledger sequence at snapshot creation.
+    pub created_at: u32,
+    /// Stable numeric tag of the proposal action.
+    pub action_tag: u32,
 }
 
 // ── Attestation lifecycle ─────────────────────────────────────────
@@ -2155,8 +2338,211 @@ pub fn emit_rehydrated_from_archive(
     env: &Env,
     business: &Address,
     period: &String,
-    source_epoch: u32,
+    fee_paid: i128,
 ) {
     let topics = (TOPIC_REHYDRATED_FROM_ARCHIVE, business.clone(), period.clone());
-    env.events().publish(topics, source_epoch);
+    env.events().publish(topics, fee_paid);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Governance / lifecycle emitters (collector, staking, DAO, dispute)
+// ════════════════════════════════════════════════════════════════════
+
+/// Emit a `CollectorRotationProposed` event.
+pub fn emit_collector_rotation_proposed(
+    env: &Env,
+    old_collector: &Address,
+    new_collector: &Address,
+    token: &Address,
+    escrowed_amount: i128,
+) {
+    let event = CollectorRotationProposedEvent {
+        old_collector: old_collector.clone(),
+        new_collector: new_collector.clone(),
+        token: token.clone(),
+        escrowed_amount,
+    };
+    env.events().publish((TOPIC_COLLECTOR_ROTATION_PROPOSED,), event);
+}
+
+/// Emit a `CollectorRotationAccepted` event.
+pub fn emit_collector_rotation_accepted(
+    env: &Env,
+    old_collector: &Address,
+    new_collector: &Address,
+    token: &Address,
+    escrowed_amount: i128,
+) {
+    let event = CollectorRotationAcceptedEvent {
+        old_collector: old_collector.clone(),
+        new_collector: new_collector.clone(),
+        token: token.clone(),
+        escrowed_amount,
+    };
+    env.events().publish((TOPIC_COLLECTOR_ROTATION_ACCEPTED,), event);
+}
+
+/// Emit a `StakingContractProposed` event.
+pub fn emit_staking_contract_proposed(
+    env: &Env,
+    new_contract: &Address,
+    proposed_by: &Address,
+    effective_at: u64,
+) {
+    let event = StakingContractProposedEvent {
+        new_contract: new_contract.clone(),
+        proposed_by: proposed_by.clone(),
+        effective_at,
+    };
+    env.events().publish((TOPIC_STAKING_CONTRACT_PROPOSED,), event);
+}
+
+/// Emit a `StakingContractCommitted` event.
+pub fn emit_staking_contract_committed(env: &Env, new_contract: &Address, committed_by: &Address) {
+    let event = StakingContractCommittedEvent {
+        new_contract: new_contract.clone(),
+        committed_by: committed_by.clone(),
+    };
+    env.events().publish((TOPIC_STAKING_CONTRACT_COMMITTED,), event);
+}
+
+/// Emit a `StakingContractCancelled` event.
+pub fn emit_staking_contract_cancelled(
+    env: &Env,
+    cancelled_contract: &Address,
+    cancelled_by: &Address,
+) {
+    let event = StakingContractCancelledEvent {
+        cancelled_contract: cancelled_contract.clone(),
+        cancelled_by: cancelled_by.clone(),
+    };
+    env.events().publish((TOPIC_STAKING_CONTRACT_CANCELLED,), event);
+}
+
+/// Emit a `DaoRotationProposed` event.
+pub fn emit_dao_rotation_proposed(env: &Env, old_dao: &Address, new_dao: &Address) {
+    let event = DaoRotationProposedEvent {
+        old_dao: old_dao.clone(),
+        new_dao: new_dao.clone(),
+    };
+    env.events().publish((TOPIC_DAO_ROTATION_PROPOSED,), event);
+}
+
+/// Emit a `DaoRotationAccepted` event.
+pub fn emit_dao_rotation_accepted(env: &Env, old_dao: &Address, new_dao: &Address) {
+    let event = DaoRotationAcceptedEvent {
+        old_dao: old_dao.clone(),
+        new_dao: new_dao.clone(),
+    };
+    env.events().publish((TOPIC_DAO_ROTATION_ACCEPTED,), event);
+}
+
+/// Emit an `AdminWeightChanged` event.
+pub fn emit_admin_weight_changed(
+    env: &Env,
+    account: &Address,
+    old_weight: u32,
+    weight: u32,
+    changed_by: &Address,
+) {
+    let event = AdminWeightChangedEvent {
+        account: account.clone(),
+        old_weight,
+        weight,
+        changed_by: changed_by.clone(),
+    };
+    env.events().publish((TOPIC_ADMIN_WEIGHT_CHANGED,), event);
+}
+
+/// Emit an `AttestorLockedForDispute` event.
+pub fn emit_attestor_locked_for_dispute(
+    env: &Env,
+    attestor: &Address,
+    business: &Address,
+    period: &String,
+    dispute_id: u64,
+) {
+    let event = AttestorLockedForDisputeEvent {
+        attestor: attestor.clone(),
+        business: business.clone(),
+        period: period.clone(),
+        dispute_id,
+    };
+    env.events().publish(
+        (TOPIC_ATTESTOR_LOCKED_FOR_DISPUTE, attestor.clone()),
+        event,
+    );
+}
+
+/// Emit a `DisputeRolledBack` event.
+pub fn emit_dispute_rolled_back(
+    env: &Env,
+    dispute_id: u64,
+    business: &Address,
+    period: &String,
+    deadline_seconds: u64,
+) {
+    let event = DisputeRolledBackEvent {
+        dispute_id,
+        business: business.clone(),
+        period: period.clone(),
+        rolled_back_at: env.ledger().timestamp(),
+        deadline_seconds,
+    };
+    env.events().publish((TOPIC_DISPUTE_ROLLED_BACK,), event);
+}
+
+/// Emit a `ProposalCleaned` event.
+pub fn emit_proposal_cleaned(
+    env: &Env,
+    proposal_id: u64,
+    action: &ProposalAction,
+    cleaned_at: u32,
+) {
+    let event = ProposalCleanedEvent {
+        proposal_id,
+        action: action.clone(),
+        cleaned_at,
+    };
+    env.events().publish((TOPIC_PROPOSAL_CLEANED,), event);
+}
+
+/// Emit a `VoteWeightSnapshotCreated` event.
+pub fn emit_vote_weight_snapshot_created(
+    env: &Env,
+    proposal_id: u64,
+    owners_count: u32,
+    threshold: u32,
+    created_at: u32,
+    action_tag: u32,
+) {
+    let event = VoteWeightSnapshotCreatedEvent {
+        proposal_id,
+        owners_count,
+        threshold,
+        created_at,
+        action_tag,
+    };
+    env.events().publish((TOPIC_VOTE_WEIGHT_SNAPSHOT_CREATED,), event);
+}
+
+/// Emit an `OwnerRecoveryPhraseAcknowledged` event.
+pub fn emit_owner_recovery_phrase_acknowledged(env: &Env, new_owner: &Address) {
+    let event = OwnerRecoveryPhraseAcknowledgedEvent {
+        new_owner: new_owner.clone(),
+    };
+    env.events().publish(
+        (TOPIC_OWNER_RECOVERY_PHRASE_ACKNOWLEDGED, new_owner.clone()),
+        event,
+    );
+}
+
+/// Emit a `RevocationIndexCleaned` event.
+///
+/// Publishes `(rv_cln, business)` → number of orphaned entries removed.
+pub fn emit_revocation_index_cleaned(env: &Env, business: &Address, cleaned_count: u32) {
+    env.events().publish(
+        (TOPIC_REVOCATION_INDEX_CLEANED, business.clone()),
+        cleaned_count,
+    );
 }

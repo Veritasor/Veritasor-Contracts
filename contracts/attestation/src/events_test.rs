@@ -32,7 +32,7 @@ use crate::events::{
     FlatFeeConfigChangedEvent, KeyRotationCancelledEvent,
     KeyRotationConfirmedEvent, KeyRotationEmergencyEvent,
     KeyRotationProposedEvent, PauseChangedEvent, ProofHashUpdatedEvent,
-    RateLimitConfigChangedEvent, RoleChangedEvent, EVENT_SCHEMA_VERSION,
+    RateLimitConfigChangedEvent, RevocationReason, RoleChangedEvent, EVENT_SCHEMA_VERSION,
     TOPIC_ATTESTATION_MIGRATED, TOPIC_ATTESTATION_REVOKED, TOPIC_ATTESTATION_SUBMITTED,
     TOPIC_BIZ_APPROVED, TOPIC_BIZ_REACTIVATE, TOPIC_BIZ_REGISTERED, TOPIC_BIZ_SUSPENDED,
     TOPIC_COLLECTOR_ROTATION_ACCEPTED, TOPIC_COLLECTOR_ROTATION_PROPOSED,
@@ -236,7 +236,14 @@ fn test_attestation_revoked_schema_snapshot() {
     let revoked_by = Address::generate(&env);
     let reason = String::from_str(&env, "fraudulent data detected");
 
-    crate::events::emit_attestation_revoked(&env, &business, &period, &revoked_by, &reason);
+    crate::events::emit_attestation_revoked(
+        &env,
+        &business,
+        &period,
+        &revoked_by,
+        &reason,
+        RevocationReason::Fraud,
+    );
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
 
@@ -1306,7 +1313,7 @@ fn test_attestation_submitted_timestamps_are_monotonic_per_topic() {
 
     assert_eq!(
         end - start,
-        businesses.len(),
+        businesses.len() as u32,
         "expected exactly one att_sub event per submission — a mismatch \
          here means events were dropped, duplicated, or miscounted"
     );
@@ -1413,7 +1420,7 @@ fn test_attestation_revoked_and_proof_hash_updated_preserve_call_order() {
     }
     let end = env.events().all().len();
 
-    assert_eq!(end - start, periods.len(), "expected exactly one att_rev event per revocation");
+    assert_eq!(end - start, periods.len() as u32, "expected exactly one att_rev event per revocation");
 
     let all_events = env.events().all();
     let mut revoked_periods: std::vec::Vec<String> = std::vec::Vec::new();
@@ -1450,7 +1457,7 @@ fn test_attestation_revoked_and_proof_hash_updated_preserve_call_order() {
     }
     let ph_end = env.events().all().len();
 
-    assert_eq!(ph_end - ph_start, ph_periods.len());
+    assert_eq!(ph_end - ph_start, ph_periods.len() as u32);
     let all_events2 = env.events().all();
     let mut updated_periods: std::vec::Vec<String> = std::vec::Vec::new();
     for i in ph_start..ph_end {

@@ -454,7 +454,7 @@ fn test_commit_after_long_delay_succeeds() {
 
 #[test]
 fn test_configure_fees_still_works_immediately() {
-    let (_env, client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let token = Address::generate(&env);
     let collector = Address::generate(&env);
 

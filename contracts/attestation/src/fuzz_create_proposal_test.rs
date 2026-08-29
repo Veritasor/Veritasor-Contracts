@@ -58,6 +58,8 @@
 
 extern crate std;
 
+use std::format;
+
 use super::*;
 use crate::multisig::{
     get_approvals, get_next_proposal_id, get_proposal, get_vote_weight_snapshot,

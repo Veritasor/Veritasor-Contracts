@@ -42,6 +42,17 @@
 //! jump followed by a backward jump cannot reopen capacity that was already
 //! consumed. Cutoffs use `saturating_sub` to avoid underflow at timestamp zero.
 //!
+//! ## Batch Submissions
+//!
+//! `submit_attestations_batch` and `submit_batch_as_attestor` run the same
+//! per-item `check_rate_limit` / `record_submission` pair as the single
+//! submission path. In-batch submissions therefore consume full-window and
+//! burst capacity exactly like sequential single calls: a batch containing
+//! more items for one business than `burst_max_submissions` (or
+//! `max_submissions`) is rejected with the same panic messages as single
+//! submissions, and a failed batch leaves no rate-limit capacity consumed
+//! because the whole transaction rolls back.
+//!
 //! ## Backward Compatibility
 //!
 //! If no `RateLimitConfig` has been stored, or if

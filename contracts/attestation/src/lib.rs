@@ -8,7 +8,7 @@ extern crate std;
 
 use core::cmp::Ordering;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, signature, Signature, token, Address, BytesN, Env, String, Symbol, TryIntoVal, Vec,
+    contract, contractimpl, contracttype, token, Address, BytesN, Env, IntoVal, String, Symbol, TryIntoVal, Vec,
 };
 
 use veritasor_common::replay_protection;
@@ -66,6 +66,7 @@ pub mod events;
 pub mod extended_metadata;
 pub mod fees;
 pub mod multisig;
+pub mod network_config;
 pub mod rate_limit;
 pub mod registry;
 
@@ -73,7 +74,7 @@ pub use access_control::{ROLE_ADMIN, ROLE_ATTESTOR, ROLE_BUSINESS, ROLE_OPERATOR
 pub use dispute::{
     Dispute, DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType, OptionalResolution,
 };
-pub use dynamic_fees::{add_relayer_gas, compute_fee, DataKey, FeeConfig, get_relayer_gas};
+pub use dynamic_fees::{add_relayer_gas, compute_fee, DataKey, FeeConfig, FEE_TIMELOCK_SECONDS, PendingFeeConfig, get_relayer_gas};
 pub use dynamic_fees::{RevokeProposal, DEFAULT_REVOKE_GRACE_SECONDS};
 pub use dynamic_fees::{ArchivePointerRecord, CompactionRetentionPolicy};
 pub use events::{
@@ -84,8 +85,8 @@ pub use events::{
     StakingContractProposedEvent, StakingContractCommittedEvent, StakingContractCancelledEvent,
     TOPIC_ANALYTICS_ROTATION_COMPLETED, TOPIC_STAKING_CONTRACT_PROPOSED, TOPIC_STAKING_CONTRACT_COMMITTED, TOPIC_STAKING_CONTRACT_CANCELLED,
 };
-pub use fees::{collect_flat_fee, CollectorRotationProposal, FlatFeeConfig};
-pub use multisig::{Proposal, ProposalAction, ProposalStatus};
+pub use fees::{collect_flat_fee, CollectorRotationProposal, DaoRotationProposal, FlatFeeConfig};
+pub use multisig::{Proposal, ProposalAction, ProposalEffect, ProposalStatus, VoteWeightSnapshot};
 pub use rate_limit::RateLimitConfig;
 pub use registry::{BusinessRecord, BusinessStatus};
 
@@ -188,10 +189,50 @@ fn compute_backfill_commitment(
     env.crypto().sha256(&buf).into()
 }
 
+/// Read the current CPU instruction count for relayer gas metering.
+///
+/// The budget API is only available in test/testutils builds of the SDK, so
+/// production builds report `0` (relayer gas accounting degrades gracefully).
+#[cfg(any(test, feature = "testutils"))]
+fn budget_cpu(env: &Env) -> u64 {
+    env.cost_estimate().budget().cpu_instruction_cost()
+}
+#[cfg(not(any(test, feature = "testutils")))]
+fn budget_cpu(_env: &Env) -> u64 {
+    0
+}
+
+/// Read the current memory bytes for relayer gas metering.
+///
+/// See [`budget_cpu`] for the testutils-gating rationale.
+#[cfg(any(test, feature = "testutils"))]
+fn budget_mem(env: &Env) -> u64 {
+    env.cost_estimate().budget().memory_bytes_cost()
+}
+#[cfg(not(any(test, feature = "testutils")))]
+fn budget_mem(_env: &Env) -> u64 {
+    0
+}
+
 #[soroban_sdk::contractclient(name = "AttestorStakingClient")]
 pub trait AttestorStakingContractTrait {
     fn is_eligible(env: Env, attestor: Address) -> bool;
     fn slash(env: Env, attestor: Address, amount: i128, dispute_id: u64);
+}
+
+/// Cross-contract client for the audit-log contract (symbol-based dispatch,
+/// matching `veritasor-audit-log`'s public interface).
+#[soroban_sdk::contractclient(name = "AuditLogClient")]
+pub trait AuditLogContractTrait {
+    fn get_replay_nonce(env: Env, actor: Address, channel: u32) -> u64;
+    fn append(
+        env: Env,
+        nonce: u64,
+        actor: Address,
+        source_contract: Address,
+        action: String,
+        payload: String,
+    ) -> u64;
 }
 
 #[contract]
@@ -838,8 +879,7 @@ impl AttestationContract {
         // Capture budget before execution for delegated submissions (relayer gas metering)
         let is_delegated = payer != business;
         let (cpu_before, mem_before) = if is_delegated {
-            let budget = env.budget();
-            (budget.cpu_instruction_cost(), budget.memory_bytes_cost())
+            (budget_cpu(env), budget_mem(env))
         } else {
             (0, 0)
         };
@@ -921,9 +961,8 @@ impl AttestationContract {
 
         // Track relayer gas for delegated submissions
         if is_delegated {
-            let budget = env.budget();
-            let cpu_after = budget.cpu_instruction_cost();
-            let mem_after = budget.memory_bytes_cost();
+            let cpu_after = budget_cpu(env);
+            let mem_after = budget_mem(env);
             let cpu_delta = cpu_after.saturating_sub(cpu_before);
             let mem_delta = mem_after.saturating_sub(mem_before);
 
@@ -956,8 +995,7 @@ impl AttestationContract {
         // Capture budget before execution for delegated submissions (relayer gas metering)
         let is_delegated = payer.is_some();
         let (cpu_before, mem_before) = if is_delegated {
-            let budget = env.budget();
-            (budget.cpu_instruction_cost(), budget.memory_bytes_cost())
+            (budget_cpu(env), budget_mem(env))
         } else {
             (0, 0)
         };
@@ -1002,6 +1040,12 @@ impl AttestationContract {
         }
 
         for item in items.iter() {
+            // Enforce rate limits per item: in-batch submissions consume
+            // full-window and burst capacity exactly like sequential single
+            // calls, so a batch with more items for one business than
+            // `max_submissions` / `burst_max_submissions` is rejected.
+            rate_limit::check_rate_limit(env, &item.business);
+
             let fee_payer = payer.unwrap_or(&item.business);
             // Handle fee bucket rollover per item (consistent with single submission path).
             dynamic_fees::handle_epoch_rollover(env);
@@ -1068,9 +1112,8 @@ impl AttestationContract {
 
         // Track relayer gas for delegated submissions
         if is_delegated {
-            let budget = env.budget();
-            let cpu_after = budget.cpu_instruction_cost();
-            let mem_after = budget.memory_bytes_cost();
+            let cpu_after = budget_cpu(env);
+            let mem_after = budget_mem(env);
             let cpu_delta = cpu_after.saturating_sub(cpu_before);
             let mem_delta = mem_after.saturating_sub(mem_before);
 
@@ -1457,10 +1500,13 @@ impl AttestationContract {
     }
 
     /// Cleanup orphaned revocation index entries for a business.
-    pub fn cleanup_revocation_index(env: Env, business: Address) -> Result<u32, ()> {
+    ///
+    /// Returns the number of orphaned entries removed. The operation is
+    /// infallible (no error paths exist), so the count is returned directly.
+    pub fn cleanup_revocation_index(env: Env, business: Address) -> u32 {
         let mut periods = dispute::get_revoked_periods(&env, &business);
         if periods.is_empty() {
-            return Ok(0);
+            return 0;
         }
 
         let mut cleaned_count = 0;
@@ -1481,7 +1527,7 @@ impl AttestationContract {
             events::emit_revocation_index_cleaned(&env, &business, cleaned_count);
         }
 
-        Ok(cleaned_count)
+        cleaned_count
     }
 
     pub fn get_revocation_info(
@@ -1521,7 +1567,11 @@ impl AttestationContract {
                     current_config.min_persistent_entry_ttl,
                     current_config.max_entry_ttl,
                 );
-                result.push_back((period.clone(), att_data.clone(), Self::get_revocation_info(env.clone(), business.clone(), period.clone())));
+                result.push_back((
+                    period.clone(),
+                    Some(att_data.clone()),
+                    Self::get_revocation_info(env.clone(), business.clone(), period.clone()),
+                ));
                 found = true;
             }
             
@@ -1541,7 +1591,11 @@ impl AttestationContract {
                     events::emit_rehydrated_from_archive(&env, &business, &period, archived_att_data.3);
                     env.storage().persistent().remove(&archive_key);
         
-                    result.push_back((period.clone(), archived_att_data, Self::get_revocation_info(env.clone(), business.clone(), period.clone())));
+                    result.push_back((
+                        period.clone(),
+                        Some(archived_att_data),
+                        Self::get_revocation_info(env.clone(), business.clone(), period.clone()),
+                    ));
                 }
             }
         }
@@ -1760,10 +1814,16 @@ impl AttestationContract {
     ///
     /// # Events
     /// Emits `EmergencyPauseTriggered` event
-    pub fn emergency_pause(env: Env, caller: Address, sig1: Signature, sig2: Signature, nonce: u64) {
-        let admin = access_control::require_admin(&env, &caller);
-        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
-        multisig::emergency_pause(&env, &sig1, &sig2);
+    pub fn emergency_pause(
+        env: Env,
+        caller: Address,
+        signer1: Address,
+        signer2: Address,
+        nonce: u64,
+    ) {
+        access_control::require_admin(&env, &caller);
+        replay_protection::verify_and_increment_nonce(&env, &caller, NONCE_CHANNEL_ADMIN, nonce);
+        multisig::emergency_pause(&env, &signer1, &signer2);
     }
 
     // ── Multisig governance ─────────────────────────────────────────
@@ -2350,13 +2410,11 @@ impl AttestationContract {
     }
 
     /// Propose a new DAO contract address (two-phase rotation). The current DAO calls this.
-    pub fn propose_dao_rotation(env: Env, new_dao: Address) {
-        let caller = env.invoker();
+    pub fn propose_dao_rotation(env: Env, caller: Address, new_dao: Address) {
         fees::propose_dao_rotation(&env, &caller, &new_dao);
     }
     /// The proposed new DAO calls this to accept the role.
-    pub fn accept_dao_rotation(env: Env) {
-        let caller = env.invoker();
+    pub fn accept_dao_rotation(env: Env, caller: Address) {
         fees::accept_dao_rotation(&env, &caller);
     }
     /// Admin: set the DAO contract address for dynamic fee config override.
@@ -2371,8 +2429,7 @@ impl AttestationContract {
     }
 
     /// The current DAO may cancel a pending rotation before the new DAO accepts.
-    pub fn cancel_dao_rotation(env: Env) {
-        let caller = env.invoker();
+    pub fn cancel_dao_rotation(env: Env, caller: Address) {
         fees::cancel_dao_rotation(&env, &caller);
     }
 
@@ -2622,7 +2679,7 @@ impl AttestationContract {
         dispute::validate_dispute_resolution(&env, dispute_id, &resolver).expect("invalid");
         let resolution = dispute::DisputeResolution {
             resolver,
-            outcome,
+            outcome: outcome.clone(),
             timestamp: env.ledger().timestamp(),
             notes,
         };
@@ -3319,6 +3376,12 @@ impl AttestationContract {
                 dynamic_fees::set_admin(env, new_admin);
                 access_control::swap_admin(env, &old_admin, new_admin, executor);
                 events::emit_key_rotation_emergency(env, &old_admin, new_admin);
+            }
+            ProposalAction::EmergencyPause => {
+                // Emergency pause bypasses the scheduled-pause time-lock;
+                // it pauses immediately once the multisig quorum is met.
+                access_control::set_paused(env, true);
+                events::emit_paused(env, executor);
             }
         }
     }

@@ -48,6 +48,16 @@ pub struct CollectorRotationProposal {
     pub escrowed_amount: i128,
 }
 
+/// Pending two-phase DAO controller rotation proposal.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DaoRotationProposal {
+    /// Current DAO contract address.
+    pub old_dao: Address,
+    /// Proposed new DAO contract address.
+    pub new_dao: Address,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub enum FlatFeeDataKey {
@@ -57,6 +67,14 @@ pub enum FlatFeeDataKey {
     Dao,
     /// Pending collector rotation proposal.
     CollectorRotationProposal,
+    /// Pending two-phase DAO controller rotation proposal.
+    PendingDaoRotation,
+    /// Current per-epoch fee snapshot number.
+    CurrentEpoch,
+    /// Historical `FlatFeeConfig` snapshot keyed by epoch.
+    EpochSnapshot(u64),
+    /// Ordered epoch list for retention pruning (`MAX_EPOCH_HISTORY`).
+    EpochHistory,
 }
 
 /// Retrieve the current flat fee configuration from instance storage.
