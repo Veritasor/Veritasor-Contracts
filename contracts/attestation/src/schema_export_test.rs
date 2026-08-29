@@ -76,7 +76,7 @@ fn test_event_json_schemas_emitted_on_build() {
         serde_json::from_str(&index_content).expect("valid index.json");
 
     assert_eq!(catalog["schema_version"], EVENT_SCHEMA_VERSION);
-    assert_eq!(catalog["events_count"], 39);
+    assert_eq!(catalog["events_count"], 40);
     assert!(catalog["aggregate_sha256"].is_string());
 }
 
@@ -125,7 +125,7 @@ fn test_schema_hash_catalog_integrity() {
     let catalog: serde_json::Value = serde_json::from_str(&index_content).expect("json parse");
 
     let topics_map = catalog["topics"].as_object().unwrap();
-    assert_eq!(topics_map.len(), 39);
+    assert_eq!(topics_map.len(), 40);
 
     for (topic_symbol, summary) in topics_map {
         let topic_file = schemas_dir.join(alloc::format!("{}.json", topic_symbol));

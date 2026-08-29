@@ -13,7 +13,6 @@ use super::*;
 use proptest::prelude::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, BytesN, Env, Vec};
-use std::vec::Vec as StdVec;
 
 // ════════════════════════════════════════════════════════════════════
 //  Helpers

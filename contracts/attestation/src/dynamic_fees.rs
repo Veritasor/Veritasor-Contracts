@@ -977,9 +977,7 @@ pub fn remove_archived_attestation(env: &Env, business: &Address, period: &sorob
 /// Get the optional reputation contract address.
 /// Returns `None` if reputation gating is disabled.
 pub fn get_reputation_contract(env: &Env) -> Option<Address> {
-    env.storage()
-        .instance()
-        .get(&DataKey::ReputationContract)
+    env.storage().instance().get(&DataKey::ReputationContract)
 }
 
 /// Set the reputation contract address (enables reputation gating).

@@ -12,8 +12,8 @@ use soroban_sdk::{
     TryIntoVal, Vec,
 };
 
-use veritasor_common::replay_protection;
 use veritasor_common::merkle;
+use veritasor_common::replay_protection;
 
 // Nonce channels
 pub const NONCE_CHANNEL_ADMIN: u32 = 0;
@@ -83,13 +83,14 @@ pub use dynamic_fees::{
 pub use dynamic_fees::{ArchivePointerRecord, CompactionRetentionPolicy};
 pub use dynamic_fees::{RevokeProposal, DEFAULT_REVOKE_GRACE_SECONDS};
 pub use events::{
-    AnalyticsRotationCompletedEvent, AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
-    AttestationSubmittedEvent, PermitCancelledEvent, ProofHashUpdatedEvent,
-    RelayerGasReportedEvent, ReputationGateCheckEvent,
+    AnalyticsRotationCompletedEvent, AttestationCleanedUpEvent, AttestationMigratedEvent,
+    AttestationRevokedEvent, AttestationSubmittedEvent, PermitCancelledEvent,
+    ProofHashUpdatedEvent, RelayerGasReportedEvent, ReputationGateCheckEvent,
     RevocationCancelledEvent, RevocationCommittedEvent, RevocationProposedEvent,
-    StakingContractProposedEvent, StakingContractCommittedEvent, StakingContractCancelledEvent,
-    TOPIC_ANALYTICS_ROTATION_COMPLETED, TOPIC_STAKING_CONTRACT_PROPOSED, TOPIC_STAKING_CONTRACT_COMMITTED, 
-    TOPIC_STAKING_CONTRACT_CANCELLED, TOPIC_REPUTATION_GATE_CHECK,
+    StakingContractCancelledEvent, StakingContractCommittedEvent, StakingContractProposedEvent,
+    TOPIC_ANALYTICS_ROTATION_COMPLETED, TOPIC_REPUTATION_GATE_CHECK,
+    TOPIC_STAKING_CONTRACT_CANCELLED, TOPIC_STAKING_CONTRACT_COMMITTED,
+    TOPIC_STAKING_CONTRACT_PROPOSED,
 };
 pub use fees::{collect_flat_fee, CollectorRotationProposal, DaoRotationProposal, FlatFeeConfig};
 pub use multisig::{Proposal, ProposalAction, ProposalEffect, ProposalStatus, VoteWeightSnapshot};
@@ -947,11 +948,11 @@ impl AttestationContract {
         if let Some(reputation_contract) = dynamic_fees::get_reputation_contract(&env) {
             let min_reputation = dynamic_fees::get_min_reputation(&env);
             let reputation_client = ReputationContractClient::new(&env, &reputation_contract);
-            
+
             // Cross-contract call to fetch reputation (fail-closed on error)
             let attestor_score = reputation_client.get_reputation(&attestor);
             let allowed = attestor_score >= min_reputation;
-            
+
             // Emit event for observability (regardless of pass/fail)
             events::emit_reputation_gate_check(
                 &env,
@@ -960,7 +961,7 @@ impl AttestationContract {
                 min_reputation,
                 allowed,
             );
-            
+
             // Reject if below floor
             if !allowed {
                 panic!("attestor reputation below minimum threshold");
@@ -1029,11 +1030,11 @@ impl AttestationContract {
         if let Some(reputation_contract) = dynamic_fees::get_reputation_contract(&env) {
             let min_reputation = dynamic_fees::get_min_reputation(&env);
             let reputation_client = ReputationContractClient::new(&env, &reputation_contract);
-            
+
             // Cross-contract call to fetch reputation (fail-closed on error)
             let attestor_score = reputation_client.get_reputation(&attestor);
             let allowed = attestor_score >= min_reputation;
-            
+
             // Emit event for observability (regardless of pass/fail)
             events::emit_reputation_gate_check(
                 &env,
@@ -1042,7 +1043,7 @@ impl AttestationContract {
                 min_reputation,
                 allowed,
             );
-            
+
             // Reject if below floor
             if !allowed {
                 panic!("attestor reputation below minimum threshold");
@@ -1425,18 +1426,19 @@ impl AttestationContract {
     ) -> bool {
         // Look up the attestation to get the stored Merkle root
         let attestation_opt = Self::get_attestation(env.clone(), business.clone(), period.clone());
-        
+
         let attestation = match attestation_opt {
             Some(data) => data,
             None => return false, // Attestation does not exist
         };
 
         // Check if the attestation has been revoked
-        let is_revoked = env.storage()
+        let is_revoked = env
+            .storage()
             .instance()
             .get::<_, bool>(&DataKey::Revoked(business.clone(), period.clone()))
             .unwrap_or(false);
-        
+
         if is_revoked {
             return false; // Revoked attestations are not valid for proof verification
         }
@@ -3755,6 +3757,13 @@ mod batch_auth_dedup_test;
 mod batch_submission_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod business_count_role_parity_test;
+/// Focused tests for `cleanup_expired_attestation` (issue #789).
+/// Covers happy paths, authorization guards, event emission, metadata
+/// removal, cleanup-count increment, and backward compatibility.
+#[cfg(all(test, feature = "full-tests"))]
+mod cleanup_expired_attestation_test;
+#[cfg(all(test, feature = "full-tests"))]
+mod cleanup_metrics_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod cleanup_metrics_test;
 #[cfg(test)]
@@ -3767,13 +3776,6 @@ mod dispute_test;
 mod dynamic_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod epoch_counter_test;
-#[cfg(all(test, feature = "full-tests"))]
-mod cleanup_metrics_test;
-/// Focused tests for `cleanup_expired_attestation` (issue #789).
-/// Covers happy paths, authorization guards, event emission, metadata
-/// removal, cleanup-count increment, and backward compatibility.
-#[cfg(all(test, feature = "full-tests"))]
-mod cleanup_expired_attestation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod events_test;
 #[cfg(all(test, feature = "full-tests"))]
