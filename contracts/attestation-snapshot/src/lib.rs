@@ -54,8 +54,8 @@
 //! - Only the admin who called `restore_dry_run` can call `restore_commit`.
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
-    xdr::ToXdr, Bytes, BytesN, Env, String, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short,
+    xdr::ToXdr, Address, Bytes, BytesN, Env, String, Symbol, Vec,
 };
 
 /// Maximum UTF-8 byte length for period/epoch identifiers.
@@ -463,7 +463,10 @@ impl AttestationSnapshotContract {
                 attestation_import::AttestationContractClient::new(&env, &attestation_contract);
             let has_attestation = att_client.get_attestation(&business, &period).is_some();
             let revoked = att_client.get_revocation_info(&business, &period).is_some();
-            assert!(has_attestation, "attestation must exist for this business and period");
+            assert!(
+                has_attestation,
+                "attestation must exist for this business and period"
+            );
             assert!(!revoked, "attestation must not be revoked");
         }
 
@@ -475,9 +478,10 @@ impl AttestationSnapshotContract {
             recorded_at: env.ledger().timestamp(),
         };
 
-        env.storage()
-            .instance()
-            .set(&DataKey::Snapshot(business.clone(), period.clone()), &record);
+        env.storage().instance().set(
+            &DataKey::Snapshot(business.clone(), period.clone()),
+            &record,
+        );
         Self::index_period_for_business(&env, &business, &period);
         Self::index_business_for_epoch(&env, &period, &business);
         Self::index_epoch_globally(&env, &period);
@@ -487,7 +491,10 @@ impl AttestationSnapshotContract {
     pub fn finalize_epoch(env: Env, caller: Address, epoch: String) {
         Self::require_admin(&env, &caller);
         Self::assert_period_within_limit(&epoch);
-        assert!(!Self::has_epoch_finalization(&env, &epoch), "epoch already finalized");
+        assert!(
+            !Self::has_epoch_finalization(&env, &epoch),
+            "epoch already finalized"
+        );
 
         let businesses = Self::read_epoch_businesses(&env, &epoch);
         let snapshot_count = businesses.len();
@@ -600,18 +607,17 @@ impl AttestationSnapshotContract {
     /// - Only admin may call this.
     /// - The pending token expires after `RESTORE_COMMIT_WINDOW_LEDGERS` ledgers.
     /// - A second dry-run overwrites any previous pending token.
-    pub fn restore_dry_run(
-        env: Env,
-        caller: Address,
-        entries: Vec<RestoreEntry>,
-    ) -> RestoreReport {
+    pub fn restore_dry_run(env: Env, caller: Address, entries: Vec<RestoreEntry>) -> RestoreReport {
         Self::require_admin(&env, &caller);
 
         let now_ts = env.ledger().timestamp();
         let now_seq = env.ledger().sequence();
         let batch_len = entries.len();
 
-        assert!(batch_len <= MAX_RESTORE_BATCH, "restore batch exceeds MAX_RESTORE_BATCH");
+        assert!(
+            batch_len <= MAX_RESTORE_BATCH,
+            "restore batch exceeds MAX_RESTORE_BATCH"
+        );
 
         let mut violations: Vec<EntryViolation> = Vec::new(&env);
 
@@ -633,12 +639,12 @@ impl AttestationSnapshotContract {
                     expected_version: SNAPSHOT_SCHEMA_VERSION,
                     detected_at: now_ts,
                 };
-                env.events().publish(
-                    (TOPIC_RESTORE_VERSION_MISMATCH, caller.clone()),
-                    event,
+                env.events()
+                    .publish((TOPIC_RESTORE_VERSION_MISMATCH, caller.clone()), event);
+                panic!(
+                    "snapshot schema version mismatch: expected {}, got {}",
+                    SNAPSHOT_SCHEMA_VERSION, entry.schema_version
                 );
-                panic!("snapshot schema version mismatch: expected {}, got {}",
-                       SNAPSHOT_SCHEMA_VERSION, entry.schema_version);
             }
 
             // ── Invariant 1: period length ──────────────────────────
@@ -696,7 +702,8 @@ impl AttestationSnapshotContract {
                         for k in 0..biz_last_ts.len() {
                             let kp = biz_last_ts.get(k).unwrap();
                             if kp.0 == entry.business {
-                                updated.push_back((entry.business.clone(), entry.record.recorded_at));
+                                updated
+                                    .push_back((entry.business.clone(), entry.record.recorded_at));
                             } else {
                                 updated.push_back(kp);
                             }
@@ -714,7 +721,11 @@ impl AttestationSnapshotContract {
 
         let entries_valid = batch_len.saturating_sub(violations.len());
         let ready = violations.is_empty();
-        let deadline = if ready { now_seq + RESTORE_COMMIT_WINDOW_LEDGERS } else { 0 };
+        let deadline = if ready {
+            now_seq + RESTORE_COMMIT_WINDOW_LEDGERS
+        } else {
+            0
+        };
 
         if ready {
             // Compute a batch fingerprint: SHA-256 of the concatenated
@@ -802,12 +813,12 @@ impl AttestationSnapshotContract {
                     expected_version: SNAPSHOT_SCHEMA_VERSION,
                     detected_at: now_ts,
                 };
-                env.events().publish(
-                    (TOPIC_RESTORE_VERSION_MISMATCH, caller.clone()),
-                    event,
+                env.events()
+                    .publish((TOPIC_RESTORE_VERSION_MISMATCH, caller.clone()), event);
+                panic!(
+                    "snapshot schema version mismatch: expected {}, got {}",
+                    SNAPSHOT_SCHEMA_VERSION, entry.schema_version
                 );
-                panic!("snapshot schema version mismatch: expected {}, got {}",
-                       SNAPSHOT_SCHEMA_VERSION, entry.schema_version);
             }
         }
 
@@ -980,9 +991,15 @@ impl AttestationSnapshotContract {
         env.storage().instance().get(&DataKey::AttestationContract)
     }
 
-    pub fn get_max_period_bytes(_env: Env) -> u32 { MAX_PERIOD_BYTES }
-    pub fn get_max_business_periods(_env: Env) -> u32 { MAX_BUSINESS_PERIODS }
-    pub fn get_max_epoch_businesses(_env: Env) -> u32 { MAX_EPOCH_BUSINESSES }
+    pub fn get_max_period_bytes(_env: Env) -> u32 {
+        MAX_PERIOD_BYTES
+    }
+    pub fn get_max_business_periods(_env: Env) -> u32 {
+        MAX_BUSINESS_PERIODS
+    }
+    pub fn get_max_epoch_businesses(_env: Env) -> u32 {
+        MAX_EPOCH_BUSINESSES
+    }
 
     // ── Snapshot commitment ───────────────────────────────────────────
 
@@ -1036,12 +1053,12 @@ impl AttestationSnapshotContract {
     /// The resulting commitment is order-independent, so the same snapshot set
     /// produces the same hash even when records were inserted in different orders.
     pub fn export_snapshot_commitment(env: Env) -> BytesN<32> {
-        let (commitment, _) = Self::export_snapshot_commitment_with_count(env);
+        let (commitment, _) = Self::export_commitment_with_count(env);
         commitment
     }
 
     /// Export a deterministic commitment and the number of live snapshot entries.
-    pub fn export_snapshot_commitment_with_count(env: Env) -> (BytesN<32>, u64) {
+    pub fn export_commitment_with_count(env: Env) -> (BytesN<32>, u64) {
         let mut entries = Vec::new(&env);
         let all_epochs: Vec<String> = env
             .storage()
@@ -1065,7 +1082,8 @@ impl AttestationSnapshotContract {
                 for k in 0..periods.len() {
                     let period = periods.get(k).unwrap();
                     let snap_key = DataKey::Snapshot(business.clone(), period.clone());
-                    if let Some(record) = env.storage().instance().get::<_, SnapshotRecord>(&snap_key)
+                    if let Some(record) =
+                        env.storage().instance().get::<_, SnapshotRecord>(&snap_key)
                     {
                         entries.push_back(Self::canonicalize_snapshot_record(&env, &record));
                     }
@@ -1073,7 +1091,24 @@ impl AttestationSnapshotContract {
             }
         }
 
-        entries.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+        // Deterministic canonical ordering. `soroban_sdk::Vec` has no sort in
+        // this SDK version, so insertion-sort in place; snapshot counts are
+        // bounded by the export caps above.
+        for i in 1..entries.len() {
+            let mut j = i;
+            while j > 0 {
+                let prev = entries.get(j - 1).unwrap();
+                let cur = entries.get(j).unwrap();
+                if prev.partial_cmp(&cur).unwrap_or(core::cmp::Ordering::Equal)
+                    != core::cmp::Ordering::Greater
+                {
+                    break;
+                }
+                entries.set(j, prev);
+                entries.set(j - 1, cur);
+                j -= 1;
+            }
+        }
 
         let mut body = Bytes::new(&env);
         for i in 0..entries.len() {
@@ -1087,10 +1122,16 @@ impl AttestationSnapshotContract {
 
     fn canonicalize_snapshot_record(env: &Env, record: &SnapshotRecord) -> Bytes {
         let mut bytes = Bytes::new(env);
-        bytes.append(&record.period.to_xdr(env));
+        bytes.append(&record.period.clone().to_xdr(env));
         bytes.append(&record.trailing_revenue.to_le_bytes().as_slice().to_xdr(env));
         bytes.append(&record.anomaly_count.to_le_bytes().as_slice().to_xdr(env));
-        bytes.append(&record.attestation_count.to_le_bytes().as_slice().to_xdr(env));
+        bytes.append(
+            &record
+                .attestation_count
+                .to_le_bytes()
+                .as_slice()
+                .to_xdr(env),
+        );
         bytes.append(&record.recorded_at.to_le_bytes().as_slice().to_xdr(env));
         bytes
     }
@@ -1119,7 +1160,10 @@ impl AttestationSnapshotContract {
             .instance()
             .get(&DataKey::Writer(caller.clone()))
             .unwrap_or(false);
-        assert!(*caller == admin || is_writer, "caller must be admin or writer");
+        assert!(
+            *caller == admin || is_writer,
+            "caller must be admin or writer"
+        );
     }
 
     fn has_epoch_finalization(env: &Env, epoch: &String) -> bool {
@@ -1147,7 +1191,10 @@ impl AttestationSnapshotContract {
                 return;
             }
         }
-        assert!(periods.len() < MAX_BUSINESS_PERIODS, "business period index limit reached");
+        assert!(
+            periods.len() < MAX_BUSINESS_PERIODS,
+            "business period index limit reached"
+        );
         periods.push_back(period.clone());
         env.storage().instance().set(&key, &periods);
     }
@@ -1164,7 +1211,10 @@ impl AttestationSnapshotContract {
                 return;
             }
         }
-        assert!(businesses.len() < MAX_EPOCH_BUSINESSES, "epoch business index limit reached");
+        assert!(
+            businesses.len() < MAX_EPOCH_BUSINESSES,
+            "epoch business index limit reached"
+        );
         businesses.push_back(business.clone());
         env.storage().instance().set(&key, &businesses);
     }
@@ -1196,18 +1246,16 @@ impl AttestationSnapshotContract {
     /// The hash covers the ordered sequence of (business, period, schema_version)
     /// tuples to bind the commit to the exact entries validated by dry-run.
     fn compute_batch_hash(env: &Env, entries: &Vec<RestoreEntry>) -> soroban_sdk::BytesN<32> {
-        let mut buffer = Vec::new(env);
+        let mut buffer = Bytes::new(env);
         for i in 0..entries.len() {
             let entry = entries.get(i).unwrap();
-            buffer.push_back(entry.business.clone());
-            buffer.push_back(entry.period.clone());
-            buffer.push_back(entry.schema_version);
+            buffer.append(&entry.business.to_xdr(env));
+            buffer.append(&entry.period.clone().to_xdr(env));
+            buffer.append(&entry.schema_version.to_xdr(env));
         }
-        let encoded = buffer.to_xdr(env);
-        env.crypto().sha256(&encoded).into()
+        env.crypto().sha256(&buffer).into()
     }
 }
 
-}
 #[cfg(test)]
 mod snapshot_ttl_test;
