@@ -28,8 +28,11 @@
 //! - Metadata is removed when the corresponding attestation is revoked,
 //!   preventing dead-storage accumulation.
 
+#[cfg(test)]
 use soroban_sdk::xdr::FromXdr;
-use soroban_sdk::{contracttype, Address, Env, String, TryFromVal, TryIntoVal};
+use soroban_sdk::{contracttype, Address, Env, String};
+#[cfg(test)]
+use soroban_sdk::{TryFromVal, TryIntoVal};
 
 use crate::dynamic_fees::DataKey;
 
@@ -85,15 +88,18 @@ impl core::error::Error for MetadataDeserializationError {}
 /// This helper should be used for any metadata deserialization path that
 /// consumes untrusted bytes so malformed input returns an error rather than
 /// panicking inside the contract runtime.
+///
+/// Test-only: the `ScVal::from_xdr` decode path relies on a `testutils`-gated
+/// conversion, so this helper exists only when the crate is built as a test
+/// harness. Production code does not call it.
+#[cfg(test)]
 pub fn deserialize_metadata_bytes(
     env: &Env,
     bytes: &[u8],
 ) -> Result<AttestationMetadata, MetadataDeserializationError> {
-    let sc_val = soroban_sdk::xdr::ScVal::from_xdr(
-        env,
-        &soroban_sdk::Bytes::from_slice(env, bytes),
-    )
-    .map_err(|_| MetadataDeserializationError::InvalidEncoding)?;
+    let sc_val =
+        soroban_sdk::xdr::ScVal::from_xdr(env, &soroban_sdk::Bytes::from_slice(env, bytes))
+            .map_err(|_| MetadataDeserializationError::InvalidEncoding)?;
     let val: soroban_sdk::Val = sc_val
         .try_into_val(env)
         .map_err(|_| MetadataDeserializationError::InvalidEncoding)?;

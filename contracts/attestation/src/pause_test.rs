@@ -248,10 +248,7 @@ fn schedule_pause_auto_applies_on_schedule_pause_call() {
     client.schedule_pause(&admin, &future, &2u64);
     // Auto-apply pauses the contract, then a new pause is scheduled for the future
     assert!(client.is_paused());
-    assert_eq!(
-        client.get_pending_pause_effective_at(),
-        Some(future)
-    );
+    assert_eq!(client.get_pending_pause_effective_at(), Some(future));
 }
 
 #[test]
@@ -352,10 +349,7 @@ fn emergency_pause_still_works_independently() {
     assert!(!client.is_paused());
 
     // The scheduled pause should still be pending
-    assert_eq!(
-        client.get_pending_pause_effective_at(),
-        Some(now + 100_000)
-    );
+    assert_eq!(client.get_pending_pause_effective_at(), Some(now + 100_000));
 }
 
 #[test]
@@ -406,10 +400,7 @@ fn full_schedule_cancel_reschedule_lifecycle() {
 
     // 3. Re-schedule with different time
     client.schedule_pause(&admin, &(now + 10_800), &3u64);
-    assert_eq!(
-        client.get_pending_pause_effective_at(),
-        Some(now + 10_800)
-    );
+    assert_eq!(client.get_pending_pause_effective_at(), Some(now + 10_800));
 
     // 4. Cancel again
     client.cancel_scheduled_pause(&admin, &4u64);

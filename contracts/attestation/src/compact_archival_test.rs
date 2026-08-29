@@ -180,7 +180,8 @@ mod tests {
         client.set_compaction_retention(&admin, &1u64);
 
         // Advance epoch so current_epoch > 0
-        env.ledger().with_mut(|l| l.timestamp = FEE_BUCKET_WINDOW_SECONDS * 10);
+        env.ledger()
+            .with_mut(|l| l.timestamp = FEE_BUCKET_WINDOW_SECONDS * 10);
 
         let business = Address::generate(&env);
         let period = String::from_str(&env, "202401");
@@ -230,7 +231,8 @@ mod tests {
         let period = archive_one(&client, &env, &admin, &business, "202401");
 
         // Advance many epochs.
-        env.ledger().with_mut(|l| l.timestamp = now + FEE_BUCKET_WINDOW_SECONDS * 100);
+        env.ledger()
+            .with_mut(|l| l.timestamp = now + FEE_BUCKET_WINDOW_SECONDS * 100);
 
         let mut candidates = Vec::new(&env);
         candidates.push_back((business.clone(), period.clone()));
@@ -239,7 +241,9 @@ mod tests {
         assert_eq!(count, 0, "no-expiry attestation must never be compacted");
 
         // Full archived data still present.
-        assert!(client.get_archived_attestation(&business, &period).is_some());
+        assert!(client
+            .get_archived_attestation(&business, &period)
+            .is_some());
     }
 
     // ── compact_archival: age threshold ──────────────────────────────
@@ -270,7 +274,9 @@ mod tests {
 
         let count = client.compact_archival(&admin, &candidates, &10u32);
         assert_eq!(count, 0, "not old enough — must be skipped");
-        assert!(client.get_archived_attestation(&business, &period).is_some());
+        assert!(client
+            .get_archived_attestation(&business, &period)
+            .is_some());
     }
 
     #[test]
@@ -339,7 +345,9 @@ mod tests {
 
         // Full data gone.
         assert!(
-            client.get_archived_attestation(&business, &period).is_none(),
+            client
+                .get_archived_attestation(&business, &period)
+                .is_none(),
             "full archived data must be removed"
         );
 
@@ -541,9 +549,15 @@ mod tests {
         let count = client.compact_archival(&admin, &candidates, &10u32);
         assert_eq!(count, 1, "only the old eligible entry should be compacted");
 
-        assert!(client.get_archived_attestation(&business, &period_old).is_none());
-        assert!(client.get_archived_attestation(&business, &period_young).is_some());
-        assert!(client.get_archived_attestation(&business, &period_no_exp).is_some());
+        assert!(client
+            .get_archived_attestation(&business, &period_old)
+            .is_none());
+        assert!(client
+            .get_archived_attestation(&business, &period_young)
+            .is_some());
+        assert!(client
+            .get_archived_attestation(&business, &period_no_exp)
+            .is_some());
     }
 
     // ── compact_archival: verify_attestation after compaction ─────────

@@ -50,9 +50,9 @@
 //! - Nonce sequences must be monotonically increasing per account
 //! - At least `MIN_ADMIN_COUNT` addresses always hold ADMIN role.
 //! - Admin removals are separated by `ADMIN_REMOVAL_COOLDOWN_SECS`.
-use soroban_sdk::{contracttype, Address, Env, Vec};
 use crate::dispute;
 use crate::events;
+use soroban_sdk::{contracttype, Address, Env, Vec};
 
 /// Role identifiers as bit flags for efficient storage
 /// SECURITY: Only the first 4 bits are valid (0b1111 = 0xF)
@@ -258,8 +258,7 @@ fn require_admin_removal_allowed(env: &Env) {
     {
         let now = env.ledger().timestamp();
         assert!(
-            now >= last_removed_at
-                && now - last_removed_at >= ADMIN_REMOVAL_COOLDOWN_SECS,
+            now >= last_removed_at && now - last_removed_at >= ADMIN_REMOVAL_COOLDOWN_SECS,
             "admin removal cooldown not elapsed"
         );
     }

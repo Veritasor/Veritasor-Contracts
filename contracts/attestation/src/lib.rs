@@ -8,7 +8,8 @@ extern crate std;
 
 use core::cmp::Ordering;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, token, Address, BytesN, Env, IntoVal, String, Symbol, TryIntoVal, Vec,
+    contract, contractimpl, contracttype, token, Address, BytesN, Env, IntoVal, String, Symbol,
+    TryIntoVal, Vec,
 };
 
 use veritasor_common::replay_protection;
@@ -74,16 +75,20 @@ pub use access_control::{ROLE_ADMIN, ROLE_ATTESTOR, ROLE_BUSINESS, ROLE_OPERATOR
 pub use dispute::{
     Dispute, DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType, OptionalResolution,
 };
-pub use dynamic_fees::{add_relayer_gas, compute_fee, DataKey, FeeConfig, FEE_TIMELOCK_SECONDS, PendingFeeConfig, get_relayer_gas};
-pub use dynamic_fees::{RevokeProposal, DEFAULT_REVOKE_GRACE_SECONDS};
+pub use dynamic_fees::{
+    add_relayer_gas, compute_fee, get_relayer_gas, DataKey, FeeConfig, PendingFeeConfig,
+    FEE_TIMELOCK_SECONDS,
+};
 pub use dynamic_fees::{ArchivePointerRecord, CompactionRetentionPolicy};
+pub use dynamic_fees::{RevokeProposal, DEFAULT_REVOKE_GRACE_SECONDS};
 pub use events::{
-    AnalyticsRotationCompletedEvent, AttestationCleanedUpEvent, AttestationMigratedEvent, AttestationRevokedEvent,
-    AttestationSubmittedEvent, PermitCancelledEvent, ProofHashUpdatedEvent,
-    RelayerGasReportedEvent,
-    RevocationCancelledEvent, RevocationCommittedEvent, RevocationProposedEvent,
-    StakingContractProposedEvent, StakingContractCommittedEvent, StakingContractCancelledEvent,
-    TOPIC_ANALYTICS_ROTATION_COMPLETED, TOPIC_STAKING_CONTRACT_PROPOSED, TOPIC_STAKING_CONTRACT_COMMITTED, TOPIC_STAKING_CONTRACT_CANCELLED,
+    AnalyticsRotationCompletedEvent, AttestationCleanedUpEvent, AttestationMigratedEvent,
+    AttestationRevokedEvent, AttestationSubmittedEvent, PermitCancelledEvent,
+    ProofHashUpdatedEvent, RelayerGasReportedEvent, RevocationCancelledEvent,
+    RevocationCommittedEvent, RevocationProposedEvent, StakingContractCancelledEvent,
+    StakingContractCommittedEvent, StakingContractProposedEvent,
+    TOPIC_ANALYTICS_ROTATION_COMPLETED, TOPIC_STAKING_CONTRACT_CANCELLED,
+    TOPIC_STAKING_CONTRACT_COMMITTED, TOPIC_STAKING_CONTRACT_PROPOSED,
 };
 pub use fees::{collect_flat_fee, CollectorRotationProposal, DaoRotationProposal, FlatFeeConfig};
 pub use multisig::{Proposal, ProposalAction, ProposalEffect, ProposalStatus, VoteWeightSnapshot};
@@ -358,8 +363,8 @@ impl AttestationContract {
     pub fn commit_fee_config(env: Env, caller: Address, nonce: u64) {
         let admin = dynamic_fees::require_admin(&env);
         replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
-        let pending = dynamic_fees::get_pending_fee_config(&env)
-            .expect("no pending fee config to commit");
+        let pending =
+            dynamic_fees::get_pending_fee_config(&env).expect("no pending fee config to commit");
         assert!(
             env.ledger().timestamp() >= pending.effective_at,
             "timelock not yet expired"
@@ -468,19 +473,15 @@ impl AttestationContract {
         );
     }
 
-    pub fn propose_collector_rotation(
-        env: Env,
-        caller: Address,
-        new_collector: Address,
-    ) {
+    pub fn propose_collector_rotation(env: Env, caller: Address, new_collector: Address) {
         let current_config = fees::get_flat_fee_config(&env).expect("flat fee not configured");
         assert!(
             caller == current_config.collector,
             "only current collector may propose rotation"
         );
 
-        let current_balance = token::Client::new(&env, &current_config.token)
-            .balance(&current_config.collector);
+        let current_balance =
+            token::Client::new(&env, &current_config.token).balance(&current_config.collector);
 
         fees::propose_collector_rotation(&env, &caller, &new_collector);
         events::emit_collector_rotation_proposed(
@@ -493,8 +494,8 @@ impl AttestationContract {
     }
 
     pub fn accept_collector_rotation(env: Env, caller: Address) {
-        let proposal = fees::get_pending_collector_rotation(&env)
-            .expect("no pending collector rotation");
+        let proposal =
+            fees::get_pending_collector_rotation(&env).expect("no pending collector rotation");
         assert!(
             caller == proposal.new_collector,
             "only proposed new collector may accept rotation"
@@ -510,9 +511,7 @@ impl AttestationContract {
         );
     }
 
-    pub fn get_pending_collector_rotation(
-        env: Env,
-    ) -> Option<CollectorRotationProposal> {
+    pub fn get_pending_collector_rotation(env: Env) -> Option<CollectorRotationProposal> {
         fees::get_pending_collector_rotation(&env)
     }
 
@@ -542,12 +541,7 @@ impl AttestationContract {
     /// # Panics
     /// - Caller does not have ADMIN role
     /// - A pending staking contract proposal already exists (cancel it first)
-    pub fn propose_staking_contract(
-        env: Env,
-        caller: Address,
-        new_contract: Address,
-        nonce: u64,
-    ) {
+    pub fn propose_staking_contract(env: Env, caller: Address, new_contract: Address, nonce: u64) {
         access_control::require_admin(&env, &caller);
         let admin = dynamic_fees::require_admin(&env);
         replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
@@ -613,9 +607,7 @@ impl AttestationContract {
     ///
     /// Observers (monitoring systems, DAO, community) can call this to detect
     /// a pending rebinding before the timelock expires.
-    pub fn get_pending_staking_contract(
-        env: Env,
-    ) -> Option<dynamic_fees::PendingStakingContract> {
+    pub fn get_pending_staking_contract(env: Env) -> Option<dynamic_fees::PendingStakingContract> {
         dynamic_fees::get_pending_staking_contract(&env)
     }
 
@@ -627,7 +619,9 @@ impl AttestationContract {
 
     pub fn set_audit_log_contract(env: Env, caller: Address, audit_log: Address) {
         access_control::require_admin(&env, &caller);
-        env.storage().instance().set(&DataKey::AuditLogContract, &audit_log);
+        env.storage()
+            .instance()
+            .set(&DataKey::AuditLogContract, &audit_log);
     }
 
     pub fn get_audit_log_contract(env: Env) -> Option<Address> {
@@ -974,14 +968,7 @@ impl AttestationContract {
             let total_mem = mem_delta; // Note: we only track CPU in storage, mem is per-transaction
 
             events::emit_relayer_gas_reported(
-                env,
-                payer,
-                business,
-                period,
-                cpu_delta,
-                mem_delta,
-                total_cpu,
-                total_mem,
+                env, payer, business, period, cpu_delta, mem_delta, total_cpu, total_mem,
             );
         }
     }
@@ -1098,8 +1085,7 @@ impl AttestationContract {
             // ── Backfill checkpoint per batch item ───────────
             let global_count = dynamic_fees::increment_backfill_count(env);
             if global_count % BACKFILL_CHECKPOINT_INTERVAL == 0 {
-                let commitment =
-                    compute_backfill_commitment(env, global_count, &item.merkle_root);
+                let commitment = compute_backfill_commitment(env, global_count, &item.merkle_root);
                 events::emit_backfill_checkpoint(env, global_count, &commitment);
             }
 
@@ -1143,10 +1129,10 @@ impl AttestationContract {
     }
 
     pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
-        if let Some(att_data) =
-            env.storage()
-                .persistent()
-                .get::<_, AttestationData>(&DataKey::Attestation(business.clone(), period.clone()))
+        if let Some(att_data) = env
+            .storage()
+            .persistent()
+            .get::<_, AttestationData>(&DataKey::Attestation(business.clone(), period.clone()))
         {
             let current_config = network_config::get_config(&env);
             env.storage().persistent().extend_ttl(
@@ -1159,12 +1145,18 @@ impl AttestationContract {
 
         // Try reading from archive
         let archive_key = DataKey::AttestationSnapshot(business.clone(), period.clone());
-        if let Some(archived_att_data) = env.storage().persistent().get::<_, AttestationData>(&archive_key) {
+        if let Some(archived_att_data) = env
+            .storage()
+            .persistent()
+            .get::<_, AttestationData>(&archive_key)
+        {
             let current_config = network_config::get_config(&env);
 
             // Rehydrate back to active storage
             let active_key = DataKey::Attestation(business.clone(), period.clone());
-            env.storage().persistent().set(&active_key, &archived_att_data);
+            env.storage()
+                .persistent()
+                .set(&active_key, &archived_att_data);
             env.storage().persistent().extend_ttl(
                 &active_key,
                 current_config.min_persistent_entry_ttl,
@@ -1179,7 +1171,7 @@ impl AttestationContract {
 
             return Some(archived_att_data);
         }
-        
+
         None
     }
 
@@ -1574,23 +1566,34 @@ impl AttestationContract {
                 ));
                 found = true;
             }
-            
+
             if !found {
                 let archive_key = DataKey::AttestationSnapshot(business.clone(), period.clone());
-                if let Some(archived_att_data) = env.storage().persistent().get::<_, AttestationData>(&archive_key) {
+                if let Some(archived_att_data) = env
+                    .storage()
+                    .persistent()
+                    .get::<_, AttestationData>(&archive_key)
+                {
                     let current_config = network_config::get_config(&env);
-        
+
                     let active_key = DataKey::Attestation(business.clone(), period.clone());
-                    env.storage().persistent().set(&active_key, &archived_att_data);
+                    env.storage()
+                        .persistent()
+                        .set(&active_key, &archived_att_data);
                     env.storage().persistent().extend_ttl(
                         &active_key,
                         current_config.min_persistent_entry_ttl,
                         current_config.max_entry_ttl,
                     );
-        
-                    events::emit_rehydrated_from_archive(&env, &business, &period, archived_att_data.3);
+
+                    events::emit_rehydrated_from_archive(
+                        &env,
+                        &business,
+                        &period,
+                        archived_att_data.3,
+                    );
                     env.storage().persistent().remove(&archive_key);
-        
+
                     result.push_back((
                         period.clone(),
                         Some(archived_att_data),
@@ -1990,11 +1993,8 @@ impl AttestationContract {
         assert!(is_admin || is_business, "not admin or business owner");
 
         let key = MultiPeriodKey::Ranges(business);
-        let ranges: Vec<AttestationRange> = env
-            .storage()
-            .instance()
-            .get(&key)
-            .expect("no ranges found");
+        let ranges: Vec<AttestationRange> =
+            env.storage().instance().get(&key).expect("no ranges found");
 
         let range = ranges.get(range_id).expect("range_id out of bounds");
 
@@ -2264,7 +2264,8 @@ impl AttestationContract {
         assert!(score <= ANOMALY_SCORE_MAX, "score too high");
         assert!(
             access_control::has_role(&env, &caller, ROLE_ADMIN)
-                || env.storage()
+                || env
+                    .storage()
                     .instance()
                     .has(&(AUTHORIZED_KEY_TAG, caller.clone())),
             "caller is not authorized analytics or admin"
@@ -2289,9 +2290,7 @@ impl AttestationContract {
             .has(&AnalyticsRotationKey::PendingRotation)
     }
 
-    pub fn get_pending_analytics_rotation(
-        env: Env,
-    ) -> Option<AnalyticsRotationProposal> {
+    pub fn get_pending_analytics_rotation(env: Env) -> Option<AnalyticsRotationProposal> {
         env.storage()
             .instance()
             .get(&AnalyticsRotationKey::PendingRotation)
@@ -2351,17 +2350,12 @@ impl AttestationContract {
             "old analytics is no longer authorized"
         );
 
-        env.storage().instance().remove(&(
-            AUTHORIZED_KEY_TAG,
-            proposal.old_analytics.clone(),
-        ));
         env.storage()
             .instance()
-            .set(&(
-                AUTHORIZED_KEY_TAG,
-                proposal.new_analytics.clone(),
-            ),
-            &true);
+            .remove(&(AUTHORIZED_KEY_TAG, proposal.old_analytics.clone()));
+        env.storage()
+            .instance()
+            .set(&(AUTHORIZED_KEY_TAG, proposal.new_analytics.clone()), &true);
         env.storage()
             .instance()
             .remove(&AnalyticsRotationKey::PendingRotation);
@@ -2596,7 +2590,12 @@ impl AttestationContract {
         assert!(caller == pending.new_admin, "not new admin");
         veritasor_common::key_rotation::confirm_rotation(&env, &pending.new_admin);
         dynamic_fees::set_admin(&env, &pending.new_admin);
-        access_control::swap_admin_after_verified_rotation(&env, &old_admin, &pending.new_admin, &caller);
+        access_control::swap_admin_after_verified_rotation(
+            &env,
+            &old_admin,
+            &pending.new_admin,
+            &caller,
+        );
     }
 
     pub fn cancel_key_rotation(env: Env) {
@@ -2640,9 +2639,13 @@ impl AttestationContract {
         challenger.require_auth();
         dispute::validate_dispute_eligibility(&env, &challenger, &business, &period)
             .expect("not eligible");
-        
+
         let attestor_key = DataKey::Attestor(business.clone(), period.clone());
-        let attestor: Address = env.storage().instance().get(&attestor_key).unwrap_or(business.clone());
+        let attestor: Address = env
+            .storage()
+            .instance()
+            .get(&attestor_key)
+            .unwrap_or(business.clone());
 
         let id = dispute::generate_dispute_id(&env);
         let d = Dispute {
@@ -2724,7 +2727,8 @@ impl AttestationContract {
         leaf: BytesN<32>,
         proof: Vec<BytesN<32>>,
     ) {
-        dispute::submit_dispute_witness(&env, dispute_id, &leaf, &proof).expect("witness verification failed");
+        dispute::submit_dispute_witness(&env, dispute_id, &leaf, &proof)
+            .expect("witness verification failed");
     }
 
     /// Return all dispute IDs associated with a specific attestation.
@@ -2807,26 +2811,24 @@ impl AttestationContract {
         args.push_back(attestor.into_val(&env));
         args.push_back(amount.into_val(&env));
         args.push_back(dispute_id.into_val(&env));
-        let _ = env.invoke_contract::<soroban_sdk::Val>(&staking_addr, &soroban_sdk::Symbol::new(&env, "slash"), args);
+        let _ = env.invoke_contract::<soroban_sdk::Val>(
+            &staking_addr,
+            &soroban_sdk::Symbol::new(&env, "slash"),
+            args,
+        );
 
         events::emit_slash_triggered(&env, &attestor, amount, dispute_id);
 
         if let Some(audit_log) = Self::get_audit_log_contract(env.clone()) {
             let audit_client = AuditLogClient::new(&env, &audit_log);
             let current_contract = env.current_contract_address();
-            
+
             // 1 is NONCE_CHANNEL_ADMIN in audit-log
             let nonce = audit_client.get_replay_nonce(&current_contract, &1u32);
             let action = String::from_str(&env, "SlashTriggered");
             let payload = String::from_str(&env, "SlashPayload");
 
-            audit_client.append(
-                &nonce,
-                &caller,
-                &current_contract,
-                &action,
-                &payload,
-            );
+            audit_client.append(&nonce, &caller, &current_contract, &action, &payload);
         }
     }
 
@@ -2906,10 +2908,7 @@ impl AttestationContract {
 
         // 3. Attestation must exist.
         let key = DataKey::Attestation(business.clone(), period.clone());
-        assert!(
-            env.storage().instance().has(&key),
-            "attestation not found"
-        );
+        assert!(env.storage().instance().has(&key), "attestation not found");
 
         // 4. Role / ownership check.
         let caller_is_admin = caller == dynamic_fees::get_admin(&env)
@@ -2998,7 +2997,11 @@ impl AttestationContract {
     }
 
     /// Return the pending revocation proposal for (business, period), if any.
-    pub fn get_revoke_proposal(env: Env, business: Address, period: String) -> Option<RevokeProposal> {
+    pub fn get_revoke_proposal(
+        env: Env,
+        business: Address,
+        period: String,
+    ) -> Option<RevokeProposal> {
         dynamic_fees::get_revoke_proposal(&env, &business, &period)
     }
 
@@ -3114,10 +3117,7 @@ impl AttestationContract {
         let grace_seconds = dynamic_fees::get_revoke_grace_seconds(&env);
         let now = env.ledger().timestamp();
         let earliest_commit = proposal.proposed_at.saturating_add(grace_seconds);
-        assert!(
-            now >= earliest_commit,
-            "grace window has not elapsed"
-        );
+        assert!(now >= earliest_commit, "grace window has not elapsed");
 
         // Guard against the edge case where an emergency revoke happened while
         // the proposal was pending.
@@ -3171,12 +3171,7 @@ impl AttestationContract {
     /// - No pending proposal for (business, period)
     /// - The grace window has already elapsed (commit window is open)
     /// - Caller is neither the business owner nor an admin
-    pub fn cancel_revoke_proposal(
-        env: Env,
-        caller: Address,
-        business: Address,
-        period: String,
-    ) {
+    pub fn cancel_revoke_proposal(env: Env, caller: Address, business: Address, period: String) {
         access_control::require_not_paused(&env);
         caller.require_auth();
 
@@ -3462,14 +3457,12 @@ impl AttestationContract {
 // ── Test Modules ──
 // Issue #369 tests always run. Enable `full-tests` for the legacy attestation suite
 // (some modules need updates on this branch before they compile).
-#[cfg(test)]
-mod compact_archival_test;
-#[cfg(test)]
-mod attestor_lock_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod access_control_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod anomaly_test;
+#[cfg(test)]
+mod attestor_lock_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod attestor_staking_integration_test;
 #[cfg(test)]
@@ -3479,6 +3472,10 @@ mod batch_submission_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod business_count_role_parity_test;
 #[cfg(all(test, feature = "full-tests"))]
+mod cleanup_metrics_test;
+#[cfg(test)]
+mod compact_archival_test;
+#[cfg(all(test, feature = "full-tests"))]
 mod dao_override_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod dispute_test;
@@ -3486,8 +3483,6 @@ mod dispute_test;
 mod dynamic_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod epoch_counter_test;
-#[cfg(all(test, feature = "full-tests"))]
-mod cleanup_metrics_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod events_test;
 #[cfg(all(test, feature = "full-tests"))]
@@ -3519,11 +3514,9 @@ mod multisig_test;
 #[cfg(test)]
 mod pause_test;
 #[cfg(test)]
-mod permit_test;
-#[cfg(test)]
 mod permit_expiry_test;
 #[cfg(test)]
-mod timelock_fees_test;
+mod permit_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod proof_hash_test;
 #[cfg(all(test, feature = "full-tests"))]
@@ -3540,20 +3533,22 @@ mod registry_test;
 mod replay_nonce_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod revocation_test;
+#[cfg(all(test, feature = "full-tests"))]
+mod revoke_reason_test;
 #[cfg(test)]
 mod schema_export_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod test;
 #[cfg(all(test, feature = "full-tests"))]
 mod tier_bounds_test;
+#[cfg(test)]
+mod timelock_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod ttl_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod verify_attestation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod verify_attestations_batch_test;
-#[cfg(all(test, feature = "full-tests"))]
-mod revoke_reason_test;
 
 #[cfg(test)]
 mod relayer_gas_attribution_test {
@@ -3658,7 +3653,10 @@ mod relayer_gas_attribution_test {
 
         // Check relayer gas accumulation - should be 0 for business submission
         let relayer_gas = dynamic_fees::get_relayer_gas(&env, &business);
-        assert_eq!(relayer_gas, 0, "Business submission should not accumulate relayer gas");
+        assert_eq!(
+            relayer_gas, 0,
+            "Business submission should not accumulate relayer gas"
+        );
     }
 
     #[test]
@@ -3698,7 +3696,10 @@ mod relayer_gas_attribution_test {
 
         // Check relayer gas accumulation
         let relayer_gas = dynamic_fees::get_relayer_gas(&env, &attestor);
-        assert!(relayer_gas > 0, "Relayer should have accumulated gas from batch submission");
+        assert!(
+            relayer_gas > 0,
+            "Relayer should have accumulated gas from batch submission"
+        );
     }
 
     #[test]
@@ -3745,7 +3746,10 @@ mod relayer_gas_attribution_test {
         );
 
         let gas_after_second = dynamic_fees::get_relayer_gas(&env, &attestor);
-        assert!(gas_after_second > gas_after_first, "Gas should accumulate across multiple submissions");
+        assert!(
+            gas_after_second > gas_after_first,
+            "Gas should accumulate across multiple submissions"
+        );
     }
 
     #[test]
@@ -3756,7 +3760,10 @@ mod relayer_gas_attribution_test {
 
         // Check relayer gas for attestor with zero prior activity
         let relayer_gas = dynamic_fees::get_relayer_gas(&env, &attestor);
-        assert_eq!(relayer_gas, 0, "New relayer should have zero gas accumulation");
+        assert_eq!(
+            relayer_gas, 0,
+            "New relayer should have zero gas accumulation"
+        );
     }
 
     #[test]
@@ -3813,6 +3820,9 @@ mod relayer_gas_attribution_test {
 
         assert!(gas1_after > 0, "First relayer gas should remain");
         assert!(gas2_after > 0, "Second relayer should now have gas");
-        assert_eq!(gas1_after, gas1, "First relayer gas should not change when second relayer submits");
+        assert_eq!(
+            gas1_after, gas1,
+            "First relayer gas should not change when second relayer submits"
+        );
     }
 }

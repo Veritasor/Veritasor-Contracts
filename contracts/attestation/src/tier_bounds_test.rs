@@ -180,18 +180,22 @@ fn test_tier_min_zero_discount() {
     // 1. Unconfigured MIN_TIER discount must be 0 bps.
     let discount = dynamic_fees::get_tier_discount(&t.env, dynamic_fees::MIN_TIER);
     assert_eq!(
-        discount, 0,
+        discount,
+        0,
         "MIN_TIER (tier {}) discount must be 0, got {}",
-        dynamic_fees::MIN_TIER, discount
+        dynamic_fees::MIN_TIER,
+        discount
     );
 
     // 2. Explicitly setting MIN_TIER discount to 0 persists correctly.
     t.client.set_tier_discount(&dynamic_fees::MIN_TIER, &0);
     let discount = dynamic_fees::get_tier_discount(&t.env, dynamic_fees::MIN_TIER);
     assert_eq!(
-        discount, 0,
+        discount,
+        0,
         "MIN_TIER (tier {}) discount must be 0 after explicit set, got {}",
-        dynamic_fees::MIN_TIER, discount
+        dynamic_fees::MIN_TIER,
+        discount
     );
 
     // 3. compute_fee at MIN_TIER with zero volume discount must equal base_fee.

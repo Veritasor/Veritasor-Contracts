@@ -1178,12 +1178,7 @@ pub fn emit_permit_cancelled(env: &Env, business: &Address, nonce: u64, permit_e
 }
 
 /// Emit a `SlashTriggered` event.
-pub fn emit_slash_triggered(
-    env: &Env,
-    attestor: &Address,
-    amount: i128,
-    dispute_id: u64,
-) {
+pub fn emit_slash_triggered(env: &Env, attestor: &Address, amount: i128, dispute_id: u64) {
     let event = SlashTriggeredEvent {
         attestor: attestor.clone(),
         amount,
@@ -1465,7 +1460,8 @@ pub fn emit_pause_scheduled_cancelled(env: &Env, caller: &Address) {
     let event = PauseScheduledCancelledEvent {
         caller: caller.clone(),
     };
-    env.events().publish((TOPIC_PAUSE_SCHEDULED_CANCELLED,), event);
+    env.events()
+        .publish((TOPIC_PAUSE_SCHEDULED_CANCELLED,), event);
 }
 
 /// Emit an `EmergencyPauseTriggered` event.
@@ -1484,7 +1480,8 @@ pub fn emit_emergency_pause_triggered(env: &Env, signer1: &Address, signer2: &Ad
         signer1: signer1.clone(),
         signer2: signer2.clone(),
     };
-    env.events().publish((TOPIC_EMERGENCY_PAUSE_TRIGGERED,), event);
+    env.events()
+        .publish((TOPIC_EMERGENCY_PAUSE_TRIGGERED,), event);
 }
 
 // ── Fee configuration ─────────────────────────────────────────────
@@ -1758,7 +1755,8 @@ pub fn emit_analytics_rotation_completed(
         old_analytics: old_analytics.clone(),
         new_analytics: new_analytics.clone(),
     };
-    env.events().publish((TOPIC_ANALYTICS_ROTATION_COMPLETED,), event);
+    env.events()
+        .publish((TOPIC_ANALYTICS_ROTATION_COMPLETED,), event);
 }
 
 /// Emit a `KeyRotationEmergency` event.
@@ -2274,11 +2272,7 @@ pub fn emit_cleanup_summary(env: &Env, epoch: u64, removed_count: u64) {
 /// # Events
 ///
 /// Publishes `(bkf_chk,)` → `BackfillCheckpointEvent`.
-pub fn emit_backfill_checkpoint(
-    env: &Env,
-    submission_count: u64,
-    state_commitment: &BytesN<32>,
-) {
+pub fn emit_backfill_checkpoint(env: &Env, submission_count: u64, state_commitment: &BytesN<32>) {
     let event = BackfillCheckpointEvent {
         submission_count,
         state_commitment: state_commitment.clone(),
@@ -2340,7 +2334,11 @@ pub fn emit_rehydrated_from_archive(
     period: &String,
     fee_paid: i128,
 ) {
-    let topics = (TOPIC_REHYDRATED_FROM_ARCHIVE, business.clone(), period.clone());
+    let topics = (
+        TOPIC_REHYDRATED_FROM_ARCHIVE,
+        business.clone(),
+        period.clone(),
+    );
     env.events().publish(topics, fee_paid);
 }
 
@@ -2362,7 +2360,8 @@ pub fn emit_collector_rotation_proposed(
         token: token.clone(),
         escrowed_amount,
     };
-    env.events().publish((TOPIC_COLLECTOR_ROTATION_PROPOSED,), event);
+    env.events()
+        .publish((TOPIC_COLLECTOR_ROTATION_PROPOSED,), event);
 }
 
 /// Emit a `CollectorRotationAccepted` event.
@@ -2379,7 +2378,8 @@ pub fn emit_collector_rotation_accepted(
         token: token.clone(),
         escrowed_amount,
     };
-    env.events().publish((TOPIC_COLLECTOR_ROTATION_ACCEPTED,), event);
+    env.events()
+        .publish((TOPIC_COLLECTOR_ROTATION_ACCEPTED,), event);
 }
 
 /// Emit a `StakingContractProposed` event.
@@ -2394,7 +2394,8 @@ pub fn emit_staking_contract_proposed(
         proposed_by: proposed_by.clone(),
         effective_at,
     };
-    env.events().publish((TOPIC_STAKING_CONTRACT_PROPOSED,), event);
+    env.events()
+        .publish((TOPIC_STAKING_CONTRACT_PROPOSED,), event);
 }
 
 /// Emit a `StakingContractCommitted` event.
@@ -2403,7 +2404,8 @@ pub fn emit_staking_contract_committed(env: &Env, new_contract: &Address, commit
         new_contract: new_contract.clone(),
         committed_by: committed_by.clone(),
     };
-    env.events().publish((TOPIC_STAKING_CONTRACT_COMMITTED,), event);
+    env.events()
+        .publish((TOPIC_STAKING_CONTRACT_COMMITTED,), event);
 }
 
 /// Emit a `StakingContractCancelled` event.
@@ -2416,7 +2418,8 @@ pub fn emit_staking_contract_cancelled(
         cancelled_contract: cancelled_contract.clone(),
         cancelled_by: cancelled_by.clone(),
     };
-    env.events().publish((TOPIC_STAKING_CONTRACT_CANCELLED,), event);
+    env.events()
+        .publish((TOPIC_STAKING_CONTRACT_CANCELLED,), event);
 }
 
 /// Emit a `DaoRotationProposed` event.
@@ -2468,10 +2471,8 @@ pub fn emit_attestor_locked_for_dispute(
         period: period.clone(),
         dispute_id,
     };
-    env.events().publish(
-        (TOPIC_ATTESTOR_LOCKED_FOR_DISPUTE, attestor.clone()),
-        event,
-    );
+    env.events()
+        .publish((TOPIC_ATTESTOR_LOCKED_FOR_DISPUTE, attestor.clone()), event);
 }
 
 /// Emit a `DisputeRolledBack` event.
@@ -2523,7 +2524,8 @@ pub fn emit_vote_weight_snapshot_created(
         created_at,
         action_tag,
     };
-    env.events().publish((TOPIC_VOTE_WEIGHT_SNAPSHOT_CREATED,), event);
+    env.events()
+        .publish((TOPIC_VOTE_WEIGHT_SNAPSHOT_CREATED,), event);
 }
 
 /// Emit an `OwnerRecoveryPhraseAcknowledged` event.
