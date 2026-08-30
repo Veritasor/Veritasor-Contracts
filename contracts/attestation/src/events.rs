@@ -48,6 +48,7 @@
 //! | `CleanupSummary`            | `cl_sum`       | *(none)*          |
 //! | `BackfillCheckpoint`        | `bkf_chk`      | *(none)*          |
 //! | `DisputeRolledBack`         | `dsp_rb`       | `business`        |
+//! | `SlashTriggered`            | `sl_trg`       | `attestor`        |
 //!
 //! ## Indexer Compatibility Contract
 //!
@@ -173,6 +174,8 @@ pub const TOPIC_BACKFILL_CHECKPOINT: Symbol = symbol_short!("bkf_chk");
 pub const TOPIC_ARCHIVAL_COMPACTED: Symbol = symbol_short!("arc_cmp");
 /// Topic: reputation gating check performed
 pub const TOPIC_REPUTATION_GATE_CHECK: Symbol = symbol_short!("rep_gat");
+/// Topic: a slashing condition was triggered against an attestor
+pub const TOPIC_SLASH_TRIGGERED: Symbol = symbol_short!("sl_trg");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -808,6 +811,33 @@ pub struct DisputeRolledBackEvent {
     pub deadline_seconds: u64,
 }
 
+/// A catalog of slashing conditions that may trigger a slash against an attestor.
+///
+/// Every condition carries a stable numeric `code()` used as the canonical
+/// identifier for off-chain indexers and dashboards. Codes are append-only and
+/// MUST NOT be repurposed once assigned.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlashingCondition {
+    /// The attestor submitted a duplicate attestation for a business+period
+    /// that already has an active (non-revoked) attestation.
+    DoubleSubmission = 1,
+    /// The attestor resubmitted an attestation for a period that was revoked.
+    RevokedResubmit = 2,
+    /// The attestor attempted to reuse an expired attestation as if it were
+    /// still valid (expiry-reuse).
+    ExpiredReuse = 3,
+    /// A dispute against an attestor's attestation was resolved as Upheld.
+    DisputeUpheld = 4,
+}
+
+impl SlashingCondition {
+    /// Stable numeric code for indexers and dashboards.
+    pub fn code(&self) -> u32 {
+        *self as u32
+    }
+}
+
 /// Normalized payload for `SlashTriggered` events.
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -815,6 +845,8 @@ pub struct SlashTriggeredEvent {
     pub attestor: Address,
     pub amount: i128,
     pub dispute_id: u64,
+    /// The slashing condition that provoked this slash.
+    pub condition: SlashingCondition,
 }
 
 /// Normalized payload for `RelayerGasReported` events.
@@ -1023,6 +1055,7 @@ pub fn emit_permit_cancelled(env: &Env, business: &Address, nonce: u64, permit_e
 /// Emit a `SlashTriggered` event.
 pub fn emit_slash_triggered(
     env: &Env,
+    condition: SlashingCondition,
     attestor: &Address,
     amount: i128,
     dispute_id: u64,
@@ -1031,6 +1064,7 @@ pub fn emit_slash_triggered(
         attestor: attestor.clone(),
         amount,
         dispute_id,
+        condition,
     };
     env.events()
         .publish((TOPIC_SLASH_TRIGGERED, attestor.clone()), event);

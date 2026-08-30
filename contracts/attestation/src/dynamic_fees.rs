@@ -105,6 +105,8 @@ pub enum DataKey {
     /// `commit_staking_contract` or removed by
     /// `cancel_pending_staking_contract`.
     PendingStakingContract,
+    /// Monotonic counter used to mint stable ids for condition-based slashes.
+    ConditionSlashCounter,
 
     // ── Fee system ──────────────────────────────────────────────
     /// Contract administrator address.
