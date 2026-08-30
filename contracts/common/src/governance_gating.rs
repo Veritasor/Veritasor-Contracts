@@ -44,6 +44,10 @@ pub enum GovernanceKey {
     EmergencyOverrideAdmin,
     /// Role drift protection: tracks last role assignment timestamp.
     LastRoleAssignment(Address),
+    /// Pending admin address for time-locked admin rotation.
+    PendingAdmin,
+    /// Activation timestamp for pending admin.
+    AdminActivationTime,
 }
 
 /// Governance configuration for ordinary threshold-gated actions.
@@ -354,6 +358,36 @@ pub fn get_last_role_assignment(env: &Env, role_address: &Address) -> Option<u64
     env.storage()
         .instance()
         .get(&GovernanceKey::LastRoleAssignment(role_address.clone()))
+}
+
+/// Set a pending admin for a time-locked rotation.
+pub fn set_pending_admin(env: &Env, admin: Address, delay: u64) {
+    env.storage().instance().set(&GovernanceKey::PendingAdmin, &admin);
+    let activation_time = env.ledger().timestamp() + delay;
+    env.storage()
+        .instance()
+        .set(&GovernanceKey::AdminActivationTime, &activation_time);
+}
+
+/// Get the pending admin if active, otherwise return None.
+pub fn get_active_pending_admin(env: &Env) -> Option<Address> {
+    let activation_time: u64 = env
+        .storage()
+        .instance()
+        .get(&GovernanceKey::AdminActivationTime)?;
+    if env.ledger().timestamp() >= activation_time {
+        env.storage().instance().get(&GovernanceKey::PendingAdmin)
+    } else {
+        None
+    }
+}
+
+/// Clear the pending admin and activation time.
+pub fn clear_pending_admin(env: &Env) {
+    env.storage().instance().remove(&GovernanceKey::PendingAdmin);
+    env.storage()
+        .instance()
+        .remove(&GovernanceKey::AdminActivationTime);
 }
 
 // ════════════════════════════════════════════════════════════════════

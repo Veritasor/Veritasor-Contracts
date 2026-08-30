@@ -30,11 +30,15 @@ use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, St
 
 #[cfg(test)]
 mod event_ingestion_test;
+#[cfg(test)]
+mod admin_rotation_test;
 
-use veritasor_common::replay_protection;
+use veritasor_common::{governance_gating, replay_protection};
 
 /// Admin replay channel (shared across `initialize` and `register_portfolio`).
 pub const NONCE_CHANNEL_ADMIN: u32 = 1;
+/// Channel for time-locked admin operations.
+pub const NONCE_CHANNEL_ADMIN_ROTATION: u32 = 256;
 
 /// Maximum businesses per portfolio (gas / cross-call bound).
 pub const MAX_PORTFOLIO_BUSINESSES: u32 = 200;
@@ -461,6 +465,28 @@ impl AggregatedAttestationsContract {
             .expect("contract not initialized");
         assert!(*caller == admin, "caller is not admin");
         admin
+    }
+
+    /// Propose a new admin address for a time-locked rotation.
+    pub fn set_pending_admin(env: Env, caller: Address, nonce: u64, admin: Address, delay: u64) {
+        Self::require_admin(&env, &caller);
+        replay_protection::verify_and_increment_nonce(
+            &env,
+            &caller,
+            NONCE_CHANNEL_ADMIN_ROTATION,
+            nonce,
+        );
+        governance_gating::set_pending_admin(&env, admin, delay);
+    }
+
+    /// Activate a pending admin if the time-lock has expired.
+    pub fn activate_admin(env: Env) {
+        if let Some(new_admin) = governance_gating::get_active_pending_admin(&env) {
+            env.storage().instance().set(&DataKey::Admin, &new_admin);
+            governance_gating::clear_pending_admin(&env);
+        } else {
+            panic!("time-lock not expired or no pending admin");
+        }
     }
 
     fn assert_portfolio_id_within_limit(portfolio_id: &String) {
