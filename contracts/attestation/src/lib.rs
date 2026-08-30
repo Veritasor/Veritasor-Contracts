@@ -3667,6 +3667,11 @@ impl AttestationContract {
 mod compact_archival_test;
 #[cfg(test)]
 mod attestor_lock_test;
+/// Property tests for role-bitmap validation vs. `ROLE_VALID_MASK` (issue #795).
+/// Deliberately NOT gated behind `full-tests` so the security invariant is
+/// enforced by the default `cargo test --all` CI profile.
+#[cfg(test)]
+mod access_control_property_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod access_control_test;
 #[cfg(all(test, feature = "full-tests"))]

@@ -66,7 +66,8 @@ pub const ROLE_OPERATOR: u32 = 1 << 3; // 0b1000
 /// Maximum valid role bitmap (all defined roles combined)
 /// Used for input validation to reject invalid role combinations.
 /// SECURITY: Adding a new role requires updating both this constant
-/// and the reference implementation in the proptests (`contracts/attestation/src/property_test.rs`).
+/// and the reference implementation + compile-time guard in the
+/// property tests (`contracts/attestation/src/access_control_property_test.rs`).
 pub const ROLE_VALID_MASK: u32 = ROLE_ADMIN | ROLE_ATTESTOR | ROLE_BUSINESS | ROLE_OPERATOR;
 
 /// Maximum allowed weight for a single admin member.
