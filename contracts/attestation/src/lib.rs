@@ -2878,6 +2878,7 @@ impl AttestationContract {
     ) {
         access_control::require_admin(&env, &resolver);
         dispute::validate_dispute_resolution(&env, dispute_id, &resolver).expect("invalid");
+        let is_upheld = outcome == DisputeOutcome::Upheld;
         let resolution = dispute::DisputeResolution {
             resolver,
             outcome,
@@ -2890,7 +2891,7 @@ impl AttestationContract {
             d.resolution = OptionalResolution::Some(resolution);
             dispute::store_dispute(&env, &d);
 
-            if outcome == DisputeOutcome::Upheld {
+            if is_upheld {
                 let staking_addr = Self::get_attestor_staking_contract(env.clone())
                     .expect("staking contract not configured");
                 let staking_client = AttestorStakingClient::new(&env, &staking_addr);
@@ -3577,6 +3578,11 @@ impl AttestationContract {
                 dynamic_fees::set_admin(env, new_admin);
                 access_control::swap_admin(env, &old_admin, new_admin, executor);
                 events::emit_key_rotation_emergency(env, &old_admin, new_admin);
+            }
+            ProposalAction::EmergencyPause => {
+                access_control::check_and_apply_pending_pause(env);
+                access_control::set_paused(env, true);
+                events::emit_paused(env, executor);
             }
         }
     }
