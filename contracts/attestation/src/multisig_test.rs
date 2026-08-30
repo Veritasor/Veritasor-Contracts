@@ -195,11 +195,8 @@ fn test_preview_proposal_is_side_effect_free() {
     let owner2 = owners.get(1).unwrap();
     let new_owner = Address::generate(&env);
 
-    let proposal_id = client.create_proposal(
-        &admin,
-        &ProposalAction::AddOwner(new_owner.clone()),
-        &0u64,
-    );
+    let proposal_id =
+        client.create_proposal(&admin, &ProposalAction::AddOwner(new_owner.clone()), &0u64);
     client.approve_proposal(&owner2, &proposal_id, &0u64);
 
     let preview = client.preview_proposal(&proposal_id);
@@ -301,13 +298,17 @@ fn test_execute_add_owner_proposal() {
     let (_cid, topics, data) = events.last().unwrap();
     assert_eq!(
         topics.get(0).unwrap(),
-        soroban_sdk::IntoVal::into_val(&crate::events::TOPIC_OWNER_RECOVERY_PHRASE_ACKNOWLEDGED, &env)
+        soroban_sdk::IntoVal::into_val(
+            &crate::events::TOPIC_OWNER_RECOVERY_PHRASE_ACKNOWLEDGED,
+            &env
+        )
     );
     assert_eq!(
         topics.get(1).unwrap(),
         soroban_sdk::IntoVal::into_val(&new_owner, &env)
     );
-    let event_data: crate::events::OwnerRecoveryPhraseAcknowledgedEvent = soroban_sdk::FromVal::from_val(&env, &data);
+    let event_data: crate::events::OwnerRecoveryPhraseAcknowledgedEvent =
+        soroban_sdk::FromVal::from_val(&env, &data);
     assert_eq!(event_data.new_owner, new_owner);
 }
 
@@ -642,7 +643,8 @@ fn test_quorum_change_passes_after_cooldown() {
     client.execute_proposal(&admin, &proposal_id1, &1u64, &0u64);
 
     // 2. Advance ledger to pass cooldown
-    env.ledger().set_sequence_number(env.ledger().sequence() + PROPOSAL_COOLDOWN_LEDGERS + 1);
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + PROPOSAL_COOLDOWN_LEDGERS + 1);
 
     // 3. Propose another threshold change - should succeed
     let action2 = ProposalAction::ChangeThreshold(2);

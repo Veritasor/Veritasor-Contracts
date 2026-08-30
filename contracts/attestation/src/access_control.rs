@@ -259,8 +259,7 @@ fn require_admin_removal_allowed(env: &Env) {
     {
         let now = env.ledger().timestamp();
         assert!(
-            now >= last_removed_at
-                && now - last_removed_at >= ADMIN_REMOVAL_COOLDOWN_SECS,
+            now >= last_removed_at && now - last_removed_at >= ADMIN_REMOVAL_COOLDOWN_SECS,
             "admin removal cooldown not elapsed"
         );
     }

@@ -190,8 +190,7 @@ fn vw_snapshot_event_emitted_with_matching_fields() {
         "exactly one VoteWeightSnapshotCreated event per create_proposal",
     );
     let (_cid, _topics, data) = new_events.last().unwrap();
-    let payload: VoteWeightSnapshotCreatedEvent =
-        soroban_sdk::FromVal::from_val(&env, &data);
+    let payload: VoteWeightSnapshotCreatedEvent = soroban_sdk::FromVal::from_val(&env, &data);
     assert_eq!(payload.proposal_id, id);
     assert_eq!(payload.owners_count, 3);
     assert_eq!(payload.threshold, 3);
@@ -236,13 +235,13 @@ fn vw_flash_vote_attack_blocked_on_add_owner() {
     );
 
     client.approve_proposal(&owner2, &victim_id, &1u64);
-    assert!(client
-        .get_proposal_approvals(&victim_id)
-        .contains(&attacker)
-        == false);
-    assert!(client
-        .get_proposal_approvals(&victim_id)
-        .contains(&owner2));
+    assert!(
+        client
+            .get_proposal_approvals(&victim_id)
+            .contains(&attacker)
+            == false
+    );
+    assert!(client.get_proposal_approvals(&victim_id).contains(&owner2));
     assert_eq!(
         client.get_approval_count(&victim_id),
         2,
@@ -545,7 +544,10 @@ fn vw_snapshot_action_tag_for_every_variant() {
         (ProposalAction::AddOwner(new_addr.clone()), 3),
         (ProposalAction::RemoveOwner(new_addr.clone()), 4),
         (ProposalAction::ChangeThreshold(1), 5),
-        (ProposalAction::GrantRole(new_addr.clone(), crate::ROLE_ADMIN), 6),
+        (
+            ProposalAction::GrantRole(new_addr.clone(), crate::ROLE_ADMIN),
+            6,
+        ),
         (
             ProposalAction::RevokeRole(new_addr.clone(), crate::ROLE_ADMIN),
             7,
@@ -566,8 +568,7 @@ fn vw_snapshot_action_tag_for_every_variant() {
         assert_eq!(
             snap.action_tag, expected_tag,
             "action_tag for action #{} must be {}",
-            i,
-            expected_tag
+            i, expected_tag
         );
     }
 }

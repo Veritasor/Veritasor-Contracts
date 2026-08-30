@@ -25,24 +25,23 @@ extern crate std;
 use super::*;
 use crate::access_control::ROLE_ADMIN;
 use crate::events::{
-    AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent, EpochAdvancedEvent,
+    AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent,
     BusinessApprovedEvent, BusinessReactivatedEvent, BusinessRegisteredEvent,
-    BusinessSuspendedEvent, CollectorRotationAcceptedEvent,
-    CollectorRotationProposedEvent, FeeConfigChangedEvent,
-    FlatFeeConfigChangedEvent, KeyRotationCancelledEvent,
-    KeyRotationConfirmedEvent, KeyRotationEmergencyEvent,
+    BusinessSuspendedEvent, CollectorRotationAcceptedEvent, CollectorRotationProposedEvent,
+    EpochAdvancedEvent, FeeConfigChangedEvent, FlatFeeConfigChangedEvent,
+    KeyRotationCancelledEvent, KeyRotationConfirmedEvent, KeyRotationEmergencyEvent,
     KeyRotationProposedEvent, PauseChangedEvent, ProofHashUpdatedEvent,
     RateLimitConfigChangedEvent, RoleChangedEvent, EVENT_SCHEMA_VERSION,
     TOPIC_ATTESTATION_MIGRATED, TOPIC_ATTESTATION_REVOKED, TOPIC_ATTESTATION_SUBMITTED,
     TOPIC_BIZ_APPROVED, TOPIC_BIZ_REACTIVATE, TOPIC_BIZ_REGISTERED, TOPIC_BIZ_SUSPENDED,
-    TOPIC_COLLECTOR_ROTATION_ACCEPTED, TOPIC_COLLECTOR_ROTATION_PROPOSED,
+    TOPIC_COLLECTOR_ROTATION_ACCEPTED, TOPIC_COLLECTOR_ROTATION_PROPOSED, TOPIC_EPOCH_ADVANCED,
     TOPIC_FEE_CONFIG, TOPIC_FLAT_FEE_CONFIG, TOPIC_KEY_ROTATION_CANCELLED,
-    TOPIC_KEY_ROTATION_CONFIRMED, TOPIC_KEY_ROTATION_EMERGENCY, TOPIC_KEY_ROTATION_PROPOSED, TOPIC_EPOCH_ADVANCED,
+    TOPIC_KEY_ROTATION_CONFIRMED, TOPIC_KEY_ROTATION_EMERGENCY, TOPIC_KEY_ROTATION_PROPOSED,
     TOPIC_PAUSED, TOPIC_PROOF_HASH_UPDATED, TOPIC_RATE_LIMIT, TOPIC_ROLE_GRANTED,
     TOPIC_ROLE_REVOKED, TOPIC_UNPAUSED,
 };
-use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
 use soroban_sdk::testutils::{Address as _, Events as _};
+use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
 use soroban_sdk::{symbol_short, Address, BytesN, Env, String, Symbol, TryFromVal};
 
 // ════════════════════════════════════════════════════════════════════
@@ -883,7 +882,6 @@ fn test_epoch_advanced_schema_snapshot() {
     assert_eq!(ev.at_ts, 1_700_000_000);
 }
 
-
 // ════════════════════════════════════════════════════════════════════
 //  12. Positive Integration — revocation, migration, role, pause
 // ════════════════════════════════════════════════════════════════════
@@ -1347,9 +1345,27 @@ fn test_attestation_migrated_versions_are_monotonic_per_business_period() {
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
     advance_ledger_to(&env, 100);
-    client.submit_attestation(&business_a, &period, &root, &100u64, &1u32, &0i128, &None, &None);
+    client.submit_attestation(
+        &business_a,
+        &period,
+        &root,
+        &100u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
     advance_ledger_to(&env, 100); // same ledger as business_a's submission
-    client.submit_attestation(&business_b, &period, &root, &100u64, &1u32, &0i128, &None, &None);
+    client.submit_attestation(
+        &business_b,
+        &period,
+        &root,
+        &100u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
 
     let root2 = BytesN::from_array(&env, &[2u8; 32]);
     let root3 = BytesN::from_array(&env, &[3u8; 32]);
@@ -1402,7 +1418,16 @@ fn test_attestation_revoked_and_proof_hash_updated_preserve_call_order() {
 
     for (i, period) in periods.iter().enumerate() {
         advance_ledger_to(&env, 100 + (i as u64) * 50);
-        client.submit_attestation(&business, period, &root, &(100 + (i as u64) * 50), &1u32, &0i128, &None, &None);
+        client.submit_attestation(
+            &business,
+            period,
+            &root,
+            &(100 + (i as u64) * 50),
+            &1u32,
+            &0i128,
+            &None,
+            &None,
+        );
     }
 
     let rev_ledger_timestamps: [u64; 4] = [500, 500, 650, 800];
@@ -1413,7 +1438,11 @@ fn test_attestation_revoked_and_proof_hash_updated_preserve_call_order() {
     }
     let end = env.events().all().len();
 
-    assert_eq!(end - start, periods.len(), "expected exactly one att_rev event per revocation");
+    assert_eq!(
+        end - start,
+        periods.len(),
+        "expected exactly one att_rev event per revocation"
+    );
 
     let all_events = env.events().all();
     let mut revoked_periods: std::vec::Vec<String> = std::vec::Vec::new();
@@ -1438,7 +1467,16 @@ fn test_attestation_revoked_and_proof_hash_updated_preserve_call_order() {
     ];
     for (i, period) in ph_periods.iter().enumerate() {
         advance_ledger_to(&env, 1000 + (i as u64) * 10);
-        client.submit_attestation(&business2, period, &root, &(1000 + (i as u64) * 10), &1u32, &0i128, &None, &None);
+        client.submit_attestation(
+            &business2,
+            period,
+            &root,
+            &(1000 + (i as u64) * 10),
+            &1u32,
+            &0i128,
+            &None,
+            &None,
+        );
     }
     let new_hash = BytesN::from_array(&env, &[5u8; 32]);
     let ph_ledger_timestamps: [u64; 3] = [1100, 1100, 1200];
@@ -1643,8 +1681,8 @@ fn test_edge_case_new_event_topic_coverage() {
     let required_topics = [
         "att_sub", "att_rev", "att_mig", "att_cl", "role_gr", "role_rv", "paused", "unpaus",
         "fee_cfg", "ff_cfg", "rate_lm", "kr_prop", "kr_conf", "kr_canc", "kr_emer", "biz_reg",
-        "biz_apr", "biz_sus", "biz_rea", "ph_upd", "att_exp", "mul_iss",
-        "ep_ckpt", "ep_adv", "bkf_chk",
+        "biz_apr", "biz_sus", "biz_rea", "ph_upd", "att_exp", "mul_iss", "ep_ckpt", "ep_adv",
+        "bkf_chk",
     ];
 
     for expected in &required_topics {

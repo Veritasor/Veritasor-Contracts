@@ -26,7 +26,11 @@ fn cancel_delegated_permit_burns_nonce() {
     assert_eq!(client.get_replay_nonce(&admin, &NONCE_CHANNEL_PERMIT), 0);
 
     // Cancel nonce 0 (no expiry)
-    let permit = CancelPermit { business: admin.clone(), nonce: 0, permit_expiry_ts: 0 };
+    let permit = CancelPermit {
+        business: admin.clone(),
+        nonce: 0,
+        permit_expiry_ts: 0,
+    };
     client.cancel_delegated_permit(&permit);
 
     // Nonce advanced to 1
@@ -37,7 +41,11 @@ fn cancel_delegated_permit_burns_nonce() {
 fn cancel_delegated_permit_emits_event() {
     let (env, client, admin) = setup_env();
 
-    let permit = CancelPermit { business: admin.clone(), nonce: 0, permit_expiry_ts: 0 };
+    let permit = CancelPermit {
+        business: admin.clone(),
+        nonce: 0,
+        permit_expiry_ts: 0,
+    };
     client.cancel_delegated_permit(&permit);
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
@@ -61,7 +69,11 @@ fn cancel_delegated_permit_rejects_wrong_nonce() {
     let (env, client, admin) = setup_env();
 
     // Current nonce is 0, try to cancel with nonce 1
-    let permit = CancelPermit { business: admin.clone(), nonce: 1, permit_expiry_ts: 0 };
+    let permit = CancelPermit {
+        business: admin.clone(),
+        nonce: 1,
+        permit_expiry_ts: 0,
+    };
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.cancel_delegated_permit(&permit);
     }));
@@ -73,11 +85,19 @@ fn cancel_delegated_permit_rejects_already_consumed_nonce() {
     let (env, client, admin) = setup_env();
 
     // Cancel nonce 0
-    let permit0 = CancelPermit { business: admin.clone(), nonce: 0, permit_expiry_ts: 0 };
+    let permit0 = CancelPermit {
+        business: admin.clone(),
+        nonce: 0,
+        permit_expiry_ts: 0,
+    };
     client.cancel_delegated_permit(&permit0);
 
     // Nonce is now 1, cancelling with nonce 0 should fail
-    let permit_stale = CancelPermit { business: admin.clone(), nonce: 0, permit_expiry_ts: 0 };
+    let permit_stale = CancelPermit {
+        business: admin.clone(),
+        nonce: 0,
+        permit_expiry_ts: 0,
+    };
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.cancel_delegated_permit(&permit_stale);
     }));
@@ -91,14 +111,30 @@ fn cancel_delegated_permit_nonces_are_independent_per_business() {
     let business_b = Address::generate(&env);
 
     // Both start at 0
-    assert_eq!(client.get_replay_nonce(&business_a, &NONCE_CHANNEL_PERMIT), 0);
-    assert_eq!(client.get_replay_nonce(&business_b, &NONCE_CHANNEL_PERMIT), 0);
+    assert_eq!(
+        client.get_replay_nonce(&business_a, &NONCE_CHANNEL_PERMIT),
+        0
+    );
+    assert_eq!(
+        client.get_replay_nonce(&business_b, &NONCE_CHANNEL_PERMIT),
+        0
+    );
 
     // Cancel nonce 0 for A
-    let permit_a = CancelPermit { business: business_a.clone(), nonce: 0, permit_expiry_ts: 0 };
+    let permit_a = CancelPermit {
+        business: business_a.clone(),
+        nonce: 0,
+        permit_expiry_ts: 0,
+    };
     client.cancel_delegated_permit(&permit_a);
 
     // A advanced to 1, B still at 0
-    assert_eq!(client.get_replay_nonce(&business_a, &NONCE_CHANNEL_PERMIT), 1);
-    assert_eq!(client.get_replay_nonce(&business_b, &NONCE_CHANNEL_PERMIT), 0);
+    assert_eq!(
+        client.get_replay_nonce(&business_a, &NONCE_CHANNEL_PERMIT),
+        1
+    );
+    assert_eq!(
+        client.get_replay_nonce(&business_b, &NONCE_CHANNEL_PERMIT),
+        0
+    );
 }

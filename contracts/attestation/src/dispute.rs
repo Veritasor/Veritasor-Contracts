@@ -26,8 +26,8 @@
 //! - Disputes cannot be opened against already-revoked attestations.
 use crate::access_control;
 use crate::dynamic_fees::{self, DataKey};
-use crate::ROLE_ADMIN;
 use crate::events;
+use crate::ROLE_ADMIN;
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 /// Default deadline in seconds for dispute resolution.
@@ -582,7 +582,6 @@ pub fn submit_dispute_witness(
     Ok(())
 }
 
-
 /// Loads revocation metadata for an attestation, if present.
 pub fn get_attestation_revocation(
     env: &Env,
@@ -761,7 +760,13 @@ pub fn is_attestor_locked(env: &Env, attestor: &Address) -> bool {
 ///
 /// Publishes an `AttestorLockedForDispute` event when the attestor transitions
 /// from unlocked to locked.
-pub fn lock_attestor(env: &Env, attestor: &Address, business: &Address, period: &String, dispute_id: u64) {
+pub fn lock_attestor(
+    env: &Env,
+    attestor: &Address,
+    business: &Address,
+    period: &String,
+    dispute_id: u64,
+) {
     let key = DisputeKey::AttestorLockCount(attestor.clone());
     let current: u64 = env.storage().instance().get(&key).unwrap_or(0);
     let new_count = current + 1;
@@ -837,11 +842,7 @@ pub fn unlock_attestor(env: &Env, attestor: &Address) -> bool {
 ///   the Soroban CPU instruction budget.
 /// - The attestor unlock uses the ref-counted `unlock_attestor` which
 ///   correctly handles attestors with multiple active disputes.
-pub fn check_and_rollback_disputes(
-    env: &Env,
-    dispute_ids: &Vec<u64>,
-    limit: u32,
-) -> u32 {
+pub fn check_and_rollback_disputes(env: &Env, dispute_ids: &Vec<u64>, limit: u32) -> u32 {
     let deadline = get_dispute_deadline(env);
     let now = env.ledger().timestamp();
     let mut rolled_back_count: u32 = 0;
@@ -903,7 +904,13 @@ pub fn check_and_rollback_disputes(
         }
 
         // Emit event.
-        events::emit_dispute_rolled_back(env, dispute_id, &dispute.business, &dispute.period, deadline);
+        events::emit_dispute_rolled_back(
+            env,
+            dispute_id,
+            &dispute.business,
+            &dispute.period,
+            deadline,
+        );
 
         rolled_back_count += 1;
     }
