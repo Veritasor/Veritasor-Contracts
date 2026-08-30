@@ -15,7 +15,7 @@
 //   unpaid attestations.
 // - DAO configuration overrides local contract configuration if set.
 
-use crate::events as events;
+use crate::events;
 
 use soroban_sdk::{contracttype, token, Address, Env, Symbol, Val, Vec};
 
@@ -57,6 +57,27 @@ pub enum FlatFeeDataKey {
     Dao,
     /// Pending collector rotation proposal.
     CollectorRotationProposal,
+    /// Pending DAO rotation proposal (two-phase rotation).
+    PendingDaoRotation,
+    /// Current epoch counter for flat fee snapshots.
+    CurrentEpoch,
+    /// Flat fee config snapshot keyed by epoch.
+    EpochSnapshot(u64),
+    /// Ordered `Vec<u64>` of epochs with persisted snapshots (bounded history).
+    EpochHistory,
+}
+
+/// Pending DAO rotation proposal (two-phase rotation).
+///
+/// Written by `propose_dao_rotation`; consumed by `accept_dao_rotation` or
+/// removed by `cancel_dao_rotation`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DaoRotationProposal {
+    /// The DAO contract address being rotated away from.
+    pub old_dao: Address,
+    /// The DAO contract address being rotated to.
+    pub new_dao: Address,
 }
 
 /// Retrieve the current flat fee configuration from instance storage.
@@ -94,16 +115,24 @@ pub fn remove_collector_rotation_proposal(env: &Env) {
 }
 
 pub fn get_pending_dao_rotation(env: &Env) -> Option<DaoRotationProposal> {
-    env.storage().instance().get(&FlatFeeDataKey::PendingDaoRotation)
+    env.storage()
+        .instance()
+        .get(&FlatFeeDataKey::PendingDaoRotation)
 }
 pub fn set_pending_dao_rotation(env: &Env, proposal: &DaoRotationProposal) {
-    env.storage().instance().set(&FlatFeeDataKey::PendingDaoRotation, proposal);
+    env.storage()
+        .instance()
+        .set(&FlatFeeDataKey::PendingDaoRotation, proposal);
 }
 pub fn remove_pending_dao_rotation(env: &Env) {
-    env.storage().instance().remove(&FlatFeeDataKey::PendingDaoRotation);
+    env.storage()
+        .instance()
+        .remove(&FlatFeeDataKey::PendingDaoRotation);
 }
 pub fn has_pending_dao_rotation(env: &Env) -> bool {
-    env.storage().instance().has(&FlatFeeDataKey::PendingDaoRotation)
+    env.storage()
+        .instance()
+        .has(&FlatFeeDataKey::PendingDaoRotation)
 }
 
 /// Returns true when a collector rotation proposal is pending.
@@ -117,7 +146,10 @@ pub fn has_pending_collector_rotation(env: &Env) -> bool {
 pub fn propose_dao_rotation(env: &Env, caller: &Address, new_dao: &Address) {
     caller.require_auth();
     let current_dao = get_dao(env).unwrap_or(env.current_contract_address());
-    assert!(!has_pending_dao_rotation(env), "DAO rotation already pending");
+    assert!(
+        !has_pending_dao_rotation(env),
+        "DAO rotation already pending"
+    );
     let proposal = DaoRotationProposal {
         old_dao: current_dao,
         new_dao: new_dao.clone(),
@@ -128,7 +160,10 @@ pub fn propose_dao_rotation(env: &Env, caller: &Address, new_dao: &Address) {
 pub fn accept_dao_rotation(env: &Env, caller: &Address) {
     caller.require_auth();
     let proposal = get_pending_dao_rotation(env).expect("no pending DAO rotation");
-    assert!(caller == &proposal.new_dao, "only proposed new DAO may accept rotation");
+    assert!(
+        caller == &proposal.new_dao,
+        "only proposed new DAO may accept rotation"
+    );
     set_dao(env, &proposal.new_dao);
     remove_pending_dao_rotation(env);
     events::emit_dao_rotation_accepted(env, &proposal.old_dao, &proposal.new_dao);
@@ -138,7 +173,10 @@ pub fn accept_dao_rotation(env: &Env, caller: &Address) {
 pub fn cancel_dao_rotation(env: &Env, caller: &Address) {
     caller.require_auth();
     let proposal = get_pending_dao_rotation(env).expect("no pending DAO rotation");
-    assert!(caller == &proposal.old_dao, "only the current DAO may cancel rotation");
+    assert!(
+        caller == &proposal.old_dao,
+        "only the current DAO may cancel rotation"
+    );
     remove_pending_dao_rotation(env);
 }
 
@@ -167,11 +205,7 @@ pub fn get_pending_collector_rotation(env: &Env) -> Option<CollectorRotationProp
 /// The current collector must authorize this call. If the collector already held
 /// a balance of the configured flat fee token, that balance is transferred into
 /// the contract and held until the proposed new collector accepts.
-pub fn propose_collector_rotation(
-    env: &Env,
-    caller: &Address,
-    new_collector: &Address,
-) {
+pub fn propose_collector_rotation(env: &Env, caller: &Address, new_collector: &Address) {
     caller.require_auth();
     let config = get_flat_fee_config(env).expect("flat fee not configured");
     assert!(
@@ -190,7 +224,11 @@ pub fn propose_collector_rotation(
     let client = token::Client::new(env, &config.token);
     let escrowed_amount = client.balance(&config.collector);
     if escrowed_amount > 0 {
-        client.transfer(&config.collector, &env.current_contract_address(), &escrowed_amount);
+        client.transfer(
+            &config.collector,
+            &env.current_contract_address(),
+            &escrowed_amount,
+        );
     }
     let proposal = CollectorRotationProposal {
         old_collector: config.collector.clone(),
@@ -204,8 +242,7 @@ pub fn propose_collector_rotation(
 /// Accept a pending collector rotation and release escrowed funds to the new collector.
 pub fn accept_collector_rotation(env: &Env, caller: &Address) {
     caller.require_auth();
-    let proposal = get_collector_rotation_proposal(env)
-        .expect("no pending collector rotation");
+    let proposal = get_collector_rotation_proposal(env).expect("no pending collector rotation");
     assert!(
         caller == &proposal.new_collector,
         "only proposed new collector may accept rotation"

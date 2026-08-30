@@ -105,8 +105,15 @@ fn epoch_events(env: &Env) -> std::vec::Vec<EpochAdvancedEvent> {
 fn test_epoch_starts_at_zero_before_first_submission() {
     let (env, client, _admin) = setup();
     // No submission yet — epoch counter must be 0 (uninitialized).
-    assert_eq!(client.get_epoch(), 0, "epoch must be 0 before first submission");
-    assert!(epoch_events(&env).is_empty(), "no EpochAdvanced events before first submission");
+    assert_eq!(
+        client.get_epoch(),
+        0,
+        "epoch must be 0 before first submission"
+    );
+    assert!(
+        epoch_events(&env).is_empty(),
+        "no EpochAdvanced events before first submission"
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -122,10 +129,18 @@ fn test_first_submission_initializes_epoch_to_one() {
     let business = Address::generate(&env);
     submit_one(&client, &env, &business, "202601", 1);
 
-    assert_eq!(client.get_epoch(), 1, "first submission must set epoch to 1");
+    assert_eq!(
+        client.get_epoch(),
+        1,
+        "first submission must set epoch to 1"
+    );
 
     let events = epoch_events(&env);
-    assert_eq!(events.len(), 1, "exactly one EpochAdvanced event on first submission");
+    assert_eq!(
+        events.len(),
+        1,
+        "exactly one EpochAdvanced event on first submission"
+    );
     assert_eq!(events[0].epoch, 1);
 }
 
@@ -143,7 +158,8 @@ fn test_no_rollover_within_same_window() {
     let epoch_after_first = client.get_epoch();
 
     // Advance time by less than one full window.
-    env.ledger().set_timestamp(FEE_BUCKET_WINDOW_SECONDS + FEE_BUCKET_WINDOW_SECONDS / 2);
+    env.ledger()
+        .set_timestamp(FEE_BUCKET_WINDOW_SECONDS + FEE_BUCKET_WINDOW_SECONDS / 2);
     submit_one(&client, &env, &business, "202602", 2);
 
     assert_eq!(
@@ -220,7 +236,10 @@ fn test_epoch_advanced_event_schema() {
 
     let ev = &events[0];
     assert_eq!(ev.epoch, 1, "epoch field must be 1 on first rollover");
-    assert_eq!(ev.at_ts, ts, "at_ts must equal the ledger timestamp at emission");
+    assert_eq!(
+        ev.at_ts, ts,
+        "at_ts must equal the ledger timestamp at emission"
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -259,7 +278,8 @@ fn test_epoch_monotonic_across_many_submissions() {
 
     for i in 0u64..10 {
         // Advance time by half a window each iteration (some rollovers, some not).
-        env.ledger().set_timestamp(FEE_BUCKET_WINDOW_SECONDS / 2 * (i + 1));
+        env.ledger()
+            .set_timestamp(FEE_BUCKET_WINDOW_SECONDS / 2 * (i + 1));
         let period = std::format!("2026{:02}", i + 1);
         submit_one(&client, &env, &business, &period, i as u8 + 1);
         let current = client.get_epoch();
@@ -286,7 +306,11 @@ fn test_epoch_counter_persists_across_submissions() {
 
     // Same window — epoch must still be 1 after another submission.
     submit_one(&client, &env, &business, "202602", 2);
-    assert_eq!(client.get_epoch(), 1, "epoch must persist between submissions in the same window");
+    assert_eq!(
+        client.get_epoch(),
+        1,
+        "epoch must persist between submissions in the same window"
+    );
 
     // Advance one window.
     env.ledger().set_timestamp(FEE_BUCKET_WINDOW_SECONDS * 2);
@@ -295,7 +319,11 @@ fn test_epoch_counter_persists_across_submissions() {
 
     // Same window again.
     submit_one(&client, &env, &business, "202604", 4);
-    assert_eq!(client.get_epoch(), 2, "epoch must remain 2 within the same window");
+    assert_eq!(
+        client.get_epoch(),
+        2,
+        "epoch must remain 2 within the same window"
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -375,7 +403,11 @@ fn test_multiple_rollovers_emit_multiple_events() {
 
     // Verify monotonic epoch values in events.
     for i in 0..events.len() {
-        assert_eq!(events[i].epoch, (i + 1) as u64, "event epoch must be sequential");
+        assert_eq!(
+            events[i].epoch,
+            (i + 1) as u64,
+            "event epoch must be sequential"
+        );
     }
 }
 
@@ -502,7 +534,11 @@ fn test_bucket_zero_no_double_advance() {
 
     let business = Address::generate(&env);
     submit_one(&client, &env, &business, "202601", 1);
-    assert_eq!(client.get_epoch(), 1, "epoch must be 1 after first submission in bucket 0");
+    assert_eq!(
+        client.get_epoch(),
+        1,
+        "epoch must be 1 after first submission in bucket 0"
+    );
 
     // Second submission in the same bucket (timestamp still 0).
     submit_one(&client, &env, &business, "202602", 2);

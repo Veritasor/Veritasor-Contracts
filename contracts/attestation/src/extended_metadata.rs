@@ -29,6 +29,7 @@
 //!   preventing dead-storage accumulation.
 
 use soroban_sdk::{contracttype, Address, Env, String, TryFromVal, TryIntoVal};
+use stellar_xdr::curr::{Limits, ReadXdr};
 
 use crate::dynamic_fees::DataKey;
 
@@ -88,9 +89,9 @@ pub fn deserialize_metadata_bytes(
     env: &Env,
     bytes: &[u8],
 ) -> Result<AttestationMetadata, MetadataDeserializationError> {
-    let sc_val = soroban_sdk::xdr::ScVal::from_xdr(bytes)
+    let sc_val = soroban_sdk::xdr::ScVal::from_xdr(bytes, Limits::none())
         .map_err(|_| MetadataDeserializationError::InvalidEncoding)?;
-    let val = sc_val
+    let val: soroban_sdk::Val = sc_val
         .try_into_val(env)
         .map_err(|_| MetadataDeserializationError::InvalidEncoding)?;
     AttestationMetadata::try_from_val(env, &val)

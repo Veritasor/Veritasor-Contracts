@@ -58,10 +58,12 @@
 
 extern crate std;
 
+use std::format;
+
 use super::*;
 use crate::multisig::{
-    get_approvals, get_next_proposal_id, get_proposal, get_vote_weight_snapshot,
-    ProposalAction, ProposalStatus, DEFAULT_PROPOSAL_EXPIRY,
+    get_approvals, get_next_proposal_id, get_proposal, get_vote_weight_snapshot, ProposalAction,
+    ProposalStatus, DEFAULT_PROPOSAL_EXPIRY,
 };
 use proptest::prelude::*;
 use soroban_sdk::testutils::{Address as _, Ledger};
@@ -140,7 +142,6 @@ fn try_create(
     }
 }
 
-
 // ════════════════════════════════════════════════════════════════════
 //  Proptest strategies
 // ════════════════════════════════════════════════════════════════════
@@ -191,8 +192,6 @@ fn arb_action_tag() -> impl Strategy<Value = u8> {
     0u8..=8u8
 }
 
-
-
 // ════════════════════════════════════════════════════════════════════
 //  Deterministic tests — happy path (C1–C6)
 // ════════════════════════════════════════════════════════════════════
@@ -242,15 +241,27 @@ fn test_create_proposal_all_variants_valid_owner() {
         assert_eq!(proposal.proposer, admin, "C3: proposer");
 
         // C4: VoteWeightSnapshot present and consistent
-        let snap = get_vote_weight_snapshot(&env, id)
-            .expect("C4: VoteWeightSnapshot must be written");
+        let snap =
+            get_vote_weight_snapshot(&env, id).expect("C4: VoteWeightSnapshot must be written");
         let live_count = client.get_multisig_owners().len();
         assert_eq!(snap.owners.len(), live_count, "C4: owner count");
-        assert_eq!(snap.threshold, client.get_multisig_threshold(), "C4: threshold");
-        assert_eq!(snap.total_weight, snap.owners.len(), "C4: total_weight == owners.len()");
+        assert_eq!(
+            snap.threshold,
+            client.get_multisig_threshold(),
+            "C4: threshold"
+        );
+        assert_eq!(
+            snap.total_weight,
+            snap.owners.len(),
+            "C4: total_weight == owners.len()"
+        );
 
         // C5: approval_count == 1 (proposer auto-approved)
-        assert_eq!(client.get_approval_count(&id), 1, "C5: exactly one approval at creation");
+        assert_eq!(
+            client.get_approval_count(&id),
+            1,
+            "C5: exactly one approval at creation"
+        );
     }
 }
 
@@ -266,7 +277,8 @@ fn test_proposal_expiry_boundary() {
         let (env, client, admin, _owners) = fresh_env();
         let id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
         let created_at = client.get_proposal(&id).unwrap().created_at;
-        env.ledger().set_sequence_number(created_at + DEFAULT_PROPOSAL_EXPIRY);
+        env.ledger()
+            .set_sequence_number(created_at + DEFAULT_PROPOSAL_EXPIRY);
         assert!(
             !client.is_proposal_expired(&id),
             "C6: must not be expired at exactly created_at + DEFAULT_PROPOSAL_EXPIRY"
@@ -277,14 +289,14 @@ fn test_proposal_expiry_boundary() {
         let (env, client, admin, _owners) = fresh_env();
         let id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
         let created_at = client.get_proposal(&id).unwrap().created_at;
-        env.ledger().set_sequence_number(created_at + DEFAULT_PROPOSAL_EXPIRY + 1);
+        env.ledger()
+            .set_sequence_number(created_at + DEFAULT_PROPOSAL_EXPIRY + 1);
         assert!(
             client.is_proposal_expired(&id),
             "C6: must be expired one ledger past DEFAULT_PROPOSAL_EXPIRY"
         );
     }
 }
-
 
 // ════════════════════════════════════════════════════════════════════
 //  Deterministic tests — rejection & storage atomicity (C7)
@@ -301,13 +313,29 @@ fn test_non_owner_rejected_no_storage_written() {
 
     assert!(result.is_err(), "C7: non-owner must panic");
     assert!(
-        result.unwrap_err().contains("only owners can create proposals"),
+        result
+            .unwrap_err()
+            .contains("only owners can create proposals"),
         "C7: unexpected panic message"
     );
-    assert_eq!(get_next_proposal_id(&env), id_before, "C7: NextProposalId unchanged");
-    assert!(get_proposal(&env, id_before).is_none(), "C7: no Proposal written");
-    assert!(get_vote_weight_snapshot(&env, id_before).is_none(), "C7: no snapshot written");
-    assert_eq!(get_approvals(&env, id_before).len(), 0, "C7: no Approvals written");
+    assert_eq!(
+        get_next_proposal_id(&env),
+        id_before,
+        "C7: NextProposalId unchanged"
+    );
+    assert!(
+        get_proposal(&env, id_before).is_none(),
+        "C7: no Proposal written"
+    );
+    assert!(
+        get_vote_weight_snapshot(&env, id_before).is_none(),
+        "C7: no snapshot written"
+    );
+    assert_eq!(
+        get_approvals(&env, id_before).len(),
+        0,
+        "C7: no Approvals written"
+    );
 }
 
 /// C7 variant: attacker submits AddOwner(self) — rejected, nothing stored.
@@ -324,10 +352,16 @@ fn test_non_owner_add_self_no_storage() {
         0,
     );
 
-    assert!(result.is_err(), "C7: AddOwner(self) by non-owner must panic");
+    assert!(
+        result.is_err(),
+        "C7: AddOwner(self) by non-owner must panic"
+    );
     assert_eq!(get_next_proposal_id(&env), id_before, "C7: ID unchanged");
     assert!(get_proposal(&env, id_before).is_none(), "C7: no Proposal");
-    assert!(get_vote_weight_snapshot(&env, id_before).is_none(), "C7: no snapshot");
+    assert!(
+        get_vote_weight_snapshot(&env, id_before).is_none(),
+        "C7: no snapshot"
+    );
 }
 
 /// C7 variant: attacker submits EmergencyRotateAdmin(self) — rejected, nothing stored.
@@ -344,10 +378,16 @@ fn test_non_owner_emergency_rotate_no_storage() {
         0,
     );
 
-    assert!(result.is_err(), "C7: EmergencyRotateAdmin by non-owner must panic");
+    assert!(
+        result.is_err(),
+        "C7: EmergencyRotateAdmin by non-owner must panic"
+    );
     assert_eq!(get_next_proposal_id(&env), id_before, "C7: ID unchanged");
     assert!(get_proposal(&env, id_before).is_none(), "C7: no Proposal");
-    assert!(get_vote_weight_snapshot(&env, id_before).is_none(), "C7: no snapshot");
+    assert!(
+        get_vote_weight_snapshot(&env, id_before).is_none(),
+        "C7: no snapshot"
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -376,11 +416,8 @@ fn test_snapshot_immutable_after_add_owner() {
 
     // Execute an AddOwner proposal after the target was created
     let new_owner = Address::generate(&env);
-    let add_id = client.create_proposal(
-        &admin,
-        &ProposalAction::AddOwner(new_owner.clone()),
-        &1u64,
-    );
+    let add_id =
+        client.create_proposal(&admin, &ProposalAction::AddOwner(new_owner.clone()), &1u64);
     client.approve_proposal(&owner2, &add_id, &0u64);
     client.execute_proposal(&admin, &add_id, &2u64);
 
@@ -389,7 +426,8 @@ fn test_snapshot_immutable_after_add_owner() {
     // The target proposal's snapshot must be unchanged
     let snap_after = get_vote_weight_snapshot(&env, target_id).unwrap();
     assert_eq!(
-        snap_after.owners.len(), count_at_creation,
+        snap_after.owners.len(),
+        count_at_creation,
         "snapshot owner count must not change after AddOwner"
     );
     assert_eq!(
@@ -405,7 +443,6 @@ fn test_snapshot_immutable_after_add_owner() {
         "newly added owner must not appear in pre-existing snapshot"
     );
 }
-
 
 // ════════════════════════════════════════════════════════════════════
 //  Boundary tests — C8: MAX_CALLDATA_LEN + 1 proposals
@@ -455,8 +492,8 @@ fn test_create_at_boundary_max_calldata_len() {
 
     assert_eq!(boundary_id, MAX_CALLDATA_LEN as u64, "C8: boundary ID");
 
-    let snap = get_vote_weight_snapshot(&env, boundary_id)
-        .expect("C8: snapshot must exist at boundary");
+    let snap =
+        get_vote_weight_snapshot(&env, boundary_id).expect("C8: snapshot must exist at boundary");
     assert_eq!(snap.owners.len(), 3);
     assert_eq!(snap.threshold, 2);
     assert_eq!(client.get_approval_count(&boundary_id), 1);
@@ -472,7 +509,10 @@ fn test_create_at_boundary_max_calldata_len() {
 fn test_create_change_threshold_zero_no_panic() {
     let (_env, client, admin, _owners) = fresh_env();
     let id = client.create_proposal(&admin, &ProposalAction::ChangeThreshold(0), &0u64);
-    assert_eq!(client.get_proposal(&id).unwrap().status, ProposalStatus::Pending);
+    assert_eq!(
+        client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Pending
+    );
 }
 
 /// C9: `ChangeThreshold(u32::MAX)` must not panic during proposal *creation*.
@@ -480,7 +520,10 @@ fn test_create_change_threshold_zero_no_panic() {
 fn test_create_change_threshold_max_u32_no_panic() {
     let (_env, client, admin, _owners) = fresh_env();
     let id = client.create_proposal(&admin, &ProposalAction::ChangeThreshold(u32::MAX), &0u64);
-    assert_eq!(client.get_proposal(&id).unwrap().status, ProposalStatus::Pending);
+    assert_eq!(
+        client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Pending
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -498,7 +541,10 @@ fn test_create_fee_config_i128_min_no_panic() {
         &ProposalAction::UpdateFeeConfig(t, c, i128::MIN, false),
         &0u64,
     );
-    assert_eq!(client.get_proposal(&id).unwrap().status, ProposalStatus::Pending);
+    assert_eq!(
+        client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Pending
+    );
 }
 
 /// C10: `UpdateFeeConfig` with `i128::MAX` must not panic during creation.
@@ -512,7 +558,10 @@ fn test_create_fee_config_i128_max_no_panic() {
         &ProposalAction::UpdateFeeConfig(t, c, i128::MAX, true),
         &0u64,
     );
-    assert_eq!(client.get_proposal(&id).unwrap().status, ProposalStatus::Pending);
+    assert_eq!(
+        client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Pending
+    );
 }
 
 /// C10: `UpdateFeeConfig` with zero fee must not panic during creation.
@@ -526,7 +575,10 @@ fn test_create_fee_config_zero_fee_no_panic() {
         &ProposalAction::UpdateFeeConfig(t, c, 0i128, true),
         &0u64,
     );
-    assert_eq!(client.get_proposal(&id).unwrap().status, ProposalStatus::Pending);
+    assert_eq!(
+        client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Pending
+    );
 }
 
 /// C10: `UpdateFeeConfig` with a negative fee must not panic during creation.
@@ -540,7 +592,10 @@ fn test_create_fee_config_negative_fee_no_panic() {
         &ProposalAction::UpdateFeeConfig(t, c, -1_000_000i128, false),
         &0u64,
     );
-    assert_eq!(client.get_proposal(&id).unwrap().status, ProposalStatus::Pending);
+    assert_eq!(
+        client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Pending
+    );
 }
 
 /// Role bitmask extremes — `GrantRole(0)` and `GrantRole(u32::MAX)` must not panic.
@@ -549,13 +604,23 @@ fn test_create_grant_role_extreme_bitmasks_no_panic() {
     let (env, client, admin, _owners) = fresh_env();
     let target = Address::generate(&env);
     let id0 = client.create_proposal(
-        &admin, &ProposalAction::GrantRole(target.clone(), 0u32), &0u64,
+        &admin,
+        &ProposalAction::GrantRole(target.clone(), 0u32),
+        &0u64,
     );
     let id1 = client.create_proposal(
-        &admin, &ProposalAction::GrantRole(target.clone(), u32::MAX), &1u64,
+        &admin,
+        &ProposalAction::GrantRole(target.clone(), u32::MAX),
+        &1u64,
     );
-    assert_eq!(client.get_proposal(&id0).unwrap().status, ProposalStatus::Pending);
-    assert_eq!(client.get_proposal(&id1).unwrap().status, ProposalStatus::Pending);
+    assert_eq!(
+        client.get_proposal(&id0).unwrap().status,
+        ProposalStatus::Pending
+    );
+    assert_eq!(
+        client.get_proposal(&id1).unwrap().status,
+        ProposalStatus::Pending
+    );
 }
 
 /// Role bitmask extremes — `RevokeRole(0)` and `RevokeRole(u32::MAX)` must not panic.
@@ -564,15 +629,24 @@ fn test_create_revoke_role_extreme_bitmasks_no_panic() {
     let (env, client, admin, _owners) = fresh_env();
     let target = Address::generate(&env);
     let id0 = client.create_proposal(
-        &admin, &ProposalAction::RevokeRole(target.clone(), 0u32), &0u64,
+        &admin,
+        &ProposalAction::RevokeRole(target.clone(), 0u32),
+        &0u64,
     );
     let id1 = client.create_proposal(
-        &admin, &ProposalAction::RevokeRole(target.clone(), u32::MAX), &1u64,
+        &admin,
+        &ProposalAction::RevokeRole(target.clone(), u32::MAX),
+        &1u64,
     );
-    assert_eq!(client.get_proposal(&id0).unwrap().status, ProposalStatus::Pending);
-    assert_eq!(client.get_proposal(&id1).unwrap().status, ProposalStatus::Pending);
+    assert_eq!(
+        client.get_proposal(&id0).unwrap().status,
+        ProposalStatus::Pending
+    );
+    assert_eq!(
+        client.get_proposal(&id1).unwrap().status,
+        ProposalStatus::Pending
+    );
 }
-
 
 // ════════════════════════════════════════════════════════════════════
 //  Property-based fuzz tests (proptest)

@@ -1798,8 +1798,10 @@ dependencies = [
  "serde_json",
  "sha2",
  "soroban-sdk",
+ "stellar-xdr",
  "syn 2.0.119",
  "veritasor-attestor-staking",
+ "veritasor-audit-log",
  "veritasor-common",
 ]
 

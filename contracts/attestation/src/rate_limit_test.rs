@@ -2,6 +2,8 @@
 
 extern crate std;
 
+use std::format;
+
 use super::*;
 use proptest::prelude::*;
 use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};

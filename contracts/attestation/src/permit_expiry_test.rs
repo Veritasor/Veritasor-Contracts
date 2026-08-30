@@ -27,7 +27,9 @@
 
 #![cfg(test)]
 
-use soroban_sdk::testutils::{Address as _, Ledger};
+use std::format;
+
+use soroban_sdk::testutils::{Address as _, Events, Ledger};
 use soroban_sdk::{symbol_short, Address, Env, Symbol, TryFromVal};
 
 use crate::{
@@ -251,7 +253,10 @@ fn event_includes_permit_expiry_ts() {
     let ev = PermitCancelledEvent::try_from_val(&env, &data).unwrap();
     assert_eq!(ev.business, business);
     assert_eq!(ev.nonce, 0);
-    assert_eq!(ev.permit_expiry_ts, expiry, "event must reflect the expiry from the payload");
+    assert_eq!(
+        ev.permit_expiry_ts, expiry,
+        "event must reflect the expiry from the payload"
+    );
 }
 
 /// Event carries `permit_expiry_ts = 0` when no expiry is configured.
@@ -268,7 +273,10 @@ fn event_carries_zero_when_no_expiry() {
 
     let (_cid, _topics, data) = env.events().all().last().unwrap();
     let ev = PermitCancelledEvent::try_from_val(&env, &data).unwrap();
-    assert_eq!(ev.permit_expiry_ts, 0, "zero expiry must be preserved in event");
+    assert_eq!(
+        ev.permit_expiry_ts, 0,
+        "zero expiry must be preserved in event"
+    );
 }
 
 // ─── Test: expiry is per-business ────────────────────────────────────────────
@@ -297,7 +305,10 @@ fn expiry_rejection_is_scoped_per_business() {
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.cancel_delegated_permit(&permit_a);
     }));
-    assert_eq!(client.get_replay_nonce(&business_a, &NONCE_CHANNEL_PERMIT), 0);
+    assert_eq!(
+        client.get_replay_nonce(&business_a, &NONCE_CHANNEL_PERMIT),
+        0
+    );
 
     // B's permit has a later expiry and should succeed.
     let expiry_b = expiry_a + 7200;
@@ -307,7 +318,10 @@ fn expiry_rejection_is_scoped_per_business() {
         permit_expiry_ts: expiry_b,
     };
     client.cancel_delegated_permit(&permit_b);
-    assert_eq!(client.get_replay_nonce(&business_b, &NONCE_CHANNEL_PERMIT), 1);
+    assert_eq!(
+        client.get_replay_nonce(&business_b, &NONCE_CHANNEL_PERMIT),
+        1
+    );
 }
 
 // ─── Test: sequential nonces with mixed expiry ────────────────────────────────
@@ -374,7 +388,10 @@ fn expiry_in_distant_past_rejected() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.cancel_delegated_permit(&permit);
     }));
-    assert!(result.is_err(), "permit with distant-past expiry must be rejected");
+    assert!(
+        result.is_err(),
+        "permit with distant-past expiry must be rejected"
+    );
 
     // Nonce intact.
     assert_eq!(client.get_replay_nonce(&business, &NONCE_CHANNEL_PERMIT), 0);

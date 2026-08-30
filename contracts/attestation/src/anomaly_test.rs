@@ -253,9 +253,9 @@ fn test_analytics_rotation_preserves_old_authorizer_until_commit() {
     assert_eq!(client.get_anomaly(&business, &period), Some(25u32));
 
     // New analytics is not authorized until commit.
-    let unauthorized_result = std::panic::catch_unwind(|| {
+    let unauthorized_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.set_anomaly(&new_analytics, &business, &period, &50u32);
-    });
+    }));
     assert!(unauthorized_result.is_err());
 }
 

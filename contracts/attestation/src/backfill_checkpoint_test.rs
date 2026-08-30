@@ -26,6 +26,8 @@
 
 extern crate std;
 
+use std::format;
+
 use crate::events::{BackfillCheckpointEvent, TOPIC_BACKFILL_CHECKPOINT};
 use crate::{AttestationContract, AttestationContractClient, BACKFILL_CHECKPOINT_INTERVAL};
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
@@ -157,7 +159,7 @@ fn large_count_handled() {
     assert_eq!(cps[1].submission_count, BACKFILL_CHECKPOINT_INTERVAL * 2);
 
     // Verify the global counter is accessible and correct.
-    let events: std::vec::Vec<_> = env
+    let events = env
         .events()
         .all()
         .iter()
