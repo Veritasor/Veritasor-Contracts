@@ -12,7 +12,6 @@ use soroban_sdk::{
     TryIntoVal, Vec,
 };
 
-use veritasor_audit_log::AuditLogContractClient;
 use veritasor_common::merkle;
 use veritasor_common::replay_protection;
 
@@ -223,6 +222,19 @@ pub trait AttestorStakingContractTrait {
 #[soroban_sdk::contractclient(name = "ReputationContractClient")]
 pub trait ReputationContractTrait {
     fn get_reputation(env: Env, attestor: Address) -> u64;
+}
+
+#[soroban_sdk::contractclient(name = "AuditLogContractClient")]
+pub trait AuditLogContractTrait {
+    fn get_replay_nonce(env: Env, actor: Address, channel: u32) -> u64;
+    fn append(
+        env: Env,
+        nonce: u64,
+        actor: Address,
+        source_contract: Address,
+        action: String,
+        payload: String,
+    ) -> u64;
 }
 
 #[contract]
