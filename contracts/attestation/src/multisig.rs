@@ -36,10 +36,12 @@
 //! See `docs/attestation-vote-weight-snapshot.md` for the full threat model,
 //! security notes, and migration considerations.
 
-use soroban_sdk::{contracttype, signature, symbol_short, Signature, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{
+    contracttype, signature, symbol_short, Address, Env, Signature, String, Symbol, Vec,
+};
 
-use crate::events;
 use crate::access_control::{is_paused, set_paused};
+use crate::events;
 
 /// Default proposal expiry, expressed in ledger sequences after creation.
 pub const DEFAULT_PROPOSAL_EXPIRY: u32 = 100_000;
@@ -528,10 +530,7 @@ pub fn approve_proposal(env: &Env, approver: &Address, id: u64) {
             "approver not in proposal vote-weight snapshot"
         );
     }
-    assert!(
-        is_owner(env, approver),
-        "only owners can approve proposals"
-    );
+    assert!(is_owner(env, approver), "only owners can approve proposals");
 
     let mut approvals = get_approvals(env, id);
     assert!(
@@ -705,7 +704,10 @@ pub fn emergency_pause(env: &Env, sig1: &Signature, sig2: &Signature) {
     let addr2 = env.verify(sig2);
 
     // Ensure distinct signers (different hardware keys)
-    assert!(addr1 != addr2, "both signatures must come from distinct keys");
+    assert!(
+        addr1 != addr2,
+        "both signatures must come from distinct keys"
+    );
 
     // Validate both addresses are in owner set
     let owners = get_owners(env);
@@ -746,12 +748,20 @@ pub fn cleanup_expired_proposals(env: &Env, limit: u32) -> u32 {
     let next_id = get_next_proposal_id(env);
     let current_seq = env.ledger().sequence();
     let mut cleaned = 0;
-    let max = if (limit as u64) < next_id { limit } else { next_id as u32 };
+    let max = if (limit as u64) < next_id {
+        limit
+    } else {
+        next_id as u32
+    };
     for id in 0..max {
         let expiry_key = MultisigKey::ProposalExpiry(id);
         if let Some(expiry) = env.storage().instance().get::<_, u32>(&expiry_key) {
             if current_seq > expiry + grace {
-                if let Some(proposal) = env.storage().instance().get::<_, Proposal>(&MultisigKey::Proposal(id)) {
+                if let Some(proposal) = env
+                    .storage()
+                    .instance()
+                    .get::<_, Proposal>(&MultisigKey::Proposal(id))
+                {
                     let action = proposal.action.clone();
                     let cleaned_at = env.ledger().sequence();
                     env.storage().instance().remove(&MultisigKey::Proposal(id));
@@ -777,15 +787,25 @@ pub fn cleanup_expired_proposals(env: &Env, limit: u32) -> u32 {
 pub fn revoke_approval(env: &Env, approver: &Address, id: u64) {
     approver.require_auth();
     let proposal = get_proposal(env, id).expect("proposal not found");
-    if is_proposal_expired(env, id) { panic!("proposal has expired"); }
-    assert!(proposal.status == ProposalStatus::Pending, "cannot revoke approval: proposal already executed or rejected");
+    if is_proposal_expired(env, id) {
+        panic!("proposal has expired");
+    }
+    assert!(
+        proposal.status == ProposalStatus::Pending,
+        "cannot revoke approval: proposal already executed or rejected"
+    );
     let mut approvals = get_approvals(env, id);
     let pos = approvals.iter().position(|a| a == approver);
     if let Some(idx) = pos {
         let last = approvals.len() - 1;
-        if idx != last { let last_addr = approvals.get(last).unwrap(); approvals.set(idx, last_addr); }
+        if idx != last {
+            let last_addr = approvals.get(last).unwrap();
+            approvals.set(idx, last_addr);
+        }
         approvals.pop_back();
-        env.storage().instance().set(&MultisigKey::Approvals(id), &approvals);
+        env.storage()
+            .instance()
+            .set(&MultisigKey::Approvals(id), &approvals);
         events::emit_approval_revoked(env, id, approver);
     }
 }

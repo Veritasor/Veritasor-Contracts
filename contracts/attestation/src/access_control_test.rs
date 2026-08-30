@@ -465,37 +465,16 @@ fn test_business_role_limits() {
     assert!(result.is_err(), "business cannot grant roles");
 }
 
-
 #[test]
 fn test_fuzz_grant_revoke_role_random_bitmaps() {
     let e = soroban_sdk::Env::default();
     let contract = AttestationContract::new(&e);
 
     let valid_roles = [
-        0b0000,
-        0b0001,
-        0b0010,
-        0b0100,
-        0b1000,
-        0b0011,
-        0b0101,
-        0b1001,
-        0b0110,
-        0b1010,
-        0b1100,
-        0b0111,
-        0b1011,
-        0b1101,
-        0b1110,
-        0b1111,
+        0b0000, 0b0001, 0b0010, 0b0100, 0b1000, 0b0011, 0b0101, 0b1001, 0b0110, 0b1010, 0b1100,
+        0b0111, 0b1011, 0b1101, 0b1110, 0b1111,
     ];
-    let invalid_bitmaps = [
-        0b10000u32,
-        0b100000u32,
-        0xFFFFu32,
-        0xDEADu32,
-        0xFFFFFFFFu32,
-    ];
+    let invalid_bitmaps = [0b10000u32, 0b100000u32, 0xFFFFu32, 0xDEADu32, 0xFFFFFFFFu32];
 
     let user1 = soroban_sdk::Address::generate(&e);
 

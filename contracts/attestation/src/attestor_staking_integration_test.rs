@@ -740,7 +740,7 @@ fn test_slash_on_invalid_attestation() {
     let staking = StakingClient::new(&env, &staking_id);
     let staking_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
-    
+
     // Dispute contract is the attestation contract
     staking.initialize(
         &staking_admin,
@@ -1158,7 +1158,7 @@ fn test_slash_on_invalid_attestation() {
     let staking = StakingClient::new(&env, &staking_id);
     let staking_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
-    
+
     // Dispute contract is the attestation contract
     staking.initialize(
         &staking_admin,
@@ -1526,7 +1526,7 @@ fn test_slash_on_invalid_attestation() {
     let staking = StakingClient::new(&env, &staking_id);
     let staking_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
-    
+
     // Dispute contract is the attestation contract
     staking.initialize(
         &staking_admin,
@@ -1956,14 +1956,21 @@ fn test_deadline_rollback_unlocks_attestor() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
     att_client.submit_attestation_as_attestor(
-        &attestor, &business, &period, &root,
-        &1_700_000_000u64, &1u32, &None,
+        &attestor,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
 
     // Open dispute — locks the attestor
     let challenger = Address::generate(&env);
     let dispute_id = att_client.open_dispute(
-        &challenger, &business, &period,
+        &challenger,
+        &business,
+        &period,
         &DisputeType::DataIntegrity,
         &String::from_str(&env, "bad data"),
     );
@@ -1988,7 +1995,10 @@ fn test_deadline_rollback_unlocks_attestor() {
     let unlocked = env.as_contract(&attestation_id, || {
         !dispute::is_attestor_locked(&env, &attestor)
     });
-    assert!(unlocked, "attestor should be unlocked after deadline rollback");
+    assert!(
+        unlocked,
+        "attestor should be unlocked after deadline rollback"
+    );
 
     // Verify dispute is closed with rollback resolution
     let dispute = att_client.get_dispute(&dispute_id).unwrap();
@@ -1997,7 +2007,10 @@ fn test_deadline_rollback_unlocks_attestor() {
         assert_eq!(resolution.outcome, DisputeOutcome::Rejected);
         assert_eq!(
             resolution.notes,
-            String::from_str(&env, "Automatic rollback: dispute resolution deadline exceeded")
+            String::from_str(
+                &env,
+                "Automatic rollback: dispute resolution deadline exceeded"
+            )
         );
     } else {
         panic!("expected rollback resolution");
@@ -2044,13 +2057,20 @@ fn test_deadline_rollback_before_deadline_keeps_locked() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
     att_client.submit_attestation_as_attestor(
-        &attestor, &business, &period, &root,
-        &1_700_000_000u64, &1u32, &None,
+        &attestor,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
 
     let challenger = Address::generate(&env);
     let dispute_id = att_client.open_dispute(
-        &challenger, &business, &period,
+        &challenger,
+        &business,
+        &period,
         &DisputeType::DataIntegrity,
         &String::from_str(&env, "bad data"),
     );
@@ -2061,13 +2081,19 @@ fn test_deadline_rollback_before_deadline_keeps_locked() {
     // Call check_and_rollback — should do nothing (not past deadline)
     let dispute_ids = soroban_sdk::vec![&env, dispute_id];
     let count = att_client.check_and_rollback_disputes(&admin, &dispute_ids, &10u32);
-    assert_eq!(count, 0, "no disputes should be rolled back before deadline");
+    assert_eq!(
+        count, 0,
+        "no disputes should be rolled back before deadline"
+    );
 
     // Attestor should remain locked
     let still_locked = env.as_contract(&attestation_id, || {
         dispute::is_attestor_locked(&env, &attestor)
     });
-    assert!(still_locked, "attestor should remain locked before deadline");
+    assert!(
+        still_locked,
+        "attestor should remain locked before deadline"
+    );
 
     // Dispute should still be Open
     let dispute = att_client.get_dispute(&dispute_id).unwrap();
@@ -2116,27 +2142,41 @@ fn test_deadline_rollback_multiple_disputes_partial_unlock() {
     let business1 = Address::generate(&env);
     let period1 = String::from_str(&env, "2026-01");
     att_client.submit_attestation_as_attestor(
-        &attestor, &business1, &period1, &root,
-        &1_700_000_000u64, &1u32, &None,
+        &attestor,
+        &business1,
+        &period1,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
 
     let business2 = Address::generate(&env);
     let period2 = String::from_str(&env, "2026-02");
     att_client.submit_attestation_as_attestor(
-        &attestor, &business2, &period2, &root,
-        &1_700_000_000u64, &1u32, &None,
+        &attestor,
+        &business2,
+        &period2,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
 
     let challenger = Address::generate(&env);
 
     // Open disputes against both attestations (attestor locked twice)
     let dispute_id1 = att_client.open_dispute(
-        &challenger, &business1, &period1,
+        &challenger,
+        &business1,
+        &period1,
         &DisputeType::DataIntegrity,
         &String::from_str(&env, "bad 1"),
     );
     let dispute_id2 = att_client.open_dispute(
-        &challenger, &business2, &period2,
+        &challenger,
+        &business2,
+        &period2,
         &DisputeType::RevenueMismatch,
         &String::from_str(&env, "bad 2"),
     );
@@ -2155,7 +2195,10 @@ fn test_deadline_rollback_multiple_disputes_partial_unlock() {
     let still_locked = env.as_contract(&attestation_id, || {
         dispute::is_attestor_locked(&env, &attestor)
     });
-    assert!(still_locked, "attestor should remain locked with second dispute active");
+    assert!(
+        still_locked,
+        "attestor should remain locked with second dispute active"
+    );
 
     // Roll back dispute 2
     let dispute_ids_2 = soroban_sdk::vec![&env, dispute_id2];
@@ -2166,7 +2209,10 @@ fn test_deadline_rollback_multiple_disputes_partial_unlock() {
     let unlocked = env.as_contract(&attestation_id, || {
         !dispute::is_attestor_locked(&env, &attestor)
     });
-    assert!(unlocked, "attestor should be fully unlocked after both disputes rolled back");
+    assert!(
+        unlocked,
+        "attestor should be fully unlocked after both disputes rolled back"
+    );
 }
 
 /// Attestor can submit new attestations after being unlocked by rollback.
@@ -2210,14 +2256,21 @@ fn test_deadline_rollback_attestor_can_submit_after_unlock() {
     let period1 = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[1u8; 32]);
     att_client.submit_attestation_as_attestor(
-        &attestor, &business1, &period1, &root,
-        &1_700_000_000u64, &1u32, &None,
+        &attestor,
+        &business1,
+        &period1,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
 
     // Open dispute — locks attestor
     let challenger = Address::generate(&env);
     let dispute_id = att_client.open_dispute(
-        &challenger, &business1, &period1,
+        &challenger,
+        &business1,
+        &period1,
         &DisputeType::DataIntegrity,
         &String::from_str(&env, "bad"),
     );
@@ -2242,10 +2295,18 @@ fn test_deadline_rollback_attestor_can_submit_after_unlock() {
     let business2 = Address::generate(&env);
     let period2 = String::from_str(&env, "2026-03");
     att_client.submit_attestation_as_attestor(
-        &attestor, &business2, &period2, &root,
-        &1_700_000_001u64, &1u32, &None,
+        &attestor,
+        &business2,
+        &period2,
+        &root,
+        &1_700_000_001u64,
+        &1u32,
+        &None,
     );
 
     let stored = att_client.get_attestation(&business2, &period2);
-    assert!(stored.is_some(), "attestor should be able to submit after unlock");
+    assert!(
+        stored.is_some(),
+        "attestor should be able to submit after unlock"
+    );
 }

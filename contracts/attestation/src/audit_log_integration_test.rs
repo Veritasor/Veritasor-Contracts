@@ -1,6 +1,6 @@
 extern crate std;
 
-use crate::{AttestationContract, AttestationContractClient, events::SlashTriggeredEvent};
+use crate::{events::SlashTriggeredEvent, AttestationContract, AttestationContractClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     Address, Env, String,
@@ -44,9 +44,10 @@ pub struct MockStaking;
 #[soroban_sdk::contractimpl]
 impl MockStaking {
     pub fn slash(env: Env, attestor: Address, amount: i128, _dispute_id: u64) -> u32 {
-        env.storage()
-            .instance()
-            .set(&soroban_sdk::Symbol::new(&env, "slashed_attestor"), &attestor);
+        env.storage().instance().set(
+            &soroban_sdk::Symbol::new(&env, "slashed_attestor"),
+            &attestor,
+        );
         env.storage()
             .instance()
             .set(&soroban_sdk::Symbol::new(&env, "slashed_amount"), &amount);

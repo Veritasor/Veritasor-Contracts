@@ -276,11 +276,7 @@ fn bench_verify_attestation() {
 // - Warm: Timestamps already exist from previous submissions
 // - Pruning: Expired timestamps need to be cleaned up
 
-fn setup_rate_limit_config(
-    env: &Env,
-    client: &AttestationContractClient<'_>,
-    admin: &Address,
-) {
+fn setup_rate_limit_config(env: &Env, client: &AttestationContractClient<'_>, admin: &Address) {
     client.configure_rate_limit(&100, &3600, &10, &60, &true, &1);
 }
 
@@ -454,7 +450,11 @@ fn bench_check_rate_limit_plus_record_submission() {
 
     let cost = before.delta(&after);
     cost.print("check_rate_limit + record_submission (cold, combined)");
-    append_to_csv("check_rate_limit_plus_record_cold", cost.cpu_insns, cost.mem_bytes);
+    append_to_csv(
+        "check_rate_limit_plus_record_cold",
+        cost.cpu_insns,
+        cost.mem_bytes,
+    );
     cost.assert_within_target("check_rate_limit + record (cold)", 350_000, 15_000);
 }
 
@@ -490,7 +490,11 @@ fn bench_check_rate_limit_plus_record_submission_warm() {
 
     let cost = before.delta(&after);
     cost.print("check_rate_limit + record_submission (warm, combined)");
-    append_to_csv("check_rate_limit_plus_record_warm", cost.cpu_insns, cost.mem_bytes);
+    append_to_csv(
+        "check_rate_limit_plus_record_warm",
+        cost.cpu_insns,
+        cost.mem_bytes,
+    );
     cost.assert_within_target("check_rate_limit + record (warm)", 350_000, 15_000);
 }
 
@@ -1006,7 +1010,11 @@ fn bench_get_attestation_with_status() {
     let cost = before.delta(&after);
     cost.print("get_attestation_with_status (active)");
     cost.assert_within_target("get_attestation_with_status", 130_000, 4_000);
-    append_to_csv("get_attestation_with_status_active", cost.cpu_insns, cost.mem_bytes);
+    append_to_csv(
+        "get_attestation_with_status_active",
+        cost.cpu_insns,
+        cost.mem_bytes,
+    );
 }
 
 #[test]
@@ -1041,7 +1049,11 @@ fn bench_get_attestation_with_status_revoked() {
     let cost = before.delta(&after);
     cost.print("get_attestation_with_status (revoked)");
     cost.assert_within_target("get_attestation_with_status", 130_000, 4_000);
-    append_to_csv("get_attestation_with_status_revoked", cost.cpu_insns, cost.mem_bytes);
+    append_to_csv(
+        "get_attestation_with_status_revoked",
+        cost.cpu_insns,
+        cost.mem_bytes,
+    );
 }
 
 /// Comparative report: get_attestation vs get_attestation_with_status.
@@ -1089,8 +1101,18 @@ fn bench_get_attestation_variants_comparison() {
         let delta_cpu = status_cost.cpu_insns.saturating_sub(plain_cost.cpu_insns);
         let delta_mem = status_cost.mem_bytes.saturating_sub(plain_cost.mem_bytes);
         std::println!("\n=== Delta (with_status - plain) ===");
-        std::println!("CPU instructions: {} (plain: {}, with_status: {})", delta_cpu, plain_cost.cpu_insns, status_cost.cpu_insns);
-        std::println!("Memory bytes: {} (plain: {}, with_status: {})", delta_mem, plain_cost.mem_bytes, status_cost.mem_bytes);
+        std::println!(
+            "CPU instructions: {} (plain: {}, with_status: {})",
+            delta_cpu,
+            plain_cost.cpu_insns,
+            status_cost.cpu_insns
+        );
+        std::println!(
+            "Memory bytes: {} (plain: {}, with_status: {})",
+            delta_mem,
+            plain_cost.mem_bytes,
+            status_cost.mem_bytes
+        );
 
         std::println!(
             "{{\"benchmark\": \"get_attestation_variants_active\", \"plain_cpu\": {}, \"status_cpu\": {}, \"delta_cpu\": {}, \"plain_mem\": {}, \"status_mem\": {}, \"delta_mem\": {}}}",
@@ -1142,8 +1164,18 @@ fn bench_get_attestation_variants_comparison() {
         let delta_cpu = status_cost.cpu_insns.saturating_sub(plain_cost.cpu_insns);
         let delta_mem = status_cost.mem_bytes.saturating_sub(plain_cost.mem_bytes);
         std::println!("\n=== Delta (with_status - plain) [revoked] ===");
-        std::println!("CPU instructions: {} (plain: {}, with_status: {})", delta_cpu, plain_cost.cpu_insns, status_cost.cpu_insns);
-        std::println!("Memory bytes: {} (plain: {}, with_status: {})", delta_mem, plain_cost.mem_bytes, status_cost.mem_bytes);
+        std::println!(
+            "CPU instructions: {} (plain: {}, with_status: {})",
+            delta_cpu,
+            plain_cost.cpu_insns,
+            status_cost.cpu_insns
+        );
+        std::println!(
+            "Memory bytes: {} (plain: {}, with_status: {})",
+            delta_mem,
+            plain_cost.mem_bytes,
+            status_cost.mem_bytes
+        );
 
         std::println!(
             "{{\"benchmark\": \"get_attestation_variants_revoked\", \"plain_cpu\": {}, \"status_cpu\": {}, \"delta_cpu\": {}, \"plain_mem\": {}, \"status_mem\": {}, \"delta_mem\": {}}}",
@@ -1363,11 +1395,7 @@ fn bench_batch_vs_single_profiling() {
 // record_submission: State-mutating write that appends the current timestamp.
 
 /// Setup rate limit configuration for benchmarks.
-fn setup_rate_limit(
-    env: &Env,
-    client: &AttestationContractClient<'_>,
-    admin: &Address,
-) {
+fn setup_rate_limit(env: &Env, client: &AttestationContractClient<'_>, admin: &Address) {
     // Configure rate limit: max 100 submissions per hour, burst 10 per minute
     client.configure_rate_limit(&100u32, &3600u64, &10u32, &60u64, &true, &1u64);
 }
@@ -1568,7 +1596,11 @@ fn bench_rate_limit_check_then_record_combined() {
 
     let cost = before.delta(&after);
     cost.print("check_rate_limit + record_submission (combined, warm)");
-    append_to_csv("rate_limit_check_record_combined", cost.cpu_insns, cost.mem_bytes);
+    append_to_csv(
+        "rate_limit_check_record_combined",
+        cost.cpu_insns,
+        cost.mem_bytes,
+    );
 
     // Also print individual costs for comparison
     std::println!(
@@ -1661,9 +1693,12 @@ fn bench_rate_limit_dry_run_vs_commit_comparison() {
              check_rate_limit_cold,{},{}\n\
              record_submission_cold,{},{}\n\
              check_record_combined_cold,{},{}",
-            check_cost.cpu_insns, check_cost.mem_bytes,
-            record_cost.cpu_insns, record_cost.mem_bytes,
-            both_cost.cpu_insns, both_cost.mem_bytes
+            check_cost.cpu_insns,
+            check_cost.mem_bytes,
+            record_cost.cpu_insns,
+            record_cost.mem_bytes,
+            both_cost.cpu_insns,
+            both_cost.mem_bytes
         );
     }
 
@@ -1717,9 +1752,12 @@ fn bench_rate_limit_dry_run_vs_commit_comparison() {
              check_rate_limit_warm,{},{}\n\
              record_submission_warm,{},{}\n\
              check_record_combined_warm,{},{}",
-            check_cost.cpu_insns, check_cost.mem_bytes,
-            record_cost.cpu_insns, record_cost.mem_bytes,
-            both_cost.cpu_insns, both_cost.mem_bytes
+            check_cost.cpu_insns,
+            check_cost.mem_bytes,
+            record_cost.cpu_insns,
+            record_cost.mem_bytes,
+            both_cost.cpu_insns,
+            both_cost.mem_bytes
         );
 
         std::println!("\nSecurity note: check_rate_limit is read-only (prunes only if needed).");
@@ -2162,10 +2200,7 @@ fn bench_is_paused_cold_hot_comparison() {
         ("is_paused_hot", hot_cpu, hot_mem),
     ] {
         if cpu == 0 && mem == 0 {
-            std::println!(
-                "{}: skipping budget assertion (test env returned 0)",
-                label
-            );
+            std::println!("{}: skipping budget assertion (test env returned 0)", label);
             continue;
         }
         assert!(
@@ -3140,11 +3175,11 @@ fn setup_expired_attestations(
             &business,
             &period,
             &root,
-            &1u64,          // attestation timestamp
-            &1u32,          // version
-            &0i128,         // fee_paid (ignored)
-            &None,          // no proof hash
-            &Some(100u64),  // expires at ledger time 100
+            &1u64,         // attestation timestamp
+            &1u32,         // version
+            &0i128,        // fee_paid (ignored)
+            &None,         // no proof hash
+            &Some(100u64), // expires at ledger time 100
         );
         pairs.push_back((business, period.clone()));
     }
@@ -3498,11 +3533,7 @@ fn assert_multi_period_within_budget(n: u64, total_cpu: u64, total_mem: u64, lab
 /// Each range i occupies [i*1000+1, i*1000+999] so ranges are strictly
 /// non-overlapping.  A unique 32-byte merkle root is derived from `i` so the
 /// RootIndex reverse-lookup table is also populated correctly.
-fn setup_multi_period_ranges(
-    env: &Env,
-    client: &AttestationContractClient,
-    n: usize,
-) -> Address {
+fn setup_multi_period_ranges(env: &Env, client: &AttestationContractClient, n: usize) -> Address {
     let business = Address::generate(env);
 
     for i in 0..n {
@@ -3522,9 +3553,9 @@ fn setup_multi_period_ranges(
             &end,
             &root,
             &1_700_000_000u64, // timestamp
-            &1u32,              // version
-            &None,              // no proof hash
-            &None,              // no expiry
+            &1u32,             // version
+            &None,             // no proof hash
+            &None,             // no expiry
         );
     }
 
@@ -3594,7 +3625,12 @@ fn bench_get_multi_period_ranges_n100() {
     let result = client.get_multi_period_ranges(&business);
     let after = BudgetSnapshot::capture(&env);
 
-    assert_eq!(result.len(), 100, "Expected 100 ranges, got {}", result.len());
+    assert_eq!(
+        result.len(),
+        100,
+        "Expected 100 ranges, got {}",
+        result.len()
+    );
 
     let cost = before.delta(&after);
     cost.print("get_multi_period_ranges (n=100)");
@@ -3620,7 +3656,12 @@ fn bench_get_multi_period_ranges_n500() {
     let result = client.get_multi_period_ranges(&business);
     let after = BudgetSnapshot::capture(&env);
 
-    assert_eq!(result.len(), 500, "Expected 500 ranges, got {}", result.len());
+    assert_eq!(
+        result.len(),
+        500,
+        "Expected 500 ranges, got {}",
+        result.len()
+    );
 
     let cost = before.delta(&after);
     cost.print("get_multi_period_ranges (n=500, upper-bound stress)");
@@ -3690,12 +3731,7 @@ fn bench_get_multi_period_ranges_sweep() {
         let cost = before.delta(&after);
         print_multi_period_csv_row(n as u64, cost.cpu_insns, cost.mem_bytes);
 
-        assert_multi_period_within_budget(
-            n as u64,
-            cost.cpu_insns,
-            cost.mem_bytes,
-            "bench_sweep",
-        );
+        assert_multi_period_within_budget(n as u64, cost.cpu_insns, cost.mem_bytes, "bench_sweep");
 
         // Track per-range cost at N=1 for linear-growth comparison.
         if n == 1 {
@@ -3795,7 +3831,11 @@ fn regression_get_multi_period_ranges_budget() {
         let (env, client, _admin) = setup_basic();
         let business = Address::generate(&env);
         let result = client.get_multi_period_ranges(&business);
-        assert_eq!(result.len(), 0, "regression: zero-range must return empty Vec");
+        assert_eq!(
+            result.len(),
+            0,
+            "regression: zero-range must return empty Vec"
+        );
     }
 
     // Non-zero sizes: correctness + budget

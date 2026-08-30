@@ -353,9 +353,7 @@ pub fn set_pending_fee_config(env: &Env, pending: &PendingFeeConfig) {
 
 /// Remove any pending fee configuration.
 pub fn clear_pending_fee_config(env: &Env) {
-    env.storage()
-        .instance()
-        .remove(&DataKey::PendingFeeConfig);
+    env.storage().instance().remove(&DataKey::PendingFeeConfig);
 }
 
 /// If a pending fee config's timelock has expired, apply it to the live config
@@ -684,10 +682,7 @@ pub fn increment_cleanup_count(env: &Env) {
 pub fn handle_epoch_rollover(env: &Env) {
     let current_bucket = env.ledger().timestamp() / FEE_BUCKET_WINDOW_SECONDS;
 
-    let initialized = env
-        .storage()
-        .instance()
-        .has(&DataKey::LastFeeBucket);
+    let initialized = env.storage().instance().has(&DataKey::LastFeeBucket);
 
     if !initialized {
         // First-ever call: record the current bucket and start epoch 1.
@@ -757,9 +752,7 @@ pub fn get_archive_index(env: &Env) -> u64 {
 /// Increment the global archive index and return the *new* value.
 pub fn next_archive_index(env: &Env) -> u64 {
     let next = get_archive_index(env) + 1;
-    env.storage()
-        .instance()
-        .set(&DataKey::ArchiveIndex, &next);
+    env.storage().instance().set(&DataKey::ArchiveIndex, &next);
     next
 }
 
@@ -770,9 +763,10 @@ pub fn set_archived_attestation(
     period: &soroban_sdk::String,
     data: &crate::AttestationData,
 ) {
-    env.storage()
-        .instance()
-        .set(&DataKey::ArchivedAttestation(business.clone(), period.clone()), data);
+    env.storage().instance().set(
+        &DataKey::ArchivedAttestation(business.clone(), period.clone()),
+        data,
+    );
 }
 
 /// Read a full attestation from the archive tier.
@@ -781,9 +775,10 @@ pub fn get_archived_attestation(
     business: &Address,
     period: &soroban_sdk::String,
 ) -> Option<crate::AttestationData> {
-    env.storage()
-        .instance()
-        .get(&DataKey::ArchivedAttestation(business.clone(), period.clone()))
+    env.storage().instance().get(&DataKey::ArchivedAttestation(
+        business.clone(),
+        period.clone(),
+    ))
 }
 
 /// Write the lightweight archive pointer for a (business, period).
@@ -793,9 +788,10 @@ pub fn set_archive_pointer(
     period: &soroban_sdk::String,
     pointer: &ArchivePointerRecord,
 ) {
-    env.storage()
-        .instance()
-        .set(&DataKey::ArchivePointer(business.clone(), period.clone()), pointer);
+    env.storage().instance().set(
+        &DataKey::ArchivePointer(business.clone(), period.clone()),
+        pointer,
+    );
 }
 
 /// Read the lightweight archive pointer for a (business, period).
@@ -862,14 +858,13 @@ pub fn clear_compaction_retention(env: &Env) {
 /// Called by `compact_archival` after verifying the retention policy.
 /// The `ArchivePointer` (Merkle commitment) is preserved; only the
 /// `ArchivedAttestation` (full data) is deleted.
-pub fn remove_archived_attestation(
-    env: &Env,
-    business: &Address,
-    period: &soroban_sdk::String,
-) {
+pub fn remove_archived_attestation(env: &Env, business: &Address, period: &soroban_sdk::String) {
     env.storage()
         .instance()
-        .remove(&DataKey::ArchivedAttestation(business.clone(), period.clone()));
+        .remove(&DataKey::ArchivedAttestation(
+            business.clone(),
+            period.clone(),
+        ));
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -879,9 +874,7 @@ pub fn remove_archived_attestation(
 /// Get the optional reputation contract address.
 /// Returns `None` if reputation gating is disabled.
 pub fn get_reputation_contract(env: &Env) -> Option<Address> {
-    env.storage()
-        .instance()
-        .get(&DataKey::ReputationContract)
+    env.storage().instance().get(&DataKey::ReputationContract)
 }
 
 /// Set the reputation contract address (enables reputation gating).

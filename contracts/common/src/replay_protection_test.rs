@@ -2285,8 +2285,9 @@ fn concurrent_batches_nonce_isolation() {
     );
 
     // State integrity: CHANNEL_BUSINESS must still be 1 after the failed replay.
-    let business_nonce_after_replay =
-        env.as_contract(&contract_id, || get_nonce(&env, &business_a, CHANNEL_BUSINESS));
+    let business_nonce_after_replay = env.as_contract(&contract_id, || {
+        get_nonce(&env, &business_a, CHANNEL_BUSINESS)
+    });
     assert_eq!(
         business_nonce_after_replay, 1,
         "CHANNEL_BUSINESS must remain 1 after a failed replay attempt"
@@ -2566,15 +2567,15 @@ mod proptest_nonce_monotonicity {
     use std::collections::BTreeMap;
 
     use proptest::prelude::*;
-    use proptest_state_machine::{ReferenceStateMachine, proptest_state_machine};
+    use proptest_state_machine::{proptest_state_machine, ReferenceStateMachine};
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{Address, Env};
 
+    use super::ReplayProtectionTestContract;
     use crate::replay_protection::{
         get_nonce, verify_and_increment_nonce, CHANNEL_ADMIN, CHANNEL_BUSINESS,
         CHANNEL_CUSTOM_START, CHANNEL_GOVERNANCE, CHANNEL_MULTISIG, CHANNEL_PROTOCOL,
     };
-    use super::ReplayProtectionTestContract;
 
     // ── 1. Model State ────────────────────────────────────────────────────────
 
@@ -2598,16 +2599,11 @@ mod proptest_nonce_monotonicity {
         ///
         /// Succeeds iff `nonce == current_nonce(channel)`. On success the
         /// counter advances by exactly 1.
-        SubmitNonce {
-            channel_id: u64,
-            nonce: u64,
-        },
+        SubmitNonce { channel_id: u64, nonce: u64 },
         /// Submit a deliberately mismatched nonce for a channel.
         ///
         /// Always fails in the real system. The model state is unchanged.
-        SkipNonce {
-            channel_id: u64,
-        },
+        SkipNonce { channel_id: u64 },
     }
 
     // ── 3. ReferenceStateMachine Implementation ──────────────────────────────
@@ -2656,54 +2652,45 @@ mod proptest_nonce_monotonicity {
             ];
 
             // Correct nonce submission: use the exact current nonce.
-            let correct_submit = channel
-                .clone()
-                .prop_flat_map(move |ch| {
-                    let current = state.channels.get(&ch).copied().unwrap_or(0);
-                    Just(NonceCommand::SubmitNonce {
-                        channel_id: ch,
-                        nonce: current,
-                    })
-                });
+            let correct_submit = channel.clone().prop_flat_map(move |ch| {
+                let current = state.channels.get(&ch).copied().unwrap_or(0);
+                Just(NonceCommand::SubmitNonce {
+                    channel_id: ch,
+                    nonce: current,
+                })
+            });
 
             // Stale nonce: a value below the current nonce for the channel.
             // If current = 0, there is no stale value below 0, so generate
             // an arbitrary wrong value instead.
-            let stale_submit = channel
-                .clone()
-                .prop_flat_map(move |ch| {
-                    let current = state.channels.get(&ch).copied().unwrap_or(0);
-                    if current > 0 {
-                        (0..current)
-                            .prop_map(move |stale| NonceCommand::SubmitNonce {
-                                channel_id: ch,
-                                nonce: stale,
-                            })
-                            .boxed()
-                    } else {
-                        prop_oneof![
-                            Just(1u64),
-                            Just(42u64),
-                            Just(u64::MAX),
-                        ]
+            let stale_submit = channel.clone().prop_flat_map(move |ch| {
+                let current = state.channels.get(&ch).copied().unwrap_or(0);
+                if current > 0 {
+                    (0..current)
+                        .prop_map(move |stale| NonceCommand::SubmitNonce {
+                            channel_id: ch,
+                            nonce: stale,
+                        })
+                        .boxed()
+                } else {
+                    prop_oneof![Just(1u64), Just(42u64), Just(u64::MAX),]
                         .prop_map(move |n| NonceCommand::SubmitNonce {
                             channel_id: ch,
                             nonce: n,
                         })
                         .boxed()
-                    }
-                });
+                }
+            });
 
             // Arbitrary wrong nonce: small values unlikely to match current.
-            let arbitrary_wrong = (channel.clone(), 0u64..5)
-                .prop_map(|(ch, n)| NonceCommand::SubmitNonce {
+            let arbitrary_wrong =
+                (channel.clone(), 0u64..5).prop_map(|(ch, n)| NonceCommand::SubmitNonce {
                     channel_id: ch,
                     nonce: n,
                 });
 
             // SkipNonce: always fails (guaranteed wrong nonce in the real system).
-            let skip = channel
-                .prop_map(|ch| NonceCommand::SkipNonce { channel_id: ch });
+            let skip = channel.prop_map(|ch| NonceCommand::SkipNonce { channel_id: ch });
 
             prop_oneof![
                 3 => correct_submit.boxed(),
@@ -2721,10 +2708,7 @@ mod proptest_nonce_monotonicity {
         /// - `SkipNonce` → state unchanged (panic in real).
         fn apply(mut state: Self::State, transition: &Self::Transition) -> Self::State {
             match *transition {
-                NonceCommand::SubmitNonce {
-                    channel_id,
-                    nonce,
-                } => {
+                NonceCommand::SubmitNonce { channel_id, nonce } => {
                     let current = state.channels.get(&channel_id).copied().unwrap_or(0);
                     if nonce == current {
                         // Correct nonce: advance the counter by 1.
