@@ -8,8 +8,8 @@ extern crate std;
 
 use core::cmp::Ordering;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, token, Address, BytesN, Env, IntoVal, String, Symbol,
-    TryIntoVal, Vec,
+    contract, contractimpl, contracttype, signature, token, Address, BytesN, Env, Signature,
+    String, Symbol, TryIntoVal, Vec,
 };
 
 use veritasor_common::merkle;
@@ -41,6 +41,23 @@ pub struct AnalyticsRotationProposal {
 pub const INSTANCE_TTL_THRESHOLD: u32 = 100000;
 /// TTL bump amount: how much to bump the instance's TTL
 pub const INSTANCE_TTL_BUMP: u32 = 100000;
+
+/// Read the current CPU/memory cost counters for relayer gas metering.
+///
+/// `Env` cost-measurement APIs are only available under `testutils` (e.g. the
+/// test harness). In production builds metering is a no-op and reports zero so
+/// the contract compiles without the test-only feature.
+#[cfg(any(test, feature = "testutils"))]
+fn current_budget_costs(env: &Env) -> (u64, u64) {
+    let budget = env.cost_estimate().budget();
+    (budget.cpu_instruction_cost(), budget.memory_bytes_cost())
+}
+
+/// Production fallback for [`current_budget_costs`]: no metering available.
+#[cfg(not(any(test, feature = "testutils")))]
+fn current_budget_costs(_env: &Env) -> (u64, u64) {
+    (0, 0)
+}
 
 // Status constants
 pub const STATUS_ACTIVE: u32 = 0;
@@ -76,10 +93,7 @@ pub use access_control::{ROLE_ADMIN, ROLE_ATTESTOR, ROLE_BUSINESS, ROLE_OPERATOR
 pub use dispute::{
     Dispute, DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType, OptionalResolution,
 };
-pub use dynamic_fees::{
-    add_relayer_gas, compute_fee, get_relayer_gas, DataKey, FeeConfig, PendingFeeConfig,
-    FEE_TIMELOCK_SECONDS,
-};
+pub use dynamic_fees::{add_relayer_gas, compute_fee, get_relayer_gas, DataKey, FeeConfig};
 pub use dynamic_fees::{ArchivePointerRecord, CompactionRetentionPolicy};
 pub use dynamic_fees::{RevokeProposal, DEFAULT_REVOKE_GRACE_SECONDS};
 pub use events::{
@@ -92,7 +106,7 @@ pub use events::{
     TOPIC_STAKING_CONTRACT_CANCELLED, TOPIC_STAKING_CONTRACT_COMMITTED,
     TOPIC_STAKING_CONTRACT_PROPOSED,
 };
-pub use fees::{collect_flat_fee, CollectorRotationProposal, DaoRotationProposal, FlatFeeConfig};
+pub use fees::{collect_flat_fee, CollectorRotationProposal, FlatFeeConfig};
 pub use multisig::{Proposal, ProposalAction, ProposalEffect, ProposalStatus, VoteWeightSnapshot};
 pub use rate_limit::RateLimitConfig;
 pub use registry::{BusinessRecord, BusinessStatus};
@@ -233,9 +247,7 @@ pub trait ReputationContractTrait {
     fn get_reputation(env: Env, attestor: Address) -> u64;
 }
 
-/// Cross-contract client for the audit-log contract (symbol-based dispatch,
-/// matching `veritasor-audit-log`'s public interface).
-#[soroban_sdk::contractclient(name = "AuditLogClient")]
+#[soroban_sdk::contractclient(name = "AuditLogContractClient")]
 pub trait AuditLogContractTrait {
     fn get_replay_nonce(env: Env, actor: Address, channel: u32) -> u64;
     fn append(
@@ -1081,16 +1093,14 @@ impl AttestationContract {
         // Capture budget before execution for delegated submissions (relayer gas metering)
         let is_delegated = payer != business;
         let (cpu_before, mem_before) = if is_delegated {
-            (budget_cpu(env), budget_mem(env))
+            current_budget_costs(env)
         } else {
             (0, 0)
         };
 
         access_control::require_not_paused(env);
 
-        if registry::get_status(env, business) == Some(BusinessStatus::Suspended) {
-            panic!("business is suspended");
-        }
+        registry::require_active_business(env, business);
 
         rate_limit::check_rate_limit(env, business);
 
@@ -1099,6 +1109,25 @@ impl AttestationContract {
 
         let key = DataKey::Attestation(business.clone(), period.clone());
         if env.storage().instance().has(&key) {
+            // Double-submission / expiry-reuse rejection: this business+period
+            // already holds an attestation. When an attestor is known, record
+            // the relevant slashing condition before rejecting the submission.
+            if let Some(attestor) = attestor {
+                let existing: Option<AttestationData> = env.storage().instance().get(&key);
+                let condition = match &existing {
+                    Some(data) if Self::attestation_expired(env, data) => {
+                        events::SlashingCondition::ExpiredReuse
+                    }
+                    _ => events::SlashingCondition::DoubleSubmission,
+                };
+                Self::try_trigger_slash(
+                    env,
+                    condition,
+                    attestor,
+                    1000i128,
+                    Self::next_condition_slash_id(env),
+                );
+            }
             panic!("attestation already exists for this business and period");
         }
         Self::validate_expiry(env, timestamp, expiry_timestamp);
@@ -1163,8 +1192,7 @@ impl AttestationContract {
 
         // Track relayer gas for delegated submissions
         if is_delegated {
-            let cpu_after = budget_cpu(env);
-            let mem_after = budget_mem(env);
+            let (cpu_after, mem_after) = current_budget_costs(env);
             let cpu_delta = cpu_after.saturating_sub(cpu_before);
             let mem_delta = mem_after.saturating_sub(mem_before);
 
@@ -1190,7 +1218,7 @@ impl AttestationContract {
         // Capture budget before execution for delegated submissions (relayer gas metering)
         let is_delegated = payer.is_some();
         let (cpu_before, mem_before) = if is_delegated {
-            (budget_cpu(env), budget_mem(env))
+            current_budget_costs(env)
         } else {
             (0, 0)
         };
@@ -1228,10 +1256,6 @@ impl AttestationContract {
                 }
             }
             registry::require_active_business(env, &business);
-
-            if registry::get_status(env, &item.business) == Some(BusinessStatus::Suspended) {
-                panic!("business is suspended");
-            }
 
             let pair = (item.business.clone(), item.period.clone());
             for s in seen.iter() {
@@ -1322,8 +1346,7 @@ impl AttestationContract {
 
         // Track relayer gas for delegated submissions
         if is_delegated {
-            let cpu_after = budget_cpu(env);
-            let mem_after = budget_mem(env);
+            let (cpu_after, mem_after) = current_budget_costs(env);
             let cpu_delta = cpu_after.saturating_sub(cpu_before);
             let mem_delta = mem_after.saturating_sub(mem_before);
 
@@ -1352,12 +1375,10 @@ impl AttestationContract {
         }
     }
     pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
-        // Active tier lives in instance storage (see `execute_submission`).
-        let active_key = DataKey::Attestation(business.clone(), period.clone());
         if let Some(att_data) = env
             .storage()
-            .instance()
-            .get::<_, AttestationData>(&active_key)
+            .persistent()
+            .get::<_, AttestationData>(&DataKey::Attestation(business.clone(), period.clone()))
         {
             env.storage()
                 .instance()
@@ -1365,26 +1386,31 @@ impl AttestationContract {
             return Some(att_data);
         }
 
-        // Try reading from the archival tier and rehydrate back to active
-        // (instance) storage.
+        // Try reading from archive
         let archive_key = DataKey::AttestationSnapshot(business.clone(), period.clone());
         if let Some(archived_att_data) = env
             .storage()
             .persistent()
             .get::<_, AttestationData>(&archive_key)
         {
+            let current_config = network_config::get_config(&env);
+
+            // Rehydrate back to active storage
+            let active_key = DataKey::Attestation(business.clone(), period.clone());
             env.storage()
-                .instance()
+                .persistent()
                 .set(&active_key, &archived_att_data);
-            env.storage()
-                .instance()
-                .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+            env.storage().persistent().extend_ttl(
+                &active_key,
+                current_config.min_persistent_entry_ttl,
+                current_config.max_entry_ttl,
+            );
 
             // Emit rehydrate event
             events::emit_rehydrated_from_archive(&env, &business, &period, archived_att_data.3);
 
             // Remove from archive to complete the move
-            env.storage().persistent().remove(&archive_key);
+            env.storage().instance().remove(&archive_key);
 
             return Some(archived_att_data);
         }
@@ -1781,10 +1807,10 @@ impl AttestationContract {
     }
 
     /// Cleanup orphaned revocation index entries for a business.
-    ///
-    /// Returns the number of orphaned entries removed. The operation is
-    /// infallible (no error paths exist), so the count is returned directly.
-    pub fn cleanup_revocation_index(env: Env, business: Address) -> u32 {
+    pub fn cleanup_revocation_index(
+        env: Env,
+        business: Address,
+    ) -> Result<u32, soroban_sdk::Error> {
         let mut periods = dispute::get_revoked_periods(&env, &business);
         if periods.is_empty() {
             return 0;
@@ -1841,41 +1867,55 @@ impl AttestationContract {
             if let Some(att_data) = env
                 .storage()
                 .instance()
-                .get::<_, AttestationData>(&active_key)
+                .get::<_, AttestationData>(&DataKey::Attestation(business.clone(), period.clone()))
             {
-                env.storage()
-                    .instance()
-                    .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+                let current_config = network_config::get_config(&env);
+                env.storage().persistent().extend_ttl(
+                    &DataKey::Attestation(business.clone(), period.clone()),
+                    current_config.min_persistent_entry_ttl,
+                    current_config.max_entry_ttl,
+                );
                 result.push_back((
                     period.clone(),
-                    Some(att_data.clone()),
+                    att_data.clone(),
                     Self::get_revocation_info(env.clone(), business.clone(), period.clone()),
                 ));
-                continue;
+                found = true;
             }
 
-            // Archival tier: rehydrate back to active (instance) storage.
-            let archive_key = DataKey::AttestationSnapshot(business.clone(), period.clone());
-            if let Some(archived_att_data) = env
-                .storage()
-                .persistent()
-                .get::<_, AttestationData>(&archive_key)
-            {
-                env.storage()
-                    .instance()
-                    .set(&active_key, &archived_att_data);
-                env.storage()
-                    .instance()
-                    .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+            if !found {
+                let archive_key = DataKey::AttestationSnapshot(business.clone(), period.clone());
+                if let Some(archived_att_data) = env
+                    .storage()
+                    .persistent()
+                    .get::<_, AttestationData>(&archive_key)
+                {
+                    let current_config = network_config::get_config(&env);
 
-                events::emit_rehydrated_from_archive(&env, &business, &period, archived_att_data.3);
-                env.storage().persistent().remove(&archive_key);
+                    let active_key = DataKey::Attestation(business.clone(), period.clone());
+                    env.storage()
+                        .persistent()
+                        .set(&active_key, &archived_att_data);
+                    env.storage().persistent().extend_ttl(
+                        &active_key,
+                        current_config.min_persistent_entry_ttl,
+                        current_config.max_entry_ttl,
+                    );
 
-                result.push_back((
-                    period.clone(),
-                    Some(archived_att_data),
-                    Self::get_revocation_info(env.clone(), business.clone(), period.clone()),
-                ));
+                    events::emit_rehydrated_from_archive(
+                        &env,
+                        &business,
+                        &period,
+                        archived_att_data.3,
+                    );
+                    env.storage().persistent().remove(&archive_key);
+
+                    result.push_back((
+                        period.clone(),
+                        archived_att_data,
+                        Self::get_revocation_info(env.clone(), business.clone(), period.clone()),
+                    ));
+                }
             }
         }
         result
@@ -2107,12 +2147,12 @@ impl AttestationContract {
     pub fn emergency_pause(
         env: Env,
         caller: Address,
-        signer1: Address,
-        signer2: Address,
+        sig1: Signature,
+        sig2: Signature,
         nonce: u64,
     ) {
-        access_control::require_admin(&env, &caller);
-        replay_protection::verify_and_increment_nonce(&env, &caller, NONCE_CHANNEL_ADMIN, nonce);
+        let admin = access_control::require_admin(&env, &caller);
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
         multisig::emergency_pause(&env, &signer1, &signer2);
     }
 
@@ -2969,6 +3009,7 @@ impl AttestationContract {
     ) {
         access_control::require_admin(&env, &resolver);
         dispute::validate_dispute_resolution(&env, dispute_id, &resolver).expect("invalid");
+        let is_upheld = outcome == DisputeOutcome::Upheld;
         let resolution = dispute::DisputeResolution {
             resolver,
             outcome: outcome.clone(),
@@ -2982,10 +3023,13 @@ impl AttestationContract {
             dispute::store_dispute(&env, &d);
 
             if outcome == DisputeOutcome::Upheld {
-                let staking_addr = Self::get_attestor_staking_contract(env.clone())
-                    .expect("staking contract not configured");
-                let staking_client = AttestorStakingClient::new(&env, &staking_addr);
-                staking_client.slash(&d.attestor, &1000i128, &dispute_id);
+                Self::try_trigger_slash(
+                    &env,
+                    events::SlashingCondition::DisputeUpheld,
+                    &d.attestor,
+                    1000i128,
+                    dispute_id,
+                );
             }
             if let Some(attestor) =
                 dispute::get_attestor_for_attestation(&env, &d.business, &d.period)
@@ -3081,6 +3125,48 @@ impl AttestationContract {
         dispute::get_dispute_deadline(&env)
     }
 
+    /// Monotonic id for condition-based slashes (i.e. slashes not associated
+    /// with a user-created dispute). Tracking a per-contract counter keeps each
+    /// condition slash idempotent in the staking contract via `Slashed(id)`.
+    fn next_condition_slash_id(env: &Env) -> u64 {
+        let key = DataKey::ConditionSlashCounter;
+        let next: u64 = env.storage().instance().get(&key).unwrap_or(0) + 1;
+        env.storage().instance().set(&key, &next);
+        next
+    }
+
+    /// Best-effort trigger of a slash for a cataloged `SlashingCondition`.
+    ///
+    /// Reads the configured attestor-staking contract and asks it to slash
+    /// `attestor` by `amount` (keyed by `dispute_id`, which deduplicates the
+    /// slash so it is idempotent per dispute). Emits a `SlashTriggered` event
+    /// carrying the condition so off-chain indexers can attribute the slash to
+    /// the concrete rule that fired.
+    ///
+    /// If no staking contract is configured the helper records the observed
+    /// condition as a zero-amount `SlashTriggered` event and returns `false`
+    /// rather than panicking, keeping slashing fully optional.
+    ///
+    /// # Returns
+    ///
+    /// `true` when the slash was dispatched to the staking contract.
+    fn try_trigger_slash(
+        env: &Env,
+        condition: events::SlashingCondition,
+        attestor: &Address,
+        amount: i128,
+        dispute_id: u64,
+    ) -> bool {
+        let Some(staking_addr) = Self::get_attestor_staking_contract(env.clone()) else {
+            events::emit_slash_triggered(env, condition, attestor, 0, dispute_id);
+            return false;
+        };
+        let staking_client = AttestorStakingClient::new(env, &staking_addr);
+        staking_client.slash(attestor, &amount, &dispute_id);
+        events::emit_slash_triggered(env, condition, attestor, amount, dispute_id);
+        true
+    }
+
     /// Triggers a slash for a resolved dispute and records the event in the audit log.
     pub fn trigger_slash(
         env: Env,
@@ -3106,10 +3192,16 @@ impl AttestationContract {
             args,
         );
 
-        events::emit_slash_triggered(&env, &attestor, amount, dispute_id);
+        events::emit_slash_triggered(
+            &env,
+            events::SlashingCondition::DisputeUpheld,
+            &attestor,
+            amount,
+            dispute_id,
+        );
 
         if let Some(audit_log) = Self::get_audit_log_contract(env.clone()) {
-            let audit_client = AuditLogClient::new(&env, &audit_log);
+            let audit_client = AuditLogContractClient::new(&env, &audit_log);
             let current_contract = env.current_contract_address();
 
             // 1 is NONCE_CHANNEL_ADMIN in audit-log
@@ -3668,8 +3760,7 @@ impl AttestationContract {
                 events::emit_key_rotation_emergency(env, &old_admin, new_admin);
             }
             ProposalAction::EmergencyPause => {
-                // Emergency pause bypasses the scheduled-pause time-lock;
-                // it pauses immediately once the multisig quorum is met.
+                access_control::check_and_apply_pending_pause(env);
                 access_control::set_paused(env, true);
                 events::emit_paused(env, executor);
             }
@@ -4025,7 +4116,7 @@ mod relayer_gas_attribution_test {
         );
 
         // Check relayer gas accumulation - should be 0 for business submission
-        let relayer_gas = relayer_gas_of(&env, &client.address, &business);
+        let relayer_gas = dynamic_fees::get_relayer_gas(&env, &business);
         assert_eq!(
             relayer_gas, 0,
             "Business submission should not accumulate relayer gas"
@@ -4082,7 +4173,7 @@ mod relayer_gas_attribution_test {
         client.submit_batch_as_attestor(&attestor, &items);
 
         // Check relayer gas accumulation
-        let relayer_gas = relayer_gas_of(&env, &client.address, &attestor);
+        let relayer_gas = dynamic_fees::get_relayer_gas(&env, &attestor);
         assert!(
             relayer_gas > 0,
             "Relayer should have accumulated gas from batch submission"
@@ -4138,7 +4229,7 @@ mod relayer_gas_attribution_test {
             &None,
         );
 
-        let gas_after_second = relayer_gas_of(&env, &client.address, &attestor);
+        let gas_after_second = dynamic_fees::get_relayer_gas(&env, &attestor);
         assert!(
             gas_after_second > gas_after_first,
             "Gas should accumulate across multiple submissions"
@@ -4152,7 +4243,7 @@ mod relayer_gas_attribution_test {
         let attestor = Address::generate(&env);
 
         // Check relayer gas for attestor with zero prior activity
-        let relayer_gas = relayer_gas_of(&env, &client.address, &attestor);
+        let relayer_gas = dynamic_fees::get_relayer_gas(&env, &attestor);
         assert_eq!(
             relayer_gas, 0,
             "New relayer should have zero gas accumulation"

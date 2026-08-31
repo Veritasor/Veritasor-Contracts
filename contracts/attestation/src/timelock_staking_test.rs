@@ -22,6 +22,8 @@
 //! - **Legacy entrypoint disabled**: `set_attestor_staking_contract` panics
 //! - **Long delay commit**: commit succeeds after much more than 24 h
 
+use std::format;
+
 use super::*;
 use crate::dynamic_fees::FEE_TIMELOCK_SECONDS;
 use crate::events::{

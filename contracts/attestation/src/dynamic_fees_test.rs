@@ -9,7 +9,7 @@ extern crate std;
 
 use super::*;
 
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
 use soroban_sdk::{vec, Address, BytesN, Env, String};
 
@@ -979,8 +979,17 @@ fn test_single_bracket_threshold_zero_matches_any_volume() {
 
 #[test]
 fn discount_stacking_no_underflow() {
-    // 100% tier + 100% volume discount must floor at 0, never underflow.
-    let fee = crate::dynamic_fees::compute_fee(1_000i128, 10_000u32, 10_000u32);
+    let e = soroban_sdk::Env::default();
+
+    // Configure a 100% tier discount and a 100% volume discount.
+    let business = soroban_sdk::Address::generate(&e);
+    dynamic_fees::set_business_tier(&e, &business, 0u32);
+    dynamic_fees::set_tier_discount(&e, 0u32, 10_000u32);
+    let thresholds = soroban_sdk::vec![&e, 1u64];
+    let discounts = soroban_sdk::vec![&e, 10_000u32];
+    dynamic_fees::set_volume_brackets(&e, &thresholds, &discounts);
+
+    let fee = compute_fee(1000i128, 10_000u32, 10_000u32);
     assert!(
         fee >= 0,
         "Fee must not underflow with max stacked discounts"
@@ -990,19 +999,38 @@ fn discount_stacking_no_underflow() {
         "With 100% tier + 100% volume discount, fee should be 0"
     );
 
-    let fee2 = crate::dynamic_fees::compute_fee(500i128, 10_000u32, 10_000u32);
+    contract.set_volume_thresholds(&vec![&e, 1u64]);
+    contract.set_volume_discounts(&vec![&e, 10_000u32]);
+    contract.mock_business_count(&soroban_sdk::Address::generate(&e), &2u64);
+
+    let fee = contract.compute_fee(&1000i128, &0u32, &2u64);
+    assert!(
+        fee >= 0,
+        "Fee must not underflow with max stacked discounts"
+    );
+    assert_eq!(
+        fee, 0i128,
+        "With 100% tier + 100% volume discount, fee should be 0"
+    );
+
+    let fee2 = contract.compute_fee(&500i128, &0u32, &2u64);
     assert!(
         fee2 >= 0,
         "Fee must remain non-negative under all discount scenarios"
     );
     assert_eq!(fee2, 0i128);
 
-    // Near-max discounts: 10_000 * 100 * 100 / 100_000_000 = 1.
-    let fee3 = crate::dynamic_fees::compute_fee(10_000i128, 9_900u32, 9_900u32);
+    contract.set_tier_discount(&0u32, &9_900u32);
+    contract.set_volume_discounts(&vec![&e, 9_900u32]);
+    let fee3 = contract.compute_fee(&10_000i128, &0u32, &2u64);
     assert!(
         fee3 >= 0 && fee3 <= 10_000i128,
         "Fee with near-max discounts should be between 0 and base_fee, got {}",
         fee3
     );
     assert_eq!(fee3, 1i128);
+
+    // The fee never exceeds the base fee.
+    assert_eq!(compute_fee(10_000i128, 0, 0), 10_000i128);
+    assert!(compute_fee(10_000i128, 5_000, 5_000) <= 10_000i128);
 }

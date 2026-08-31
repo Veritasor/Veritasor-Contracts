@@ -1134,3 +1134,59 @@ fn test_set_dispute_contract_updates_authorized_slasher() {
         assert_eq!(outcome, SlashOutcome::Slashed);
     });
 }
+
+/// Mirrors the attestation contract's condition-catalog slash dispatch
+/// (issue #800): each cataloged slashing condition fires with its own dispute
+/// id so every distinct condition is applied exactly once, while a repeated
+/// firing for the same id is deduplicated and cannot double-slash.
+#[test]
+fn test_condition_catalog_slashes_apply_once_per_condition() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let attestor = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let dispute_contract = env.register(DummyDisputeContract, ());
+
+    let (token_id, token_admin, token_client) = create_token_contract(&env, &admin);
+    token_admin.mint(&attestor, &10000);
+
+    let contract_id = env.register(AttestorStakingContract, ());
+    let client = AttestorStakingContractClient::new(&env, &contract_id);
+
+    client.initialize(
+        &admin,
+        &token_id,
+        &treasury,
+        &1000,
+        &dispute_contract,
+        &0u64,
+    );
+    client.stake(&attestor, &5000);
+
+    let initial_treasury_balance = token_client.balance(&treasury);
+
+    // Distinct condition ids drain independently: two conditions, 1000 each.
+    env.as_contract(&dispute_contract, || {
+        let first = client.slash(&attestor, &1000, &1);
+        assert_eq!(first, SlashOutcome::Slashed);
+        let second = client.slash(&attestor, &1000, &2);
+        assert_eq!(second, SlashOutcome::Slashed);
+    });
+
+    let stake = client.get_stake(&attestor).unwrap();
+    assert_eq!(stake.amount, 3000);
+    assert_eq!(
+        token_client.balance(&treasury),
+        initial_treasury_balance + 2000
+    );
+
+    // Repeating the same condition id is deduplicated (no further deduction).
+    let result = env.as_contract(&dispute_contract, || {
+        client.try_slash(&attestor, &1000, &2)
+    });
+    assert!(result.is_err());
+    let stake = client.get_stake(&attestor).unwrap();
+    assert_eq!(stake.amount, 3000);
+}

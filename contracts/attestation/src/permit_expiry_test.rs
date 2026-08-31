@@ -27,7 +27,9 @@
 
 #![cfg(test)]
 
-use soroban_sdk::testutils::{Address as _, Events as _, Ledger};
+use std::format;
+
+use soroban_sdk::testutils::{Address as _, Events, Ledger};
 use soroban_sdk::{symbol_short, Address, Env, Symbol, TryFromVal};
 
 use crate::{

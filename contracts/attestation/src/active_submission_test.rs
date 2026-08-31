@@ -190,6 +190,64 @@ fn test_submit_attestation_accepts_reactivated_business() {
 }
 
 #[test]
+fn test_submit_attestations_batch_rejects_unregistered_business() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+
+    let mut items = Vec::new(&env);
+    items.push_back(BatchAttestationItem {
+        business: business.clone(),
+        period: SorobanString::from_str(&env, "2026-01"),
+        merkle_root: BytesN::from_array(&env, &[8u8; 32]),
+        timestamp: 1_700_000_000,
+        version: 1,
+        proof_hash: None,
+        expiry_timestamp: None,
+    });
+
+    let result = catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.submit_attestations_batch(&items)
+    }));
+    assert!(
+        result.is_err(),
+        "unregistered business in batch should panic"
+    );
+    assert_eq!(
+        panic_message(result.unwrap_err()),
+        StdString::from("business not registered")
+    );
+}
+
+#[test]
+fn test_submit_attestations_batch_rejects_suspended_business() {
+    let (env, client, admin) = setup();
+    let business = Address::generate(&env);
+    register_pending_business(&env, &business);
+    approve_business(&env, &admin, &business);
+    suspend_business(&env, &admin, &business);
+
+    let mut items = Vec::new(&env);
+    items.push_back(BatchAttestationItem {
+        business: business.clone(),
+        period: SorobanString::from_str(&env, "2026-01"),
+        merkle_root: BytesN::from_array(&env, &[9u8; 32]),
+        timestamp: 1_700_000_000,
+        version: 1,
+        proof_hash: None,
+        expiry_timestamp: None,
+    });
+
+    let result = catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.submit_attestations_batch(&items)
+    }));
+    assert!(result.is_err(), "suspended business in batch should panic");
+    assert_eq!(
+        panic_message(result.unwrap_err()),
+        StdString::from("business is suspended")
+    );
+}
+
+#[test]
 fn test_submit_attestations_batch_rejects_pending_business() {
     let (env, client, _admin) = setup();
     let business = Address::generate(&env);

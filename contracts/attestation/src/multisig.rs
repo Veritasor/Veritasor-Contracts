@@ -36,9 +36,10 @@
 //! See `docs/attestation-vote-weight-snapshot.md` for the full threat model,
 //! security notes, and migration considerations.
 
-use soroban_sdk::{contracttype, symbol_short, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{
+    contracttype, signature, symbol_short, Address, Env, Signature, String, Symbol, Vec,
+};
 
-use crate::access_control;
 use crate::access_control::{is_paused, set_paused};
 use crate::events;
 
@@ -454,14 +455,14 @@ pub fn preview_proposal(env: &Env, id: u64) -> ProposalEffect {
         kind: match &proposal.action {
             ProposalAction::Pause => symbol_short!("pause"),
             ProposalAction::Unpause => symbol_short!("unpause"),
-            ProposalAction::AddOwner(_) => Symbol::new(env, "add_owner"),
-            ProposalAction::RemoveOwner(_) => Symbol::new(env, "remove_owner"),
-            ProposalAction::ChangeThreshold(_) => Symbol::new(env, "threshold"),
-            ProposalAction::GrantRole(_, _) => Symbol::new(env, "grant_role"),
-            ProposalAction::RevokeRole(_, _) => Symbol::new(env, "revoke_role"),
-            ProposalAction::UpdateFeeConfig(_, _, _, _) => Symbol::new(env, "fee_config"),
-            ProposalAction::EmergencyRotateAdmin(_) => Symbol::new(env, "rotate_admin"),
-            ProposalAction::EmergencyPause => Symbol::new(env, "emergency_pause"),
+            ProposalAction::AddOwner(_) => symbol_short!("add_owner"),
+            ProposalAction::RemoveOwner(_) => symbol_short!("rmv_owner"),
+            ProposalAction::ChangeThreshold(_) => symbol_short!("threshold"),
+            ProposalAction::GrantRole(_, _) => symbol_short!("grant_rol"),
+            ProposalAction::RevokeRole(_, _) => symbol_short!("revoke_ro"),
+            ProposalAction::UpdateFeeConfig(_, _, _, _) => symbol_short!("fee_cfg"),
+            ProposalAction::EmergencyRotateAdmin(_) => symbol_short!("rot_admin"),
+            ProposalAction::EmergencyPause => symbol_short!("emrg_paus"),
         },
         detail,
     });
@@ -698,14 +699,13 @@ pub fn remove_owner(env: &Env, owner: &Address) {
 /// - If either key is not in owner set
 /// - If contract is already paused
 pub fn emergency_pause(env: &Env, signer1: &Address, signer2: &Address) {
-    // Both hardware keys must authenticate this call — two independent
-    // Soroban auth entries, mirroring the two-signature requirement.
+    // Authenticate both signers (dual-key requirement)
     signer1.require_auth();
     signer2.require_auth();
 
     // Ensure distinct signers (different hardware keys)
     assert!(
-        signer1 != signer2,
+        addr1 != addr2,
         "both signatures must come from distinct keys"
     );
 
@@ -720,7 +720,7 @@ pub fn emergency_pause(env: &Env, signer1: &Address, signer2: &Address) {
     }
 
     // Execute pause using access control module
-    access_control::emergency_pause_execute(env, signer1, signer2);
+    emergency_pause_execute(env, signer1, signer2);
 }
 
 pub fn get_next_proposal_id(env: &Env) -> u64 {
@@ -761,7 +761,7 @@ pub fn cleanup_expired_proposals(env: &Env, limit: u32) -> u32 {
                 if let Some(proposal) = env
                     .storage()
                     .instance()
-                    .get::<_, Proposal>(&MultisigKey::Proposal(id_u64))
+                    .get::<_, Proposal>(&MultisigKey::Proposal(id))
                 {
                     let action = proposal.action.clone();
                     let cleaned_at = env.ledger().sequence();
@@ -779,8 +779,8 @@ pub fn cleanup_expired_proposals(env: &Env, limit: u32) -> u32 {
                     // proposal's intended lifetime.
                     env.storage()
                         .instance()
-                        .remove(&MultisigKey::VoteWeightSnapshot(id_u64));
-                    events::emit_proposal_cleaned(env, id_u64, &action, cleaned_at);
+                        .remove(&MultisigKey::VoteWeightSnapshot(id));
+                    events::emit_proposal_cleaned(env, id, &action, cleaned_at);
                     cleaned += 1;
                 }
             }
@@ -803,9 +803,9 @@ pub fn revoke_approval(env: &Env, approver: &Address, id: u64) {
     let pos = approvals.iter().position(|a| a == *approver);
     if let Some(idx) = pos {
         let last = approvals.len() - 1;
-        if idx as u32 != last {
+        if idx != last {
             let last_addr = approvals.get(last).unwrap();
-            approvals.set(idx as u32, last_addr);
+            approvals.set(idx, last_addr);
         }
         approvals.pop_back();
         env.storage()

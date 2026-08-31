@@ -1,6 +1,6 @@
 use super::dispute::{DisputeOutcome, DisputeStatus, DisputeType, OptionalResolution};
 use super::*;
-use soroban_sdk::testutils::{Address as _, Ledger as _};
+use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{Address, BytesN, Env, String};
 
 /// Custom deadline of 1 hour for tests that need short deadlines.
