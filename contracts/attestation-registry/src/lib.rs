@@ -4,55 +4,55 @@
 #[cfg(test)]
 extern crate std;
 
-//! # Attestation Registry Contract
-//!
-//! Provides a stable registry pattern for upgradeable attestation implementations.
-//!
-//! ## Architecture
-//!
-//! The registry maintains:
-//! - Current implementation address (the active attestation contract)
-//! - Version metadata for tracking upgrades
-//! - Migration hooks for upgrade coordination
-//! - Governance-controlled upgrade mechanism
-//! - Duplicate-key protection for attestation keys
-//!
-//! ## Upgrade Process
-//!
-//! 1. Deploy new attestation implementation contract
-//! 2. Call `upgrade(new_impl, version, migration_data)` as admin
-//! 3. Registry updates current implementation pointer
-//! 4. Optional migration hook is called on new implementation
-//! 5. Version metadata is updated
-//!
-//! ## Duplicate-Key Protection
-//!
-//! The registry enforces that each `(attester, key)` pair can only be registered
-//! once. Callers invoke `register_attestation_key` before writing to the
-//! implementation contract; the registry rejects any attempt to reuse a key.
-//! This prevents replay attacks and accidental overwrites at the registry layer.
-//!
-//! ## Safety Constraints
-//!
-//! - Only the admin (governance) can perform upgrades
-//! - Registry must be initialized before use
-//! - Version numbers must be strictly increasing
-//! - Previous implementation address is preserved for rollback scenarios
-//! - Attestation keys are globally unique per `(attester, key)` pair
-//!
-//! ## Trust Model
-//!
-//! The registry minimizes trust assumptions beyond governed upgrades:
-//! - No trust in implementation contracts (they are just addresses)
-//! - Trust only in the governance/admin for upgrade decisions
-//! - Callers verify implementation addresses before use
+// # Attestation Registry Contract
+//
+// Provides a stable registry pattern for upgradeable attestation implementations.
+//
+// ## Architecture
+//
+// The registry maintains:
+// - Current implementation address (the active attestation contract)
+// - Version metadata for tracking upgrades
+// - Migration hooks for upgrade coordination
+// - Governance-controlled upgrade mechanism
+// - Duplicate-key protection for attestation keys
+//
+// ## Upgrade Process
+//
+// 1. Deploy new attestation implementation contract
+// 2. Call `upgrade(new_impl, version, migration_data)` as admin
+// 3. Registry updates current implementation pointer
+// 4. Optional migration hook is called on new implementation
+// 5. Version metadata is updated
+//
+// ## Duplicate-Key Protection
+//
+// The registry enforces that each `(attester, key)` pair can only be registered
+// once. Callers invoke `register_attestation_key` before writing to the
+// implementation contract; the registry rejects any attempt to reuse a key.
+// This prevents replay attacks and accidental overwrites at the registry layer.
+//
+// ## Safety Constraints
+//
+// - Only the admin (governance) can perform upgrades
+// - Registry must be initialized before use
+// - Version numbers must be strictly increasing
+// - Previous implementation address is preserved for rollback scenarios
+// - Attestation keys are globally unique per `(attester, key)` pair
+//
+// ## Trust Model
+//
+// The registry minimizes trust assumptions beyond governed upgrades:
+// - No trust in implementation contracts (they are just addresses)
+// - Trust only in the governance/admin for upgrade decisions
+// - Callers verify implementation addresses before use
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, Env, String};
 
 #[cfg(test)]
-mod test;
-#[cfg(test)]
 mod registry_batch_consistency_test;
+#[cfg(test)]
+mod test;
 
 // ════════════════════════════════════════════════════════════════════
 //  Storage types
