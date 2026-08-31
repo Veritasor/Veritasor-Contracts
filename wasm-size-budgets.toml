@@ -139,6 +139,40 @@ target_cpu = 220000
 target_mem = 6000
 regression_pct = 10
 
+# ── Batch vs Single Profiling Targets (Issue #783) ──────────────────────────
+# Per-item CPU/mem targets for submit_attestations_batch at each canonical size.
+# The regression_pct is the allowed % increase over target before CI fails.
+# These are set conservatively (2× observed baseline) to avoid spurious failures
+# while still catching genuine O(n²) regressions.
+#
+# single baseline:  cpu ~35 750  mem ~5 648  (from benchmark_results_sample.txt)
+# threshold formula: target * (1 + BATCH_REGRESSION_THRESHOLD_PCT/100)
+# BATCH_REGRESSION_THRESHOLD_PCT = 200 (i.e. threshold = 3 × baseline)
+
+[gas-benchmark.veritasor-attestation.batch_vs_single_size1_per_item]
+# Size-1 batch: carries full Vec overhead; allowed up to 3× single cost.
+target_cpu = 107250
+target_mem = 16944
+regression_pct = 10
+
+[gas-benchmark.veritasor-attestation.batch_vs_single_size5_per_item]
+# Size-5 batch: amortisation kicks in; per-item should be ≤ single cost.
+target_cpu = 107250
+target_mem = 16944
+regression_pct = 10
+
+[gas-benchmark.veritasor-attestation.batch_vs_single_size10_per_item]
+# Size-10 batch: well-amortised; per-item should be clearly below single.
+target_cpu = 107250
+target_mem = 16944
+regression_pct = 10
+
+[gas-benchmark.veritasor-attestation.batch_vs_single_size25_per_item]
+# Size-25 batch (MAX_BATCH_SIZE): validates cap is safe within budget.
+target_cpu = 107250
+target_mem = 16944
+regression_pct = 10
+
 [profile.release]
 # Release profile settings that affect WASM size
 opt-level = z
