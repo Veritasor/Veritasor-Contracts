@@ -7,7 +7,7 @@ use std::format;
 use super::*;
 use proptest::prelude::*;
 use soroban_sdk::testutils::{Address as _, Ledger, LedgerInfo};
-use soroban_sdk::{Address, BytesN, Env, String};
+use soroban_sdk::{Address, BytesN, Env, String, Symbol, Vec};
 
 fn setup() -> (Env, AttestationContractClient<'static>, Address) {
     let env = Env::default();
@@ -697,19 +697,21 @@ proptest! {
             if admitted {
                 effective_now = effective_now.max(ledger_now);
                 admitted_at.retain(|timestamp| {
-                    *timestamp > effective_now.saturating_sub(window_seconds)
+                    *timestamp >= effective_now.saturating_sub(window_seconds)
                 });
-                admitted_at.push(effective_now);
-
+                // Mirror `check_rate_limit`: the budget is enforced BEFORE the
+                // submission is recorded, so the in-window count must stay
+                // strictly below the budget for an admission to be valid.
                 prop_assert!(
-                    admitted_at.len() <= max_per_window as usize,
+                    admitted_at.len() < max_per_window as usize,
                     "{} admits in a {}-second window with budget {}; ledger_now={}, effective_now={}",
-                    admitted_at.len(),
+                    admitted_at.len() + 1,
                     window_seconds,
                     max_per_window,
                     ledger_now,
                     effective_now,
                 );
+                admitted_at.push(effective_now);
             }
         }
     }
@@ -823,4 +825,351 @@ fn test_reconfigure_lowers_cap_to_exact_accepted_count() {
     // The next submission must be rejected: 2 >= 2 (new max_submissions)
     set_ledger_timestamp(&env, 1_002);
     submit(&client, &env, &business, 3);
+}
+
+// ── Batch burst rate-limit tests ─────────────────────────────────────────────
+//
+// `submit_attestations_batch` records a submission per item, so in-batch
+// submissions must consume full-window and burst capacity exactly like
+// sequential single calls. A batch containing more items for one business
+// than `burst_max_submissions` (or `max_submissions`) must be rejected with
+// the same panic messages as the single-submission path.
+
+/// Register a business and approve it so it passes the batch registry gate
+/// (`registry::require_active_business` runs for every batch item).
+fn register_business(
+    env: &Env,
+    client: &AttestationContractClient<'_>,
+    admin: &Address,
+    business: &Address,
+) {
+    client.grant_role(admin, business, &ROLE_BUSINESS);
+    client.register_business(
+        business,
+        &BytesN::from_array(env, &[1u8; 32]),
+        &Symbol::new(env, "US"),
+        &Vec::new(env),
+    );
+    client.approve_business(admin, business);
+}
+
+/// Build a batch of `count` attestation items for `business`, each with a
+/// distinct period derived from `prefix`.
+fn make_batch_items(
+    env: &Env,
+    business: &Address,
+    count: u32,
+    prefix: &str,
+) -> Vec<BatchAttestationItem> {
+    let mut items = Vec::new(env);
+    for i in 0..count {
+        let period = String::from_str(env, &std::format!("{prefix}-{:03}", i));
+        let root = BytesN::from_array(env, &[i as u8; 32]);
+        items.push_back(BatchAttestationItem {
+            business: business.clone(),
+            period,
+            merkle_root: root,
+            timestamp: 1_700_000_000u64,
+            version: 1u32,
+            proof_hash: None,
+            expiry_timestamp: None,
+        });
+    }
+    items
+}
+
+/// Extract the panic message from a caught panic payload.
+fn panic_message(payload: std::boxed::Box<dyn std::any::Any + Send>) -> std::string::String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        std::string::String::from(*s)
+    } else if let Some(s) = payload.downcast_ref::<std::string::String>() {
+        s.clone()
+    } else {
+        std::string::String::from("unknown panic")
+    }
+}
+
+/// Invoke `submit_attestations_batch` inside `catch_unwind` so tests can
+/// assert on the panic message (the batch entry point panics on rate-limit
+/// violations and rolls the whole transaction back).
+fn try_submit_batch(
+    client: &AttestationContractClient<'_>,
+    items: &Vec<BatchAttestationItem>,
+) -> Result<(), std::string::String> {
+    let items = items.clone();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.submit_attestations_batch(&items);
+    }));
+    match result {
+        Ok(()) => Ok(()),
+        Err(payload) => Err(panic_message(payload)),
+    }
+}
+
+/// Invoke the single `submit_attestation` entry point inside `catch_unwind`.
+fn try_submit_one(
+    client: &AttestationContractClient<'_>,
+    business: &Address,
+    period: &String,
+    merkle_root: &BytesN<32>,
+    timestamp: &u64,
+    version: &u32,
+    fee_paid: &i128,
+    proof_hash: &Option<BytesN<32>>,
+    expiry_timestamp: &Option<u64>,
+) -> Result<(), std::string::String> {
+    let business = business.clone();
+    let period = period.clone();
+    let merkle_root = merkle_root.clone();
+    let proof_hash = proof_hash.clone();
+    let expiry_timestamp = expiry_timestamp.clone();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.submit_attestation(
+            &business,
+            &period,
+            &merkle_root,
+            timestamp,
+            version,
+            fee_paid,
+            &proof_hash,
+            &expiry_timestamp,
+        );
+    }));
+    match result {
+        Ok(()) => Ok(()),
+        Err(payload) => Err(panic_message(payload)),
+    }
+}
+
+/// A single batch with more items for one business than
+/// `burst_max_submissions` must be rejected. The panic fires on the item
+/// that would exceed the burst window, and the failed transaction rolls
+/// back every write — no attestation is stored and no rate-limit capacity
+/// is consumed.
+#[test]
+fn test_batch_exceeding_burst_limit_rejected() {
+    let (env, client, admin) = setup();
+    let business = Address::generate(&env);
+    register_business(&env, &client, &admin, &business);
+
+    // burst: 3 submissions / 10 s; full window: 5 / 60 s
+    configure_rate_limit(&client, 5, 60, 3, 10, true, 1);
+    set_ledger_timestamp(&env, 1_000);
+
+    let items = make_batch_items(&env, &business, 5, "burst-over");
+    let result = try_submit_batch(&client, &items);
+
+    assert!(
+        result.is_err(),
+        "a 5-item batch must exceed burst_max_submissions = 3"
+    );
+    assert!(
+        result.unwrap_err().contains("burst rate limit exceeded"),
+        "expected the burst guard to fire before the full-window guard"
+    );
+
+    // Atomicity: nothing persisted, no capacity consumed.
+    assert_eq!(client.get_business_count(&business), 0);
+    assert_eq!(client.get_submission_window_count(&business), 0);
+    assert_eq!(client.get_submission_burst_count(&business), 0);
+    assert!(client
+        .get_attestation(&business, &String::from_str(&env, "burst-over-000"))
+        .is_none());
+}
+
+/// A batch with exactly `burst_max_submissions` items for one business is
+/// accepted, and the in-batch submissions are visible to the rate limiter:
+/// a further submission within the burst window must be rejected.
+#[test]
+fn test_batch_at_burst_limit_accepted_then_extra_rejected() {
+    let (env, client, admin) = setup();
+    let business = Address::generate(&env);
+    register_business(&env, &client, &admin, &business);
+
+    configure_rate_limit(&client, 5, 60, 3, 10, true, 1);
+    set_ledger_timestamp(&env, 1_000);
+
+    let items = make_batch_items(&env, &business, 3, "at-limit");
+    client.submit_attestations_batch(&items);
+
+    assert_eq!(client.get_business_count(&business), 3);
+    assert_eq!(client.get_submission_window_count(&business), 3);
+    assert_eq!(client.get_submission_burst_count(&business), 3);
+
+    // A further submission inside the burst window must be rejected.
+    let period = String::from_str(&env, "over-limit");
+    let root = BytesN::from_array(&env, &[9u8; 32]);
+    let result = try_submit_one(
+        &client,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("burst rate limit exceeded"));
+}
+
+/// A batch of 3 followed by another batch of 3 inside the same burst window
+/// must panic on the second batch: the first batch already filled the burst
+/// window, and the second batch's items count against it.
+#[test]
+fn test_second_batch_within_burst_window_rejected() {
+    let (env, client, admin) = setup();
+    let business = Address::generate(&env);
+    register_business(&env, &client, &admin, &business);
+
+    configure_rate_limit(&client, 5, 60, 3, 10, true, 1);
+
+    set_ledger_timestamp(&env, 1_000);
+    let first = make_batch_items(&env, &business, 3, "first");
+    client.submit_attestations_batch(&first);
+
+    // Second batch lands 5 s later — still inside the 10 s burst window.
+    set_ledger_timestamp(&env, 1_005);
+    let second = make_batch_items(&env, &business, 3, "second");
+    let result = try_submit_batch(&client, &second);
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("burst rate limit exceeded"));
+
+    // No items from the rejected second batch were stored.
+    assert_eq!(client.get_business_count(&business), 3);
+    assert!(client
+        .get_attestation(&business, &String::from_str(&env, "second-000"))
+        .is_none());
+}
+
+/// Once the burst window lapses, a new batch of `burst_max_submissions` items
+/// is accepted again. The full-window counter keeps accumulating across both
+/// batches (both fall inside the 60 s full window).
+#[test]
+fn test_second_batch_after_burst_window_expiry_accepted() {
+    let (env, client, admin) = setup();
+    let business = Address::generate(&env);
+    register_business(&env, &client, &admin, &business);
+
+    // Generous full window so both batches fit; tight 10 s burst window.
+    configure_rate_limit(&client, 10, 60, 3, 10, true, 1);
+
+    set_ledger_timestamp(&env, 1_000);
+    let first = make_batch_items(&env, &business, 3, "first");
+    client.submit_attestations_batch(&first);
+
+    // Wait past the 10 s burst window (first batch timestamps = 1_000).
+    set_ledger_timestamp(&env, 1_011);
+    let second = make_batch_items(&env, &business, 3, "second");
+    client.submit_attestations_batch(&second);
+
+    // All six items remain inside the 60 s full window; only the second
+    // batch's three items are inside the fresh burst window.
+    assert_eq!(client.get_business_count(&business), 6);
+    assert_eq!(client.get_submission_window_count(&business), 6);
+    assert_eq!(client.get_submission_burst_count(&business), 3);
+}
+
+/// In a multi-business batch, only the business whose burst budget is
+/// exhausted triggers the panic; the whole batch is rolled back so the
+/// other business's items are not stored either.
+#[test]
+fn test_multi_business_batch_single_business_exceeds_burst() {
+    let (env, client, admin) = setup();
+    let business_a = Address::generate(&env);
+    let business_b = Address::generate(&env);
+    register_business(&env, &client, &admin, &business_a);
+    register_business(&env, &client, &admin, &business_b);
+
+    configure_rate_limit(&client, 5, 60, 3, 10, true, 1);
+    set_ledger_timestamp(&env, 1_000);
+
+    // Business A: 4 items (exceeds burst 3); business B: 1 item.
+    let mut items = make_batch_items(&env, &business_a, 4, "a");
+    items.push_back(BatchAttestationItem {
+        business: business_b.clone(),
+        period: String::from_str(&env, "b-000"),
+        merkle_root: BytesN::from_array(&env, &[0xBB; 32]),
+        timestamp: 1_700_000_000u64,
+        version: 1u32,
+        proof_hash: None,
+        expiry_timestamp: None,
+    });
+
+    let result = try_submit_batch(&client, &items);
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("burst rate limit exceeded"));
+
+    // The entire batch is rejected atomically.
+    assert_eq!(client.get_business_count(&business_a), 0);
+    assert_eq!(client.get_business_count(&business_b), 0);
+    assert_eq!(client.get_submission_window_count(&business_a), 0);
+    assert_eq!(client.get_submission_burst_count(&business_a), 0);
+}
+
+/// A multi-business batch where every business stays within its own burst
+/// budget succeeds; counters are tracked independently per business.
+#[test]
+fn test_multi_business_batch_within_limits_accepted() {
+    let (env, client, admin) = setup();
+    let business_a = Address::generate(&env);
+    let business_b = Address::generate(&env);
+    register_business(&env, &client, &admin, &business_a);
+    register_business(&env, &client, &admin, &business_b);
+
+    configure_rate_limit(&client, 5, 60, 3, 10, true, 1);
+    set_ledger_timestamp(&env, 1_000);
+
+    let mut items = make_batch_items(&env, &business_a, 2, "a");
+    let b_items = make_batch_items(&env, &business_b, 2, "b");
+    for it in b_items.iter() {
+        items.push_back(it);
+    }
+    assert_eq!(items.len(), 4);
+
+    client.submit_attestations_batch(&items);
+
+    assert_eq!(client.get_submission_window_count(&business_a), 2);
+    assert_eq!(client.get_submission_burst_count(&business_a), 2);
+    assert_eq!(client.get_submission_window_count(&business_b), 2);
+    assert_eq!(client.get_submission_burst_count(&business_b), 2);
+}
+
+/// When burst == full window, a batch that exceeds `max_submissions` trips
+/// the full-window guard instead.
+#[test]
+fn test_batch_exceeding_full_window_limit_rejected() {
+    let (env, client, admin) = setup();
+    let business = Address::generate(&env);
+    register_business(&env, &client, &admin, &business);
+
+    // burst == full window so only the full-window guard can fire
+    configure_rate_limit(&client, 3, 60, 3, 60, true, 1);
+    set_ledger_timestamp(&env, 1_000);
+
+    let items = make_batch_items(&env, &business, 4, "full-over");
+    let result = try_submit_batch(&client, &items);
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("rate limit exceeded"));
+    assert_eq!(client.get_business_count(&business), 0);
+}
+
+/// Backward compatibility: with no rate-limit configuration stored, batches
+/// of any size succeed and no submission counters are tracked.
+#[test]
+fn test_batch_without_rate_limit_config_succeeds() {
+    let (env, client, admin) = setup();
+    let business = Address::generate(&env);
+    register_business(&env, &client, &admin, &business);
+
+    let items = make_batch_items(&env, &business, 5, "no-config");
+    client.submit_attestations_batch(&items);
+
+    assert_eq!(client.get_business_count(&business), 5);
+    assert_eq!(client.get_submission_window_count(&business), 0);
+    assert_eq!(client.get_submission_burst_count(&business), 0);
 }

@@ -752,7 +752,8 @@ pub fn cleanup_expired_proposals(env: &Env, limit: u32) -> u32 {
         next_id
     };
     for id in 0..max {
-        let expiry_key = MultisigKey::ProposalExpiry(id);
+        let id_u64 = id as u64;
+        let expiry_key = MultisigKey::ProposalExpiry(id_u64);
         if let Some(expiry) = env.storage().instance().get::<_, u32>(&expiry_key) {
             if current_seq > expiry + grace {
                 if let Some(proposal) = env
@@ -762,8 +763,12 @@ pub fn cleanup_expired_proposals(env: &Env, limit: u32) -> u32 {
                 {
                     let action = proposal.action.clone();
                     let cleaned_at = env.ledger().sequence();
-                    env.storage().instance().remove(&MultisigKey::Proposal(id));
-                    env.storage().instance().remove(&MultisigKey::Approvals(id));
+                    env.storage()
+                        .instance()
+                        .remove(&MultisigKey::Proposal(id_u64));
+                    env.storage()
+                        .instance()
+                        .remove(&MultisigKey::Approvals(id_u64));
                     env.storage().instance().remove(&expiry_key);
                     // SECURITY (issue #512): also remove the immutable
                     // vote-weight snapshot so a future proposal cannot

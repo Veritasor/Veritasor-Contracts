@@ -92,6 +92,11 @@ use soroban_sdk::{contracttype, symbol_short, Address, BytesN, Env, String, Symb
 ///
 /// Non-breaking changes (for example, appending new optional fields at the
 /// end of a struct) MUST NOT increment this version.
+///
+/// CI enforces this contract: `scripts/check_event_schema.sh` fingerprints
+/// every `#[contracttype]` type below and compares it against the committed
+/// baseline in `contracts/attestation/event_schema_snapshot.txt`. Run
+/// `./scripts/check_event_schema.sh --update` after an intentional change.
 pub const EVENT_SCHEMA_VERSION: u32 = 1;
 
 // ════════════════════════════════════════════════════════════════════
@@ -363,8 +368,14 @@ impl RevocationReason {
         if s.len() < n {
             return false;
         }
+        // `copy_into_slice` requires a slice of exactly the string's length,
+        // so only known codes (all ≤ 16 bytes) can match; anything longer
+        // cannot be a known reason and falls through to `Other`.
+        if s.len() > 16 {
+            return false;
+        }
         let mut buf = [0u8; 16]; // prefix is at most 16 bytes
-        s.copy_into_slice(&mut buf[..n as usize]);
+        s.copy_into_slice(&mut buf[..s.len() as usize]);
         for (i, &p) in prefix.iter().enumerate() {
             let b = buf[i];
             // Lowercase both bytes (ASCII only).
@@ -875,6 +886,155 @@ pub struct RelayerGasReportedEvent {
     pub total_cpu_instructions: u64,
     /// Total accumulated memory bytes for this relayer.
     pub total_memory_bytes: u64,
+}
+
+/// Normalized payload for `CollectorRotationProposed` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CollectorRotationProposedEvent {
+    /// Current collector proposing the rotation.
+    pub old_collector: Address,
+    /// Proposed new collector.
+    pub new_collector: Address,
+    /// Token contract used for the flat fee.
+    pub token: Address,
+    /// Amount of token escrowed at proposal time.
+    pub escrowed_amount: i128,
+}
+
+/// Normalized payload for `CollectorRotationAccepted` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CollectorRotationAcceptedEvent {
+    /// Collector being replaced.
+    pub old_collector: Address,
+    /// Collector that accepted the rotation.
+    pub new_collector: Address,
+    /// Token contract used for the flat fee.
+    pub token: Address,
+    /// Amount of token released from escrow to the new collector.
+    pub escrowed_amount: i128,
+}
+
+/// Normalized payload for `AnalyticsRotationCompleted` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AnalyticsRotationCompletedEvent {
+    /// Analytics/oracle address being replaced.
+    pub old_analytics: Address,
+    /// Analytics/oracle address installed by the rotation.
+    pub new_analytics: Address,
+}
+
+/// Normalized payload for `StakingContractProposed` events.
+///
+/// Emitted when a new attestor staking contract address is proposed; the
+/// rebinding only takes effect after the 24 h timelock elapses and the
+/// proposal is committed.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct StakingContractProposedEvent {
+    /// Proposed staking contract address.
+    pub new_contract: Address,
+    /// Admin that proposed the rebinding.
+    pub proposed_by: Address,
+    /// Ledger timestamp at which the proposal becomes effective.
+    pub effective_at: u64,
+}
+
+/// Normalized payload for `StakingContractCommitted` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct StakingContractCommittedEvent {
+    /// Staking contract address that became live.
+    pub new_contract: Address,
+    /// Admin that committed the rebinding.
+    pub committed_by: Address,
+}
+
+/// Normalized payload for `StakingContractCancelled` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct StakingContractCancelledEvent {
+    /// Staking contract address whose proposal was cancelled.
+    pub cancelled_contract: Address,
+    /// Admin that cancelled the proposal.
+    pub cancelled_by: Address,
+}
+
+/// Normalized payload for `DaoRotationProposed` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DaoRotationProposedEvent {
+    /// Current DAO contract address.
+    pub old_dao: Address,
+    /// Proposed new DAO contract address.
+    pub new_dao: Address,
+}
+
+/// Normalized payload for `DaoRotationAccepted` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DaoRotationAcceptedEvent {
+    /// DAO contract address being replaced.
+    pub old_dao: Address,
+    /// New DAO contract address that accepted the rotation.
+    pub new_dao: Address,
+}
+
+/// Normalized payload for `AdminWeightChanged` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AdminWeightChangedEvent {
+    /// Account whose voting weight changed.
+    pub account: Address,
+    /// Previous voting weight.
+    pub old_weight: u32,
+    /// New voting weight.
+    pub weight: u32,
+    /// Address that performed the change.
+    pub changed_by: Address,
+}
+
+/// Normalized payload for `AttestorLockedForDispute` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AttestorLockedForDisputeEvent {
+    /// Attestor that was locked.
+    pub attestor: Address,
+    /// Business of the disputed attestation.
+    pub business: Address,
+    /// Period of the disputed attestation.
+    pub period: String,
+    /// Unique identifier of the dispute that locked the attestor.
+    pub dispute_id: u64,
+}
+
+/// Normalized payload for `OwnerRecoveryPhraseAcknowledged` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct OwnerRecoveryPhraseAcknowledgedEvent {
+    /// Address that acknowledged recovery-phrase custody of an owner key.
+    pub new_owner: Address,
+}
+
+/// Normalized payload for `VoteWeightSnapshotCreated` events.
+///
+/// Emitted at proposal creation with the frozen vote-weight snapshot used to
+/// defend against flash-vote attacks (issue #512).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VoteWeightSnapshotCreatedEvent {
+    /// Unique identifier of the proposal.
+    pub proposal_id: u64,
+    /// Number of owners captured in the snapshot.
+    pub owners_count: u32,
+    /// Threshold captured in the snapshot.
+    pub threshold: u32,
+    /// Ledger sequence at snapshot creation.
+    pub created_at: u32,
+    /// Stable numeric tag of the proposal action.
+    pub action_tag: u32,
 }
 
 // ── Attestation lifecycle ─────────────────────────────────────────

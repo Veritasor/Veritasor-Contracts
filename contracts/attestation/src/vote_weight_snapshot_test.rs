@@ -90,8 +90,18 @@ fn setup_5_of_5() -> (
 }
 
 /// Walk past proposal expiry + grace so `cleanup_expired_proposals`
-/// actually fires for any proposals in scope.
-fn advance_past_expiry_plus_grace(env: &Env, grace_ledgers: u32) {
+/// actually fires for any proposals in scope. The instance TTL is
+/// refreshed afterwards because jumping ~110k ledgers would otherwise
+/// expire the contract instance (SDK 22) and make reads panic.
+fn advance_past_expiry_plus_grace(env: &Env, contract: &Address, grace_ledgers: u32) {
+    // Refresh the instance TTL BEFORE the jump: once the ledger has
+    // advanced ~110k ledgers the instance is already archived and even
+    // touching it panics.
+    env.as_contract(contract, || {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP * 10);
+    });
     let seq = env.ledger().sequence();
     env.ledger()
         .set_sequence_number(seq + DEFAULT_PROPOSAL_EXPIRY + grace_ledgers + 1);
@@ -441,13 +451,13 @@ fn vw_weight_change_to_zero_during_proposal_window_preserves_existing_vote() {
 /// its vote-weight snapshot is removed in lock-step. Storage hygiene
 /// — no orphans should accrue over the contract's lifetime.
 fn vw_snapshot_removed_on_cleanup() {
-    let (env, client, owners, _contract_id) = setup_5_of_5();
+    let (env, client, owners, contract_id) = setup_5_of_5();
     let proposer = owners.get(0).unwrap();
 
     let id = client.create_proposal(&proposer, &ProposalAction::Pause, &0u64);
     assert!(client.get_proposal_snapshot(&id).is_some());
 
-    advance_past_expiry_plus_grace(&env, client.get_proposal_expiry_grace());
+    advance_past_expiry_plus_grace(&env, &contract_id, client.get_proposal_expiry_grace());
     let cleaned = client.cleanup_expired_proposals(&10u32);
     assert_eq!(cleaned, 1);
     assert!(client.get_proposal(&id).is_none());
@@ -461,7 +471,7 @@ fn vw_snapshot_removed_on_cleanup() {
 /// Scenario: cleanup leaves no orphans. We create a batch of 5
 /// proposals, all of whose snapshots must be gone after cleanup.
 fn vw_snapshot_removed_for_all_cleaned_proposals() {
-    let (env, client, owners, _contract_id) = setup_5_of_5();
+    let (env, client, owners, contract_id) = setup_5_of_5();
     let proposer = owners.get(0).unwrap();
 
     let mut ids = Vec::new(&env);
@@ -469,7 +479,7 @@ fn vw_snapshot_removed_for_all_cleaned_proposals() {
         let id = client.create_proposal(&proposer, &ProposalAction::Pause, &i);
         ids.push_back(id);
     }
-    advance_past_expiry_plus_grace(&env, client.get_proposal_expiry_grace());
+    advance_past_expiry_plus_grace(&env, &contract_id, client.get_proposal_expiry_grace());
     let cleaned = client.cleanup_expired_proposals(&10u32);
     assert_eq!(cleaned, 5);
 
@@ -484,7 +494,7 @@ fn vw_snapshot_removed_for_all_cleaned_proposals() {
 /// snapshots for the proposals actually cleaned. Survivors keep both
 /// their proposal record and their snapshot intact.
 fn vw_snapshot_only_removed_for_cleaned_proposals_in_partial_path() {
-    let (env, client, owners, _contract_id) = setup_5_of_5();
+    let (env, client, owners, contract_id) = setup_5_of_5();
     let proposer = owners.get(0).unwrap();
 
     let mut ids = Vec::new(&env);
@@ -493,7 +503,7 @@ fn vw_snapshot_only_removed_for_cleaned_proposals_in_partial_path() {
         ids.push_back(id);
     }
 
-    advance_past_expiry_plus_grace(&env, client.get_proposal_expiry_grace());
+    advance_past_expiry_plus_grace(&env, &contract_id, client.get_proposal_expiry_grace());
 
     let cleaned = client.cleanup_expired_proposals(&2u32);
     assert_eq!(cleaned, 2);
@@ -540,6 +550,11 @@ fn vw_snapshot_action_tag_for_every_variant() {
 
     let new_addr = Address::generate(&env);
 
+    // ChangeThreshold proposals require the quorum cooldown
+    // (`PROPOSAL_COOLDOWN_LEDGERS`) to have elapsed, so move past it.
+    env.ledger()
+        .set_sequence_number(2 * crate::multisig::PROPOSAL_COOLDOWN_LEDGERS);
+
     // (action, expected action_tag)
     let cases: std::vec::Vec<(ProposalAction, u32)> = vec![
         (ProposalAction::Pause, 1),
@@ -566,7 +581,6 @@ fn vw_snapshot_action_tag_for_every_variant() {
     for (i, (action, expected_tag)) in cases.iter().cloned().enumerate() {
         let proposer = owners.get((i % 3) as u32).unwrap();
         let id = client.create_proposal(&proposer, &action, &nonce);
-        nonce += 1;
         let snap = client.get_proposal_snapshot(&id).unwrap();
         assert_eq!(
             snap.action_tag, expected_tag,

@@ -8,6 +8,19 @@ use soroban_sdk::{token, Address, BytesN, Env, String, Symbol, Vec};
 use veritasor_attestor_staking::AttestorStakingContract;
 use veritasor_attestor_staking::AttestorStakingContractClient as StakingClient;
 
+/// Register a business with ROLE_BUSINESS granted and approve it so
+/// submissions against it are accepted.
+fn register_business(att: &AttestationContractClient<'_>, admin: &Address, business: &Address) {
+    att.grant_role(admin, business, &ROLE_BUSINESS);
+    att.register_business(
+        business,
+        &BytesN::from_array(&att.env, &[1u8; 32]),
+        &Symbol::new(&att.env, "US"),
+        &Vec::new(&att.env),
+    );
+    att.approve_business(admin, business);
+}
+
 fn create_token_contract(env: &Env, admin: &Address) -> Address {
     let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
     token_contract.address()
@@ -48,7 +61,12 @@ fn setup_attestation_with_staking(
     let att_client = AttestationContractClient::new(env, &attestation_id);
     let admin = Address::generate(env);
     att_client.initialize(&admin, &0u64);
-    att_client.set_attestor_staking_contract(&admin, &staking_addr);
+    // The legacy setter is disabled; configure the staking contract through
+    // the time-locked propose/commit flow.
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     (att_client, admin, staking_addr, token, staking_admin)
 }

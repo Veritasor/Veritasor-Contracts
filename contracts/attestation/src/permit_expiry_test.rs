@@ -373,11 +373,7 @@ fn expiry_in_distant_past_rejected() {
     let (env, client, business) = setup();
 
     // Ledger timestamp is much greater than 1.
-    // (Soroban test environments default to a non-zero timestamp.)
-    assert!(
-        env.ledger().timestamp() > 1,
-        "precondition: ledger time must be > 1"
-    );
+    env.ledger().set_timestamp(1_700_000_000);
 
     let permit = CancelPermit {
         business: business.clone(),

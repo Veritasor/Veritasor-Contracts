@@ -48,6 +48,16 @@ pub struct CollectorRotationProposal {
     pub escrowed_amount: i128,
 }
 
+/// Pending two-phase DAO controller rotation proposal.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DaoRotationProposal {
+    /// Current DAO contract address.
+    pub old_dao: Address,
+    /// Proposed new DAO contract address.
+    pub new_dao: Address,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub enum FlatFeeDataKey {
