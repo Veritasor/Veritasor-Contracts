@@ -1103,9 +1103,7 @@ impl AttestationContract {
 
         access_control::require_not_paused(env);
 
-        if registry::get_status(env, business) == Some(BusinessStatus::Suspended) {
-            panic!("business is suspended");
-        }
+        registry::require_active_business(env, business);
 
         rate_limit::check_rate_limit(env, business);
 
@@ -1242,10 +1240,6 @@ impl AttestationContract {
                 }
             }
             registry::require_active_business(env, &business);
-
-            if registry::get_status(env, &item.business) == Some(BusinessStatus::Suspended) {
-                panic!("business is suspended");
-            }
 
             let pair = (item.business.clone(), item.period.clone());
             for s in seen.iter() {
@@ -2989,7 +2983,7 @@ impl AttestationContract {
     ) {
         access_control::require_admin(&env, &resolver);
         dispute::validate_dispute_resolution(&env, dispute_id, &resolver).expect("invalid");
-        let upheld = outcome == DisputeOutcome::Upheld;
+        let is_upheld = outcome == DisputeOutcome::Upheld;
         let resolution = dispute::DisputeResolution {
             resolver,
             outcome: outcome.clone(),
@@ -3002,7 +2996,7 @@ impl AttestationContract {
             d.resolution = OptionalResolution::Some(resolution);
             dispute::store_dispute(&env, &d);
 
-            if upheld {
+            if is_upheld {
                 let staking_addr = Self::get_attestor_staking_contract(env.clone())
                     .expect("staking contract not configured");
                 let staking_client = AttestorStakingClient::new(&env, &staking_addr);
@@ -3689,9 +3683,7 @@ impl AttestationContract {
                 events::emit_key_rotation_emergency(env, &old_admin, new_admin);
             }
             ProposalAction::EmergencyPause => {
-                // Dual-key emergency pause executed directly via the
-                // `emergency_pause` entrypoint; a multisig proposal carrying
-                // this action applies the same immediate pause state.
+                access_control::check_and_apply_pending_pause(env);
                 access_control::set_paused(env, true);
                 events::emit_paused(env, executor);
             }

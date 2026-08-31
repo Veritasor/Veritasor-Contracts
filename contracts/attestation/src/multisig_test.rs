@@ -325,6 +325,52 @@ fn test_execute_remove_owner_proposal() {
 }
 
 #[test]
+fn test_execute_update_fee_config_proposal() {
+    let (env, client, admin, owners) = setup_with_multisig();
+    let owner2 = owners.get(1).unwrap();
+    let token = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    client.configure_fees(&token, &collector, &100i128, &true);
+
+    let new_collector = Address::generate(&env);
+    let action =
+        ProposalAction::UpdateFeeConfig(token.clone(), new_collector.clone(), 250i128, true);
+    let proposal_id = client.create_proposal(&admin, &action, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &1u64);
+
+    let cfg = client.get_fee_config().unwrap();
+    assert_eq!(cfg.token, token);
+    assert_eq!(cfg.collector, new_collector);
+    assert_eq!(cfg.base_fee, 250);
+    assert!(cfg.enabled);
+
+    let proposal = client.get_proposal(&proposal_id).unwrap();
+    assert_eq!(proposal.status, ProposalStatus::Executed);
+}
+
+#[test]
+fn test_execute_emergency_rotate_admin_proposal() {
+    let (env, client, admin, owners) = setup_with_multisig();
+    let owner2 = owners.get(1).unwrap();
+    let old_admin = client.get_admin();
+    let new_admin = Address::generate(&env);
+
+    let action = ProposalAction::EmergencyRotateAdmin(new_admin.clone());
+    let proposal_id = client.create_proposal(&admin, &action, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &1u64);
+
+    assert_eq!(client.get_admin(), new_admin);
+    assert!(client.has_role(&new_admin, &ROLE_ADMIN));
+    assert!(!client.has_role(&old_admin, &ROLE_ADMIN));
+
+    let proposal = client.get_proposal(&proposal_id).unwrap();
+    assert_eq!(proposal.status, ProposalStatus::Executed);
+}
+
+#[test]
 #[should_panic(expected = "proposal not approved")]
 fn test_cannot_execute_without_threshold() {
     let (_env, client, admin, _owners) = setup_with_multisig();
