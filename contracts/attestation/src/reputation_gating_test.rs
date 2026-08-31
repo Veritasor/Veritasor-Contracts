@@ -1,17 +1,39 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{token, Address, BytesN, Env, String};
+use crate::dynamic_fees::FEE_TIMELOCK_SECONDS;
+use soroban_sdk::testutils::{Address as _, Ledger};
+use soroban_sdk::{token::StellarAssetClient, Address, BytesN, Env, String, Symbol, Vec};
 use veritasor_attestor_staking::AttestorStakingContract;
 use veritasor_attestor_staking::AttestorStakingContractClient as StakingClient;
+
+/// Register a business with ROLE_BUSINESS granted and approve it so
+/// submissions against it are accepted.
+fn register_business(att: &AttestationContractClient<'_>, admin: &Address, business: &Address) {
+    att.grant_role(admin, business, &ROLE_BUSINESS);
+    att.register_business(
+        business,
+        &BytesN::from_array(&att.env, &[1u8; 32]),
+        &Symbol::new(&att.env, "US"),
+        &Vec::new(&att.env),
+    );
+    att.approve_business(admin, business);
+}
 
 fn create_token_contract(env: &Env, admin: &Address) -> Address {
     let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
     token_contract.address()
 }
 
-fn setup_attestation_with_staking(env: &Env) -> (AttestationContractClient<'_>, Address, Address, Address, Address) {
+fn setup_attestation_with_staking(
+    env: &Env,
+) -> (
+    AttestationContractClient<'_>,
+    Address,
+    Address,
+    Address,
+    Address,
+) {
     // Deploy token
     let token_admin = Address::generate(env);
     let token = create_token_contract(env, &token_admin);
@@ -28,9 +50,9 @@ fn setup_attestation_with_staking(env: &Env) -> (AttestationContractClient<'_>, 
         &staking_admin,
         &token,
         &treasury,
-        &100i128,  // min_stake
+        &100i128, // min_stake
         &dispute,
-        &86_400u64,  // unbonding_period
+        &86_400u64, // unbonding_period
     );
 
     // Deploy attestation
@@ -38,7 +60,12 @@ fn setup_attestation_with_staking(env: &Env) -> (AttestationContractClient<'_>, 
     let att_client = AttestationContractClient::new(env, &attestation_id);
     let admin = Address::generate(env);
     att_client.initialize(&admin, &0u64);
-    att_client.set_attestor_staking_contract(&admin, &staking_addr);
+    // The legacy setter is disabled; configure the staking contract through
+    // the time-locked propose/commit flow.
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     (att_client, admin, staking_addr, token, staking_admin)
 }
@@ -48,7 +75,8 @@ fn reputation_gating_disabled_by_default_passthrough() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (att_client, admin, staking_addr, token, _staking_admin) = setup_attestation_with_staking(&env);
+    let (att_client, admin, staking_addr, token, _staking_admin) =
+        setup_attestation_with_staking(&env);
 
     // Verify reputation contract is initially None
     assert!(att_client.get_reputation_contract().is_none());
@@ -56,11 +84,11 @@ fn reputation_gating_disabled_by_default_passthrough() {
     // Setup attestor with stake
     let staking = StakingClient::new(&env, &staking_addr);
     let attestor = Address::generate(&env);
-    let token_client = token::Client::new(&env, &token);
-    
+    let token_client = StellarAssetClient::new(&env, &token);
+
     // Mint tokens to attestor
     token_client.mint(&attestor, &1_000i128);
-    
+
     // Attestor stakes
     staking.stake(&attestor, &500i128);
 
@@ -68,9 +96,8 @@ fn reputation_gating_disabled_by_default_passthrough() {
 
     // Business can still submit when reputation gating is disabled
     let business = Address::generate(&env);
-    att_client.register_business(&admin, &business);
-    att_client.approve_business(&admin, &business);
-    
+    register_business(&att_client, &admin, &business);
+
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
@@ -101,7 +128,10 @@ fn reputation_gating_admin_only_setter() {
 
     // Admin can set reputation contract
     att_client.set_reputation_contract(&admin, &reputation_contract);
-    assert_eq!(att_client.get_reputation_contract(), Some(reputation_contract.clone()));
+    assert_eq!(
+        att_client.get_reputation_contract(),
+        Some(reputation_contract.clone())
+    );
 
     // Non-admin cannot set reputation contract
     let res = att_client.try_set_reputation_contract(&non_admin, &Address::generate(&env));
@@ -141,16 +171,15 @@ fn reputation_score_zero_below_floor() {
 
     // Setup attestor with NO stake (reputation = 0)
     let attestor = Address::generate(&env);
-    let _token_client = token::Client::new(&env, &token);
-    
+    let _token_client = StellarAssetClient::new(&env, &token);
+
     // Attestor is NOT eligible (no stake), so submit_attestation_as_attestor should fail
     // even before reputation check (due to staking eligibility check)
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
 
     let business = Address::generate(&env);
-    att_client.register_business(&admin, &business);
-    att_client.approve_business(&admin, &business);
-    
+    register_business(&att_client, &admin, &business);
+
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
@@ -176,15 +205,15 @@ fn reputation_score_below_floor_rejected() {
 
     // Setup reputation gating using attestor-staking as reputation source
     att_client.set_reputation_contract(&admin, &staking_addr);
-    att_client.set_min_reputation(&admin, &1000u64);  // Min reputation is 1000
+    att_client.set_min_reputation(&admin, &1000u64); // Min reputation is 1000
 
     // Setup attestor with some stake (less than min_reputation)
     let attestor = Address::generate(&env);
-    let token_client = token::Client::new(&env, &token);
-    
+    let token_client = StellarAssetClient::new(&env, &token);
+
     // Mint tokens to attestor
     token_client.mint(&attestor, &1_000i128);
-    
+
     // Attestor stakes 500 (below min_reputation of 1000)
     let staking = StakingClient::new(&env, &staking_addr);
     staking.stake(&attestor, &500i128);
@@ -192,9 +221,8 @@ fn reputation_score_below_floor_rejected() {
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
 
     let business = Address::generate(&env);
-    att_client.register_business(&admin, &business);
-    att_client.approve_business(&admin, &business);
-    
+    register_business(&att_client, &admin, &business);
+
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
@@ -220,15 +248,15 @@ fn reputation_score_at_threshold_accepted() {
 
     // Setup reputation gating
     att_client.set_reputation_contract(&admin, &staking_addr);
-    att_client.set_min_reputation(&admin, &500u64);  // Min reputation is 500
+    att_client.set_min_reputation(&admin, &500u64); // Min reputation is 500
 
     // Setup attestor with exactly 500 stake
     let attestor = Address::generate(&env);
-    let token_client = token::Client::new(&env, &token);
-    
+    let token_client = StellarAssetClient::new(&env, &token);
+
     // Mint tokens to attestor
     token_client.mint(&attestor, &1_000i128);
-    
+
     // Attestor stakes exactly 500
     let staking = StakingClient::new(&env, &staking_addr);
     staking.stake(&attestor, &500i128);
@@ -236,9 +264,8 @@ fn reputation_score_at_threshold_accepted() {
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
 
     let business = Address::generate(&env);
-    att_client.register_business(&admin, &business);
-    att_client.approve_business(&admin, &business);
-    
+    register_business(&att_client, &admin, &business);
+
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
@@ -266,15 +293,15 @@ fn reputation_score_above_floor_accepted() {
 
     // Setup reputation gating
     att_client.set_reputation_contract(&admin, &staking_addr);
-    att_client.set_min_reputation(&admin, &300u64);  // Min reputation is 300
+    att_client.set_min_reputation(&admin, &300u64); // Min reputation is 300
 
     // Setup attestor with 1000 stake (well above floor)
     let attestor = Address::generate(&env);
-    let token_client = token::Client::new(&env, &token);
-    
+    let token_client = StellarAssetClient::new(&env, &token);
+
     // Mint tokens to attestor
     token_client.mint(&attestor, &2_000i128);
-    
+
     // Attestor stakes 1000
     let staking = StakingClient::new(&env, &staking_addr);
     staking.stake(&attestor, &1_000i128);
@@ -282,9 +309,8 @@ fn reputation_score_above_floor_accepted() {
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
 
     let business = Address::generate(&env);
-    att_client.register_business(&admin, &business);
-    att_client.approve_business(&admin, &business);
-    
+    register_business(&att_client, &admin, &business);
+
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
@@ -312,22 +338,21 @@ fn clear_reputation_contract_enables_passthrough() {
 
     // Setup reputation gating with strict floor
     att_client.set_reputation_contract(&admin, &staking_addr);
-    att_client.set_min_reputation(&admin, &10_000u64);  // Very high floor
+    att_client.set_min_reputation(&admin, &10_000u64); // Very high floor
 
     // Setup attestor with minimal stake
     let attestor = Address::generate(&env);
-    let token_client = token::Client::new(&env, &token);
+    let token_client = StellarAssetClient::new(&env, &token);
     token_client.mint(&attestor, &1_000i128);
-    
+
     let staking = StakingClient::new(&env, &staking_addr);
     staking.stake(&attestor, &100i128);
 
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
 
     let business = Address::generate(&env);
-    att_client.register_business(&admin, &business);
-    att_client.approve_business(&admin, &business);
-    
+    register_business(&att_client, &admin, &business);
+
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
@@ -374,9 +399,9 @@ fn batch_submission_with_reputation_gating() {
 
     // Setup attestor with sufficient reputation
     let attestor = Address::generate(&env);
-    let token_client = token::Client::new(&env, &token);
+    let token_client = StellarAssetClient::new(&env, &token);
     token_client.mint(&attestor, &2_000i128);
-    
+
     let staking = StakingClient::new(&env, &staking_addr);
     staking.stake(&attestor, &500i128);
 
@@ -385,10 +410,8 @@ fn batch_submission_with_reputation_gating() {
     // Register and approve multiple businesses
     let business1 = Address::generate(&env);
     let business2 = Address::generate(&env);
-    att_client.register_business(&admin, &business1);
-    att_client.approve_business(&admin, &business1);
-    att_client.register_business(&admin, &business2);
-    att_client.approve_business(&admin, &business2);
+    register_business(&att_client, &admin, &business1);
+    register_business(&att_client, &admin, &business2);
 
     // Batch submit
     let items = Vec::from_array(
@@ -419,6 +442,10 @@ fn batch_submission_with_reputation_gating() {
     att_client.submit_batch_as_attestor(&attestor, &items);
 
     // Verify both attestations were stored
-    assert!(att_client.get_attestation(&business1, &String::from_str(&env, "2026-02")).is_some());
-    assert!(att_client.get_attestation(&business2, &String::from_str(&env, "2026-03")).is_some());
+    assert!(att_client
+        .get_attestation(&business1, &String::from_str(&env, "2026-02"))
+        .is_some());
+    assert!(att_client
+        .get_attestation(&business2, &String::from_str(&env, "2026-03"))
+        .is_some());
 }

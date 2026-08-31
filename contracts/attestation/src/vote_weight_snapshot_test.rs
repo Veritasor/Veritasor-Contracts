@@ -24,8 +24,8 @@
 use super::*;
 use crate::events::VoteWeightSnapshotCreatedEvent;
 use crate::multisig::DEFAULT_PROPOSAL_EXPIRY;
-use soroban_sdk::testutils::{Address as _, Ledger};
-use soroban_sdk::{symbol_short, Address, Env, Symbol, TryFromVal, Vec};
+use soroban_sdk::testutils::{Address as _, Events as _, Ledger};
+use soroban_sdk::{symbol_short, vec, Address, Env, Symbol, TryFromVal, Vec};
 
 // ────────────────────────────────────────────────────────────────────
 //  Test setup helpers
@@ -87,8 +87,18 @@ fn setup_5_of_5() -> (
 }
 
 /// Walk past proposal expiry + grace so `cleanup_expired_proposals`
-/// actually fires for any proposals in scope.
-fn advance_past_expiry_plus_grace(env: &Env, grace_ledgers: u32) {
+/// actually fires for any proposals in scope. The instance TTL is
+/// refreshed afterwards because jumping ~110k ledgers would otherwise
+/// expire the contract instance (SDK 22) and make reads panic.
+fn advance_past_expiry_plus_grace(env: &Env, contract: &Address, grace_ledgers: u32) {
+    // Refresh the instance TTL BEFORE the jump: once the ledger has
+    // advanced ~110k ledgers the instance is already archived and even
+    // touching it panics.
+    env.as_contract(contract, || {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP * 10);
+    });
     let seq = env.ledger().sequence();
     env.ledger()
         .set_sequence_number(seq + DEFAULT_PROPOSAL_EXPIRY + grace_ledgers + 1);
@@ -174,9 +184,9 @@ fn vw_snapshot_event_emitted_with_matching_fields() {
     let id = client.create_proposal(&admins_owner0, &ProposalAction::Pause, &0u64);
 
     let events = env.events().all();
-    let new_events: Vec<_> = events
+    let new_events: std::vec::Vec<_> = events
         .iter()
-        .skip(pre)
+        .skip(pre as usize)
         .filter(|(_, topics, _)| {
             topics.len() == 1
                 && Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap()
@@ -190,8 +200,7 @@ fn vw_snapshot_event_emitted_with_matching_fields() {
         "exactly one VoteWeightSnapshotCreated event per create_proposal",
     );
     let (_cid, _topics, data) = new_events.last().unwrap();
-    let payload: VoteWeightSnapshotCreatedEvent =
-        soroban_sdk::FromVal::from_val(&env, &data);
+    let payload: VoteWeightSnapshotCreatedEvent = soroban_sdk::FromVal::from_val(&env, data);
     assert_eq!(payload.proposal_id, id);
     assert_eq!(payload.owners_count, 3);
     assert_eq!(payload.threshold, 3);
@@ -235,14 +244,14 @@ fn vw_flash_vote_attack_blocked_on_add_owner() {
         "attacker MUST NOT be able to approve a proposal whose snapshot predates their promotion",
     );
 
-    client.approve_proposal(&owner2, &victim_id, &1u64);
-    assert!(client
-        .get_proposal_approvals(&victim_id)
-        .contains(&attacker)
-        == false);
-    assert!(client
-        .get_proposal_approvals(&victim_id)
-        .contains(&owner2));
+    client.approve_proposal(&owner2, &victim_id, &0u64);
+    assert!(
+        client
+            .get_proposal_approvals(&victim_id)
+            .contains(&attacker)
+            == false
+    );
+    assert!(client.get_proposal_approvals(&victim_id).contains(&owner2));
     assert_eq!(
         client.get_approval_count(&victim_id),
         2,
@@ -438,13 +447,13 @@ fn vw_weight_change_to_zero_during_proposal_window_preserves_existing_vote() {
 /// its vote-weight snapshot is removed in lock-step. Storage hygiene
 /// — no orphans should accrue over the contract's lifetime.
 fn vw_snapshot_removed_on_cleanup() {
-    let (env, client, owners, _contract_id) = setup_5_of_5();
+    let (env, client, owners, contract_id) = setup_5_of_5();
     let proposer = owners.get(0).unwrap();
 
     let id = client.create_proposal(&proposer, &ProposalAction::Pause, &0u64);
     assert!(client.get_proposal_snapshot(&id).is_some());
 
-    advance_past_expiry_plus_grace(&env, client.get_proposal_expiry_grace());
+    advance_past_expiry_plus_grace(&env, &contract_id, client.get_proposal_expiry_grace());
     let cleaned = client.cleanup_expired_proposals(&10u32);
     assert_eq!(cleaned, 1);
     assert!(client.get_proposal(&id).is_none());
@@ -458,7 +467,7 @@ fn vw_snapshot_removed_on_cleanup() {
 /// Scenario: cleanup leaves no orphans. We create a batch of 5
 /// proposals, all of whose snapshots must be gone after cleanup.
 fn vw_snapshot_removed_for_all_cleaned_proposals() {
-    let (env, client, owners, _contract_id) = setup_5_of_5();
+    let (env, client, owners, contract_id) = setup_5_of_5();
     let proposer = owners.get(0).unwrap();
 
     let mut ids = Vec::new(&env);
@@ -466,12 +475,11 @@ fn vw_snapshot_removed_for_all_cleaned_proposals() {
         let id = client.create_proposal(&proposer, &ProposalAction::Pause, &i);
         ids.push_back(id);
     }
-    advance_past_expiry_plus_grace(&env, client.get_proposal_expiry_grace());
+    advance_past_expiry_plus_grace(&env, &contract_id, client.get_proposal_expiry_grace());
     let cleaned = client.cleanup_expired_proposals(&10u32);
     assert_eq!(cleaned, 5);
 
     for id in ids.iter() {
-        let id = id.unwrap();
         assert!(client.get_proposal(&id).is_none());
         assert!(client.get_proposal_snapshot(&id).is_none());
     }
@@ -482,7 +490,7 @@ fn vw_snapshot_removed_for_all_cleaned_proposals() {
 /// snapshots for the proposals actually cleaned. Survivors keep both
 /// their proposal record and their snapshot intact.
 fn vw_snapshot_only_removed_for_cleaned_proposals_in_partial_path() {
-    let (env, client, owners, _contract_id) = setup_5_of_5();
+    let (env, client, owners, contract_id) = setup_5_of_5();
     let proposer = owners.get(0).unwrap();
 
     let mut ids = Vec::new(&env);
@@ -491,7 +499,7 @@ fn vw_snapshot_only_removed_for_cleaned_proposals_in_partial_path() {
         ids.push_back(id);
     }
 
-    advance_past_expiry_plus_grace(&env, client.get_proposal_expiry_grace());
+    advance_past_expiry_plus_grace(&env, &contract_id, client.get_proposal_expiry_grace());
 
     let cleaned = client.cleanup_expired_proposals(&2u32);
     assert_eq!(cleaned, 2);
@@ -538,14 +546,23 @@ fn vw_snapshot_action_tag_for_every_variant() {
 
     let new_addr = Address::generate(&env);
 
+    // ChangeThreshold proposals require the quorum cooldown
+    // (`PROPOSAL_COOLDOWN_LEDGERS`) to have elapsed, so move past it.
+    env.ledger()
+        .set_sequence_number(2 * crate::multisig::PROPOSAL_COOLDOWN_LEDGERS);
+
     // (action, expected action_tag)
     let cases: Vec<(ProposalAction, u32)> = vec![
+        &env,
         (ProposalAction::Pause, 1),
         (ProposalAction::Unpause, 2),
         (ProposalAction::AddOwner(new_addr.clone()), 3),
         (ProposalAction::RemoveOwner(new_addr.clone()), 4),
         (ProposalAction::ChangeThreshold(1), 5),
-        (ProposalAction::GrantRole(new_addr.clone(), crate::ROLE_ADMIN), 6),
+        (
+            ProposalAction::GrantRole(new_addr.clone(), crate::ROLE_ADMIN),
+            6,
+        ),
         (
             ProposalAction::RevokeRole(new_addr.clone(), crate::ROLE_ADMIN),
             7,
@@ -557,17 +574,20 @@ fn vw_snapshot_action_tag_for_every_variant() {
         (ProposalAction::EmergencyRotateAdmin(new_addr.clone()), 9),
     ];
 
-    let mut nonce: u64 = 0;
-    for (i, (action, expected_tag)) in cases.iter().cloned().enumerate() {
-        let proposer = owners.get(i % 3).unwrap();
+    // Each owner has its own replay-protection nonce sequence, so track
+    // per-owner counters instead of a single shared one.
+    let mut nonces: [u64; 3] = [0; 3];
+    for (i, (action, expected_tag)) in cases.iter().enumerate() {
+        let owner_idx = (i % 3) as usize;
+        let proposer = owners.get(owner_idx as u32).unwrap();
+        let nonce = nonces[owner_idx];
+        nonces[owner_idx] += 1;
         let id = client.create_proposal(&proposer, &action, &nonce);
-        nonce += 1;
         let snap = client.get_proposal_snapshot(&id).unwrap();
         assert_eq!(
             snap.action_tag, expected_tag,
             "action_tag for action #{} must be {}",
-            i,
-            expected_tag
+            i, expected_tag
         );
     }
 }

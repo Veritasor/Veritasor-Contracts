@@ -5,9 +5,11 @@
 //! returns a deterministic hash that can be independently recomputed by an
 //! off-chain verifier CLI.
 
+extern crate std;
+
 use super::*;
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
-use soroban_sdk::{Address, Env, String, Symbol, TryFromVal, Vec};
+use soroban_sdk::{vec, Address, Env, String, Symbol, TryFromVal, Vec};
 
 fn setup_snapshot_only() -> (Env, AttestationSnapshotContractClient<'static>, Address) {
     let env = Env::default();
@@ -364,7 +366,7 @@ fn test_commitment_with_count_returns_entry_total() {
         &0u32,
         &1u64,
     );
-    let (commitment, count) = client.export_snapshot_commitment_with_count();
+    let (commitment, count) = client.export_commitment_with_count();
     assert_eq!(commitment.len(), 32);
     assert_eq!(count, 1u64);
 }
@@ -492,11 +494,22 @@ fn test_set_attestation_contract_non_admin_panics() {
 #[test]
 fn test_restore_dry_run_with_matching_version_succeeds() {
     let (env, client, admin) = setup_snapshot_only();
+    // Dry-run rejects `recorded_at` timestamps in the future, so anchor the
+    // ledger clock past the entries' `recorded_at` (1_000_000).
+    env.ledger().set_timestamp(5_000_000);
     let business = Address::generate(&env);
 
     let entries = vec![
         &env,
-        make_entry(&env, &business, "2026-01", 100_000i128, 0u32, 1u64, 1_000_000),
+        make_entry(
+            &env,
+            &business,
+            "2026-01",
+            100_000i128,
+            0u32,
+            1u64,
+            1_000_000,
+        ),
     ];
 
     let report = client.restore_dry_run(&admin, &entries);
@@ -513,7 +526,15 @@ fn test_restore_dry_run_with_older_version_fails() {
     let business = Address::generate(&env);
 
     // Create an entry with an older schema version (0)
-    let mut entry = make_entry(&env, &business, "2026-01", 100_000i128, 0u32, 1u64, 1_000_000);
+    let mut entry = make_entry(
+        &env,
+        &business,
+        "2026-01",
+        100_000i128,
+        0u32,
+        1u64,
+        1_000_000,
+    );
     entry.schema_version = 0; // Older version
 
     let entries = vec![&env, entry];
@@ -527,7 +548,15 @@ fn test_restore_dry_run_with_newer_version_fails() {
     let business = Address::generate(&env);
 
     // Create an entry with a newer schema version (999)
-    let mut entry = make_entry(&env, &business, "2026-01", 100_000i128, 0u32, 1u64, 1_000_000);
+    let mut entry = make_entry(
+        &env,
+        &business,
+        "2026-01",
+        100_000i128,
+        0u32,
+        1u64,
+        1_000_000,
+    );
     entry.schema_version = 999; // Newer version
 
     let entries = vec![&env, entry];
@@ -535,20 +564,39 @@ fn test_restore_dry_run_with_newer_version_fails() {
 }
 
 #[test]
-#[should_panic(expected = "snapshot schema version mismatch")]
+#[should_panic(expected = "batch was altered since dry-run")]
 fn test_restore_commit_with_mismatched_version_fails() {
     let (env, client, admin) = setup_snapshot_only();
+    // Anchor the ledger clock past the entries' `recorded_at` so the dry-run
+    // passes every invariant and stores a pending token.
+    env.ledger().set_timestamp(5_000_000);
     let business = Address::generate(&env);
 
     // First do a valid dry-run
     let valid_entries = vec![
         &env,
-        make_entry(&env, &business, "2026-01", 100_000i128, 0u32, 1u64, 1_000_000),
+        make_entry(
+            &env,
+            &business,
+            "2026-01",
+            100_000i128,
+            0u32,
+            1u64,
+            1_000_000,
+        ),
     ];
     client.restore_dry_run(&admin, &valid_entries);
 
     // Now try to commit with a mismatched version (should fail even though dry-run passed)
-    let mut bad_entry = make_entry(&env, &business, "2026-01", 100_000i128, 0u32, 1u64, 1_000_000);
+    let mut bad_entry = make_entry(
+        &env,
+        &business,
+        "2026-01",
+        100_000i128,
+        0u32,
+        1u64,
+        1_000_000,
+    );
     bad_entry.schema_version = 999;
     let bad_entries = vec![&env, bad_entry];
 
@@ -563,8 +611,24 @@ fn test_restore_dry_run_multiple_entries_all_must_match_version() {
     let business2 = Address::generate(&env);
 
     // One valid, one invalid version
-    let mut entry1 = make_entry(&env, &business1, "2026-01", 100_000i128, 0u32, 1u64, 1_000_000);
-    let mut entry2 = make_entry(&env, &business2, "2026-01", 200_000i128, 1u32, 2u64, 2_000_000);
+    let mut entry1 = make_entry(
+        &env,
+        &business1,
+        "2026-01",
+        100_000i128,
+        0u32,
+        1u64,
+        1_000_000,
+    );
+    let mut entry2 = make_entry(
+        &env,
+        &business2,
+        "2026-01",
+        200_000i128,
+        1u32,
+        2u64,
+        2_000_000,
+    );
     entry2.schema_version = 0; // Invalid version
 
     let entries = vec![&env, entry1, entry2];
@@ -606,7 +670,15 @@ fn test_restore_version_mismatch_event_emitted() {
     env.ledger().with_mut(|l| l.timestamp = 5_000_000);
 
     // Create an entry with wrong version
-    let mut entry = make_entry(&env, &business, "2026-01", 100_000i128, 0u32, 1u64, 1_000_000);
+    let mut entry = make_entry(
+        &env,
+        &business,
+        "2026-01",
+        100_000i128,
+        0u32,
+        1u64,
+        1_000_000,
+    );
     entry.schema_version = 999; // Wrong version
 
     let entries = vec![&env, entry];
@@ -620,7 +692,7 @@ fn test_restore_version_mismatch_event_emitted() {
 
     // Verify event was emitted
     let events = env.events().all();
-    let mismatch_events: Vec<_> = events
+    let mismatch_events: std::vec::Vec<_> = events
         .iter()
         .filter_map(|(cid, topics, data)| {
             if cid != client.address {
@@ -637,7 +709,11 @@ fn test_restore_version_mismatch_event_emitted() {
         })
         .collect();
 
-    assert_eq!(mismatch_events.len(), 1, "Expected exactly one RestoreVersionMismatchEvent");
+    assert_eq!(
+        mismatch_events.len(),
+        1,
+        "Expected exactly one RestoreVersionMismatchEvent"
+    );
     let evt = &mismatch_events[0];
     assert_eq!(evt.batch_version, 999);
     assert_eq!(evt.expected_version, SNAPSHOT_SCHEMA_VERSION);
