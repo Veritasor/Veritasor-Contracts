@@ -877,7 +877,9 @@ impl AttestationContract {
         /// # Validation Flow
         ///
         /// 1. **Attestor Lock Check**: Verifies attestor is not currently locked
-        /// 2. **Staking Eligibility**: Calls attestor-staking contract to verify minimum stake
+        /// 2. **Staking Eligibility**: If an attestor-staking contract is registered,
+        ///    calls it to verify minimum stake. If none is registered, submission
+        ///    proceeds (backward-compatible passthrough for pre-staking deployments).
         /// 3. **Reputation Gating** (if enabled): Calls configured reputation contract and:
         ///    - Fetches attestor's reputation score (read-only cross-contract call)
         ///    - Compares against configured minimum threshold
@@ -915,8 +917,7 @@ impl AttestationContract {
         /// # Panics
         ///
         /// - `"attestor is locked"` – Attestor has active lock on this contract
-        /// - `"staking contract not configured"` – Attestor-staking contract not set
-        /// - `"attestor is not eligible"` – Attestor stake below minimum
+        /// - `"attestor is not eligible"` – Attestor stake below minimum (when staking is configured)
         /// - `"attestor reputation below minimum threshold"` – Reputation score below floor (when gating enabled)
         /// - `"business is suspended"` – Business is in suspended status
         /// - `"attestation already exists for this business and period"` – Duplicate attestation
@@ -933,12 +934,16 @@ impl AttestationContract {
         /// * `expiry_timestamp` – Optional expiration time (if None, attestation never expires)
         access_control::require_attestor_not_locked(&env, &attestor);
 
-        let staking_addr = Self::get_attestor_staking_contract(env.clone())
-            .expect("staking contract not configured");
-
-        let staking_client = AttestorStakingClient::new(&env, &staking_addr);
-        if !staking_client.is_eligible(&attestor) {
-            panic!("attestor is not eligible");
+        // Staking eligibility is an admin-configured gate. When no staking
+        // contract is registered, submissions proceed (backward-compatible
+        // passthrough for contracts deployed before staking). When one is
+        // registered, the gate is enforced and under-staked attestors are
+        // rejected.
+        if let Some(staking_addr) = Self::get_attestor_staking_contract(env.clone()) {
+            let staking_client = AttestorStakingClient::new(&env, &staking_addr);
+            if !staking_client.is_eligible(&attestor) {
+                panic!("attestor is not eligible");
+            }
         }
 
         // ── Reputation Gating (optional, admin-configurable) ──────────────
@@ -1015,12 +1020,16 @@ impl AttestationContract {
     pub fn submit_batch_as_attestor(env: Env, attestor: Address, items: Vec<BatchAttestationItem>) {
         access_control::require_attestor_not_locked(&env, &attestor);
 
-        let staking_addr = Self::get_attestor_staking_contract(env.clone())
-            .expect("staking contract not configured");
-
-        let staking_client = AttestorStakingClient::new(&env, &staking_addr);
-        if !staking_client.is_eligible(&attestor) {
-            panic!("attestor is not eligible");
+        // Staking eligibility is an admin-configured gate. When no staking
+        // contract is registered, submissions proceed (backward-compatible
+        // passthrough for contracts deployed before staking). When one is
+        // registered, the gate is enforced and under-staked attestors are
+        // rejected.
+        if let Some(staking_addr) = Self::get_attestor_staking_contract(env.clone()) {
+            let staking_client = AttestorStakingClient::new(&env, &staking_addr);
+            if !staking_client.is_eligible(&attestor) {
+                panic!("attestor is not eligible");
+            }
         }
 
         // ── Reputation Gating (optional, admin-configurable) ──────────────
