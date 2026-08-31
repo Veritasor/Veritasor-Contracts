@@ -537,7 +537,8 @@ proptest! {
             prop_assert_eq!(
                 collector_delta,
                 cumulative_event_fee,
-                "cumulative collector delta must equal cumulative event fee_paid"
+                "cumulative collector delta must equal cumulative event fee_paid after submission: {}",
+                i
             );
         }
     }

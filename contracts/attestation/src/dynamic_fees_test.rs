@@ -285,8 +285,16 @@ fn test_volume_bracket_exact_boundary() {
             submitted += 1;
         }
         assert_eq!(t.client.get_business_count(&business), target_count);
-        assert_eq!(t.client.get_volume_discount(&business), expected_bps, "Failed at count {}", target_count);
-        assert_eq!(t.client.get_fee_quote(&business), compute_fee(1_000_000, 0, expected_bps));
+        assert_eq!(
+            t.client.get_volume_discount(&business),
+            expected_bps,
+            "Failed at count {}",
+            target_count
+        );
+        assert_eq!(
+            t.client.get_fee_quote(&business),
+            compute_fee(1_000_000, 0, expected_bps)
+        );
     }
 }
 
@@ -852,7 +860,6 @@ fn test_volume_brackets_descending_thresholds_rejected() {
     t.client.set_volume_brackets(&thresholds, &discounts);
 }
 
-
 // ════════════════════════════════════════════════════════════════════
 //  Single-bracket volume edge cases
 // ════════════════════════════════════════════════════════════════════
@@ -972,31 +979,30 @@ fn test_single_bracket_threshold_zero_matches_any_volume() {
 
 #[test]
 fn discount_stacking_no_underflow() {
-    let e = soroban_sdk::Env::default();
-    let contract = AttestationContract::new(&e);
+    // 100% tier + 100% volume discount must floor at 0, never underflow.
+    let fee = crate::dynamic_fees::compute_fee(1_000i128, 10_000u32, 10_000u32);
+    assert!(
+        fee >= 0,
+        "Fee must not underflow with max stacked discounts"
+    );
+    assert_eq!(
+        fee, 0i128,
+        "With 100% tier + 100% volume discount, fee should be 0"
+    );
 
-    contract.set_fee_on(&true);
-    contract.set_base_fee(&1000i128);
-
-    contract.set_business_tier(&soroban_sdk::Address::generate(&e), &0u32);
-    contract.set_tier_discount(&0u32, &10_000u32);
-
-    contract.set_volume_thresholds(&vec![&e, 1u64]);
-    contract.set_volume_discounts(&vec![&e, 10_000u32]);
-    contract.mock_business_count(&soroban_sdk::Address::generate(&e), &2u64);
-
-    let fee = contract.compute_fee(&1000i128, &0u32, &2u64);
-    assert!(fee >= 0, "Fee must not underflow with max stacked discounts");
-    assert_eq!(fee, 0i128, "With 100% tier + 100% volume discount, fee should be 0");
-
-    let fee2 = contract.compute_fee(&500i128, &0u32, &2u64);
-    assert!(fee2 >= 0, "Fee must remain non-negative under all discount scenarios");
+    let fee2 = crate::dynamic_fees::compute_fee(500i128, 10_000u32, 10_000u32);
+    assert!(
+        fee2 >= 0,
+        "Fee must remain non-negative under all discount scenarios"
+    );
     assert_eq!(fee2, 0i128);
 
-    contract.set_tier_discount(&0u32, &9_900u32);
-    contract.set_volume_discounts(&vec![&e, 9_900u32]);
-    let fee3 = contract.compute_fee(&10_000i128, &0u32, &2u64);
-    assert!(fee3 >= 0 && fee3 <= 10_000i128,
-        "Fee with near-max discounts should be between 0 and base_fee, got {}", fee3);
+    // Near-max discounts: 10_000 * 100 * 100 / 100_000_000 = 1.
+    let fee3 = crate::dynamic_fees::compute_fee(10_000i128, 9_900u32, 9_900u32);
+    assert!(
+        fee3 >= 0 && fee3 <= 10_000i128,
+        "Fee with near-max discounts should be between 0 and base_fee, got {}",
+        fee3
+    );
     assert_eq!(fee3, 1i128);
 }
