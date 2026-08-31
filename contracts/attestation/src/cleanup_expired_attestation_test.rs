@@ -61,13 +61,10 @@ fn submit(
     let period = String::from_str(env, period);
     let root = BytesN::from_array(env, &[0xABu8; 32]);
     client.submit_attestation(
-        business,
-        &period,
-        &root,
-        &1u64,   // timestamp
-        &1u32,   // version
-        &0i128,  // fee_paid
-        &None,   // proof_hash (set separately in proof-hash tests)
+        business, &period, &root, &1u64,  // timestamp
+        &1u32,  // version
+        &0i128, // fee_paid
+        &None,  // proof_hash (set separately in proof-hash tests)
         &expiry,
     );
 }
@@ -184,7 +181,11 @@ fn cleanup_emits_attestation_cleaned_up_event() {
     client.cleanup_expired_attestation(&admin, &business, &period);
 
     let events = cleaned_up_events(&env);
-    assert_eq!(events.len(), 1, "exactly one AttestationCleanedUp event expected");
+    assert_eq!(
+        events.len(),
+        1,
+        "exactly one AttestationCleanedUp event expected"
+    );
     let ev = &events[0];
     assert_eq!(ev.business, business, "event.business mismatch");
     assert_eq!(ev.period, period, "event.period mismatch");

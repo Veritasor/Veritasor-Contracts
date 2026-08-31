@@ -277,6 +277,7 @@ To change expiry, the business must:
 | Zero Handling | Expiry at Unix epoch (timestamp 0) |
 | Data Preservation | Expired attestations remain queryable |
 | Migration | Expiry preserved during attestation migration |
+| Property-Based Tests | `proptest` fuzzing of `(timestamp, old_expiry, new_expiry)` triples (including equality boundaries and `u64::MAX` saturation) and arbitrary extension sequences; asserts monotonicity, panic-on-non-monotonic, event payload fidelity, and storage = max applied value |
 
 ## Monotonic Expiry Invariant
 
@@ -308,6 +309,23 @@ pub fn extend_expiry(
 - Updates only the expiry field, preserving all other attestation data.
 - Emits an `AttestationExpiryExtended` event.
 - Allows extending from `None` (no expiry) to `Some(expiry)` or extending an existing expiry.
+
+### Property-Based Testing
+
+`extend_expiry_test.rs` ships a `proptest` suite that fuzzes arbitrary
+`(timestamp, old_expiry, new_expiry)` combinations — explicitly injecting the
+exact equality boundaries (`new_expiry == old_expiry`, `new_expiry ==
+timestamp`) and `u64::MAX` saturation, which uniform `u64` sampling would
+practically never generate — as well as arbitrary **sequences** of extensions.
+The suite asserts that:
+
+- Non-monotonic extensions always panic without mutating storage or emitting
+  an event.
+- Strictly greater extensions always succeed and update storage.
+- Every successful extension emits an `AttestationExpiryExtendedEvent` whose
+  payload (`old_expiry`, `new_expiry`) matches the stored transition.
+- After any sequence of extensions, storage always reflects the **maximum**
+  expiry value ever applied.
 
 ### Use Cases
 

@@ -25,24 +25,23 @@ extern crate std;
 use super::*;
 use crate::access_control::ROLE_ADMIN;
 use crate::events::{
-    AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent, EpochAdvancedEvent,
+    AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent,
     BusinessApprovedEvent, BusinessReactivatedEvent, BusinessRegisteredEvent,
-    BusinessSuspendedEvent, CollectorRotationAcceptedEvent,
-    CollectorRotationProposedEvent, FeeConfigChangedEvent,
-    FlatFeeConfigChangedEvent, KeyRotationCancelledEvent,
-    KeyRotationConfirmedEvent, KeyRotationEmergencyEvent,
+    BusinessSuspendedEvent, CollectorRotationAcceptedEvent, CollectorRotationProposedEvent,
+    EpochAdvancedEvent, FeeConfigChangedEvent, FlatFeeConfigChangedEvent,
+    KeyRotationCancelledEvent, KeyRotationConfirmedEvent, KeyRotationEmergencyEvent,
     KeyRotationProposedEvent, PauseChangedEvent, ProofHashUpdatedEvent,
-    RateLimitConfigChangedEvent, RoleChangedEvent, EVENT_SCHEMA_VERSION,
+    RateLimitConfigChangedEvent, RevocationReason, RoleChangedEvent, EVENT_SCHEMA_VERSION,
     TOPIC_ATTESTATION_MIGRATED, TOPIC_ATTESTATION_REVOKED, TOPIC_ATTESTATION_SUBMITTED,
     TOPIC_BIZ_APPROVED, TOPIC_BIZ_REACTIVATE, TOPIC_BIZ_REGISTERED, TOPIC_BIZ_SUSPENDED,
-    TOPIC_COLLECTOR_ROTATION_ACCEPTED, TOPIC_COLLECTOR_ROTATION_PROPOSED,
+    TOPIC_COLLECTOR_ROTATION_ACCEPTED, TOPIC_COLLECTOR_ROTATION_PROPOSED, TOPIC_EPOCH_ADVANCED,
     TOPIC_FEE_CONFIG, TOPIC_FLAT_FEE_CONFIG, TOPIC_KEY_ROTATION_CANCELLED,
-    TOPIC_KEY_ROTATION_CONFIRMED, TOPIC_KEY_ROTATION_EMERGENCY, TOPIC_KEY_ROTATION_PROPOSED, TOPIC_EPOCH_ADVANCED,
+    TOPIC_KEY_ROTATION_CONFIRMED, TOPIC_KEY_ROTATION_EMERGENCY, TOPIC_KEY_ROTATION_PROPOSED,
     TOPIC_PAUSED, TOPIC_PROOF_HASH_UPDATED, TOPIC_RATE_LIMIT, TOPIC_ROLE_GRANTED,
     TOPIC_ROLE_REVOKED, TOPIC_UNPAUSED,
 };
-use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
 use soroban_sdk::testutils::{Address as _, Events as _};
+use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
 use soroban_sdk::{symbol_short, Address, BytesN, Env, String, Symbol, TryFromVal};
 
 // ════════════════════════════════════════════════════════════════════
@@ -58,6 +57,24 @@ fn setup() -> (Env, AttestationContractClient<'static>, Address) {
     let admin = Address::generate(&env);
     client.initialize(&admin, &0u64);
     (env, client, admin)
+}
+
+/// SDK 22 clears the host event buffer at the start of every metered
+/// invocation, so `env.events().all()` only exposes the events of the most
+/// recent contract call. This helper returns the data payloads of the events
+/// with the given topic emitted by the most recent call.
+fn events_with_topic(env: &Env, topic: Symbol) -> std::vec::Vec<Val> {
+    let mut out = std::vec::Vec::new();
+    for (_cid, topics, data) in env.events().all().iter() {
+        if topics.len() >= 1 {
+            if let Ok(sym) = Symbol::try_from_val(env, &topics.get(0).unwrap()) {
+                if sym == topic {
+                    out.push(data);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Submit a single attestation with sensible defaults.
@@ -124,6 +141,7 @@ fn test_multiple_attestations_emit_multiple_events() {
     let (env, client, _admin) = setup();
     let business = Address::generate(&env);
 
+    let mut att_sub_count: u32 = 0;
     for i in 1u64..=5 {
         let period = String::from_str(&env, &alloc::format!("2026-0{}", i));
         let root = BytesN::from_array(&env, &[i as u8; 32]);
@@ -137,15 +155,12 @@ fn test_multiple_attestations_emit_multiple_events() {
             &None,
             &None,
         );
+        // SDK 22 clears the event buffer per call: capture per submission.
+        att_sub_count += events_with_topic(&env, TOPIC_ATTESTATION_SUBMITTED).len() as u32;
     }
 
-    // At least 5 submission events must exist.
-    let events = env.events().all();
-    assert!(
-        events.len() >= 5,
-        "expected at least 5 events, got {}",
-        events.len()
-    );
+    // Exactly one submission event per call.
+    assert_eq!(att_sub_count, 5, "expected 5 submission events total");
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -154,7 +169,7 @@ fn test_multiple_attestations_emit_multiple_events() {
 
 #[test]
 fn test_attestation_submitted_schema_snapshot_full_fields() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
@@ -164,17 +179,19 @@ fn test_attestation_submitted_schema_snapshot_full_fields() {
     let proof_hash = Some(BytesN::from_array(&env, &[2u8; 32]));
     let expiry = Some(2_000_000_000u64);
 
-    crate::events::emit_attestation_submitted(
-        &env,
-        &business,
-        &period,
-        &root,
-        timestamp,
-        version,
-        fee,
-        &proof_hash,
-        expiry,
-    );
+    env.as_contract(&client.address, || {
+        crate::events::emit_attestation_submitted(
+            &env,
+            &business,
+            &period,
+            &root,
+            timestamp,
+            version,
+            fee,
+            &proof_hash,
+            expiry,
+        );
+    });
 
     let last_event = env.events().all().last().unwrap();
     let (_contract_id, topics, data) = last_event;
@@ -204,17 +221,19 @@ fn test_attestation_submitted_schema_snapshot_full_fields() {
 
 #[test]
 fn test_attestation_submitted_schema_snapshot_optional_fields_none() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[0u8; 32]);
 
-    crate::events::emit_attestation_submitted(
-        &env, &business, &period, &root, 0u64,  // zero timestamp (boundary)
-        0u32,  // zero version (boundary)
-        0i128, // zero fee (boundary)
-        &None, None,
-    );
+    env.as_contract(&client.address, || {
+        crate::events::emit_attestation_submitted(
+            &env, &business, &period, &root, 0u64,  // zero timestamp (boundary)
+            0u32,  // zero version (boundary)
+            0i128, // zero fee (boundary)
+            &None, None,
+        );
+    });
 
     let (_cid, _topics, data) = env.events().all().last().unwrap();
     let ev = AttestationSubmittedEvent::try_from_val(&env, &data).unwrap();
@@ -230,13 +249,20 @@ fn test_attestation_submitted_schema_snapshot_optional_fields_none() {
 
 #[test]
 fn test_attestation_revoked_schema_snapshot() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let revoked_by = Address::generate(&env);
     let reason = String::from_str(&env, "fraudulent data detected");
 
-    crate::events::emit_attestation_revoked(&env, &business, &period, &revoked_by, &reason);
+    crate::events::emit_attestation_revoked(
+        &env,
+        &business,
+        &period,
+        &revoked_by,
+        &reason,
+        crate::events::RevocationReason::Admin,
+    );
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
 
@@ -263,7 +289,7 @@ fn test_attestation_revoked_schema_snapshot() {
 
 #[test]
 fn test_attestation_migrated_schema_snapshot() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let old_root = BytesN::from_array(&env, &[1u8; 32]);
@@ -272,16 +298,18 @@ fn test_attestation_migrated_schema_snapshot() {
     let new_ver = 2u32;
     let migrated_by = Address::generate(&env);
 
-    crate::events::emit_attestation_migrated(
-        &env,
-        &business,
-        &period,
-        &old_root,
-        &new_root,
-        old_ver,
-        new_ver,
-        &migrated_by,
-    );
+    env.as_contract(&client.address, || {
+        crate::events::emit_attestation_migrated(
+            &env,
+            &business,
+            &period,
+            &old_root,
+            &new_root,
+            old_ver,
+            new_ver,
+            &migrated_by,
+        );
+    });
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
 
@@ -311,12 +339,14 @@ fn test_attestation_migrated_schema_snapshot() {
 
 #[test]
 fn test_role_granted_schema_snapshot() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let account = Address::generate(&env);
     let changed_by = Address::generate(&env);
     let role = 1u32;
 
-    crate::events::emit_role_granted(&env, &account, role, &changed_by);
+    env.as_contract(&client.address, || {
+        crate::events::emit_role_granted(&env, &account, role, &changed_by);
+    });
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
 
@@ -338,12 +368,14 @@ fn test_role_granted_schema_snapshot() {
 
 #[test]
 fn test_role_revoked_schema_snapshot() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let account = Address::generate(&env);
     let changed_by = Address::generate(&env);
     let role = 2u32;
 
-    crate::events::emit_role_revoked(&env, &account, role, &changed_by);
+    env.as_contract(&client.address, || {
+        crate::events::emit_role_revoked(&env, &account, role, &changed_by);
+    });
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
 
@@ -369,10 +401,12 @@ fn test_role_revoked_schema_snapshot() {
 
 #[test]
 fn test_pause_schema_snapshot() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let changed_by = Address::generate(&env);
 
-    crate::events::emit_paused(&env, &changed_by);
+    env.as_contract(&client.address, || {
+        crate::events::emit_paused(&env, &changed_by);
+    });
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
 
@@ -388,10 +422,12 @@ fn test_pause_schema_snapshot() {
 
 #[test]
 fn test_unpause_schema_snapshot() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let changed_by = Address::generate(&env);
 
-    crate::events::emit_unpaused(&env, &changed_by);
+    env.as_contract(&client.address, || {
+        crate::events::emit_unpaused(&env, &changed_by);
+    });
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
 
@@ -411,21 +447,23 @@ fn test_unpause_schema_snapshot() {
 
 #[test]
 fn test_fee_config_changed_schema_snapshot() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let token = Address::generate(&env);
     let collector = Address::generate(&env);
     let changed_by = Address::generate(&env);
     let base_fee = 1_000i128;
     let enabled = true;
 
-    crate::events::emit_fee_config_changed(
-        &env,
-        &token,
-        &collector,
-        base_fee,
-        enabled,
-        &changed_by,
-    );
+    env.as_contract(&client.address, || {
+        crate::events::emit_fee_config_changed(
+            &env,
+            &token,
+            &collector,
+            base_fee,
+            enabled,
+            &changed_by,
+        );
+    });
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
 
@@ -445,12 +483,14 @@ fn test_fee_config_changed_schema_snapshot() {
 
 #[test]
 fn test_fee_config_changed_disabled_state() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let token = Address::generate(&env);
     let collector = Address::generate(&env);
     let changed_by = Address::generate(&env);
 
-    crate::events::emit_fee_config_changed(&env, &token, &collector, 0i128, false, &changed_by);
+    env.as_contract(&client.address, || {
+        crate::events::emit_fee_config_changed(&env, &token, &collector, 0i128, false, &changed_by);
+    });
 
     let (_cid, _topics, data) = env.events().all().last().unwrap();
     let ev = FeeConfigChangedEvent::try_from_val(&env, &data).unwrap();
@@ -464,19 +504,21 @@ fn test_fee_config_changed_disabled_state() {
 
 #[test]
 fn test_flat_fee_config_changed_schema_snapshot() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let token = Address::generate(&env);
     let collector = Address::generate(&env);
     let changed_by = Address::generate(&env);
 
-    crate::events::emit_flat_fee_config_changed(
-        &env,
-        &token,
-        &collector,
-        500i128,
-        true,
-        &changed_by,
-    );
+    env.as_contract(&client.address, || {
+        crate::events::emit_flat_fee_config_changed(
+            &env,
+            &token,
+            &collector,
+            500i128,
+            true,
+            &changed_by,
+        );
+    });
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
     assert_eq!(topics.len(), 1);
@@ -495,18 +537,20 @@ fn test_flat_fee_config_changed_schema_snapshot() {
 
 #[test]
 fn test_collector_rotation_proposed_schema_snapshot() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let old_collector = Address::generate(&env);
     let new_collector = Address::generate(&env);
     let token = Address::generate(&env);
 
-    crate::events::emit_collector_rotation_proposed(
-        &env,
-        &old_collector,
-        &new_collector,
-        &token,
-        1_000i128,
-    );
+    env.as_contract(&client.address, || {
+        crate::events::emit_collector_rotation_proposed(
+            &env,
+            &old_collector,
+            &new_collector,
+            &token,
+            1_000i128,
+        );
+    });
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
     assert_eq!(topics.len(), 1);
@@ -524,18 +568,20 @@ fn test_collector_rotation_proposed_schema_snapshot() {
 
 #[test]
 fn test_collector_rotation_accepted_schema_snapshot() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let old_collector = Address::generate(&env);
     let new_collector = Address::generate(&env);
     let token = Address::generate(&env);
 
-    crate::events::emit_collector_rotation_accepted(
-        &env,
-        &old_collector,
-        &new_collector,
-        &token,
-        500i128,
-    );
+    env.as_contract(&client.address, || {
+        crate::events::emit_collector_rotation_accepted(
+            &env,
+            &old_collector,
+            &new_collector,
+            &token,
+            500i128,
+        );
+    });
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
     assert_eq!(topics.len(), 1);
@@ -553,19 +599,21 @@ fn test_collector_rotation_accepted_schema_snapshot() {
 
 #[test]
 fn test_flat_fee_config_changed_disabled_zero_amount() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let token = Address::generate(&env);
     let collector = Address::generate(&env);
     let changed_by = Address::generate(&env);
 
-    crate::events::emit_flat_fee_config_changed(
-        &env,
-        &token,
-        &collector,
-        0i128,
-        false,
-        &changed_by,
-    );
+    env.as_contract(&client.address, || {
+        crate::events::emit_flat_fee_config_changed(
+            &env,
+            &token,
+            &collector,
+            0i128,
+            false,
+            &changed_by,
+        );
+    });
 
     let (_cid, _topics, data) = env.events().all().last().unwrap();
     let ev = FlatFeeConfigChangedEvent::try_from_val(&env, &data).unwrap();
@@ -579,7 +627,7 @@ fn test_flat_fee_config_changed_disabled_zero_amount() {
 
 #[test]
 fn test_rate_limit_config_changed_schema_snapshot_all_fields() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let changed_by = Address::generate(&env);
     let max_sub = 100u32;
     let win_sec = 3_600u64;
@@ -587,15 +635,17 @@ fn test_rate_limit_config_changed_schema_snapshot_all_fields() {
     let burst_win = 60u64;
     let enabled = true;
 
-    crate::events::emit_rate_limit_config_changed(
-        &env,
-        max_sub,
-        win_sec,
-        burst_max,
-        burst_win,
-        enabled,
-        &changed_by,
-    );
+    env.as_contract(&client.address, || {
+        crate::events::emit_rate_limit_config_changed(
+            &env,
+            max_sub,
+            win_sec,
+            burst_max,
+            burst_win,
+            enabled,
+            &changed_by,
+        );
+    });
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
 
@@ -616,10 +666,12 @@ fn test_rate_limit_config_changed_schema_snapshot_all_fields() {
 
 #[test]
 fn test_rate_limit_config_changed_disabled() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let changed_by = Address::generate(&env);
 
-    crate::events::emit_rate_limit_config_changed(&env, 0, 0, 0, 0, false, &changed_by);
+    env.as_contract(&client.address, || {
+        crate::events::emit_rate_limit_config_changed(&env, 0, 0, 0, 0, false, &changed_by);
+    });
 
     let (_cid, _topics, data) = env.events().all().last().unwrap();
     let ev = RateLimitConfigChangedEvent::try_from_val(&env, &data).unwrap();
@@ -633,13 +685,15 @@ fn test_rate_limit_config_changed_disabled() {
 
 #[test]
 fn test_key_rotation_proposed_schema_snapshot() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let old_admin = Address::generate(&env);
     let new_admin = Address::generate(&env);
     let timelock = 1_000u32;
     let expiry = 2_000u32;
 
-    crate::events::emit_key_rotation_proposed(&env, &old_admin, &new_admin, timelock, expiry);
+    env.as_contract(&client.address, || {
+        crate::events::emit_key_rotation_proposed(&env, &old_admin, &new_admin, timelock, expiry);
+    });
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
 
@@ -658,11 +712,13 @@ fn test_key_rotation_proposed_schema_snapshot() {
 
 #[test]
 fn test_key_rotation_confirmed_schema_snapshot_normal() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let old_admin = Address::generate(&env);
     let new_admin = Address::generate(&env);
 
-    crate::events::emit_key_rotation_confirmed(&env, &old_admin, &new_admin, false);
+    env.as_contract(&client.address, || {
+        crate::events::emit_key_rotation_confirmed(&env, &old_admin, &new_admin, false);
+    });
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
 
@@ -680,11 +736,13 @@ fn test_key_rotation_confirmed_schema_snapshot_normal() {
 
 #[test]
 fn test_key_rotation_confirmed_schema_snapshot_emergency_flag() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let old_admin = Address::generate(&env);
     let new_admin = Address::generate(&env);
 
-    crate::events::emit_key_rotation_confirmed(&env, &old_admin, &new_admin, true);
+    env.as_contract(&client.address, || {
+        crate::events::emit_key_rotation_confirmed(&env, &old_admin, &new_admin, true);
+    });
 
     let (_cid, _topics, data) = env.events().all().last().unwrap();
     let ev = KeyRotationConfirmedEvent::try_from_val(&env, &data).unwrap();
@@ -693,11 +751,13 @@ fn test_key_rotation_confirmed_schema_snapshot_emergency_flag() {
 
 #[test]
 fn test_analytics_rotation_completed_schema_snapshot() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let old_analytics = Address::generate(&env);
     let new_analytics = Address::generate(&env);
 
-    crate::events::emit_analytics_rotation_completed(&env, &old_analytics, &new_analytics);
+    env.as_contract(&client.address, || {
+        crate::events::emit_analytics_rotation_completed(&env, &old_analytics, &new_analytics);
+    });
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
     assert_eq!(topics.len(), 1);
@@ -713,11 +773,13 @@ fn test_analytics_rotation_completed_schema_snapshot() {
 
 #[test]
 fn test_key_rotation_cancelled_schema_snapshot() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let cancelled_by = Address::generate(&env);
     let proposed_new_admin = Address::generate(&env);
 
-    crate::events::emit_key_rotation_cancelled(&env, &cancelled_by, &proposed_new_admin);
+    env.as_contract(&client.address, || {
+        crate::events::emit_key_rotation_cancelled(&env, &cancelled_by, &proposed_new_admin);
+    });
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
 
@@ -734,11 +796,13 @@ fn test_key_rotation_cancelled_schema_snapshot() {
 
 #[test]
 fn test_key_rotation_emergency_schema_snapshot() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let old_admin = Address::generate(&env);
     let new_admin = Address::generate(&env);
 
-    crate::events::emit_key_rotation_emergency(&env, &old_admin, &new_admin);
+    env.as_contract(&client.address, || {
+        crate::events::emit_key_rotation_emergency(&env, &old_admin, &new_admin);
+    });
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
 
@@ -759,10 +823,12 @@ fn test_key_rotation_emergency_schema_snapshot() {
 
 #[test]
 fn test_business_registered_schema_snapshot() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let business = Address::generate(&env);
 
-    crate::events::emit_business_registered(&env, &business);
+    env.as_contract(&client.address, || {
+        crate::events::emit_business_registered(&env, &business);
+    });
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
 
@@ -782,11 +848,13 @@ fn test_business_registered_schema_snapshot() {
 
 #[test]
 fn test_business_approved_schema_snapshot() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let business = Address::generate(&env);
     let approved_by = Address::generate(&env);
 
-    crate::events::emit_business_approved(&env, &business, &approved_by);
+    env.as_contract(&client.address, || {
+        crate::events::emit_business_approved(&env, &business, &approved_by);
+    });
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
 
@@ -807,12 +875,14 @@ fn test_business_approved_schema_snapshot() {
 
 #[test]
 fn test_business_suspended_schema_snapshot() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let business = Address::generate(&env);
     let suspended_by = Address::generate(&env);
     let reason = symbol_short!("fraud");
 
-    crate::events::emit_business_suspended(&env, &business, &suspended_by, reason.clone());
+    env.as_contract(&client.address, || {
+        crate::events::emit_business_suspended(&env, &business, &suspended_by, reason.clone());
+    });
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
 
@@ -834,11 +904,13 @@ fn test_business_suspended_schema_snapshot() {
 
 #[test]
 fn test_business_reactivated_schema_snapshot() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let business = Address::generate(&env);
     let reactivated_by = Address::generate(&env);
 
-    crate::events::emit_business_reactivated(&env, &business, &reactivated_by);
+    env.as_contract(&client.address, || {
+        crate::events::emit_business_reactivated(&env, &business, &reactivated_by);
+    });
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
 
@@ -863,10 +935,12 @@ fn test_business_reactivated_schema_snapshot() {
 
 #[test]
 fn test_epoch_advanced_schema_snapshot() {
-    let (env, _, _) = setup();
+    let (env, client, _) = setup();
     env.ledger().set_timestamp(1_700_000_000);
 
-    crate::events::emit_epoch_advanced(&env, 42);
+    env.as_contract(&client.address, || {
+        crate::events::emit_epoch_advanced(&env, 42);
+    });
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
 
@@ -882,7 +956,6 @@ fn test_epoch_advanced_schema_snapshot() {
     assert_eq!(ev.epoch, 42);
     assert_eq!(ev.at_ts, 1_700_000_000);
 }
-
 
 // ════════════════════════════════════════════════════════════════════
 //  12. Positive Integration — revocation, migration, role, pause
@@ -945,8 +1018,8 @@ fn test_pause_emits_event() {
 #[test]
 fn test_unpause_emits_event() {
     let (env, client, admin) = setup();
-    client.pause(&admin, &2u64);
-    client.unpause(&admin, &3u64);
+    client.pause(&admin, &1u64);
+    client.unpause(&admin, &2u64);
     assert!(!env.events().all().is_empty());
 }
 
@@ -971,7 +1044,10 @@ fn test_duplicate_attestation_panics_no_double_event() {
     let period = String::from_str(&env, "2026-02");
 
     submit_default(&client, &env, &business, &period);
-    let events_after_first = env.events().all().len();
+    assert!(
+        !events_with_topic(&env, TOPIC_ATTESTATION_SUBMITTED).is_empty(),
+        "first submission must emit an event"
+    );
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         submit_default(&client, &env, &business, &period);
@@ -980,7 +1056,7 @@ fn test_duplicate_attestation_panics_no_double_event() {
     assert!(result.is_err(), "expected duplicate submission to panic");
     assert_eq!(
         env.events().all().len(),
-        events_after_first,
+        0,
         "failed duplicate submission must not emit an additional event"
     );
 }
@@ -993,8 +1069,6 @@ fn test_migrate_same_version_panics_no_event() {
     submit_default(&client, &env, &business, &period);
     let new_root = BytesN::from_array(&env, &[2u8; 32]);
 
-    let events_before_migration = env.events().all().len();
-
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.migrate_attestation(&admin, &business, &period, &new_root, &1u32);
     }));
@@ -1002,7 +1076,7 @@ fn test_migrate_same_version_panics_no_event() {
     assert!(result.is_err(), "expected same-version migration to panic");
     assert_eq!(
         env.events().all().len(),
-        events_before_migration,
+        0,
         "failed migration must not emit an additional event"
     );
 }
@@ -1085,15 +1159,17 @@ fn test_revoked_attestation_fails_verify() {
 
 #[test]
 fn test_submit_with_zero_fee_emits_event() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[0u8; 32]);
 
     // Zero fee_paid is a valid boundary value
-    crate::events::emit_attestation_submitted(
-        &env, &business, &period, &root, 0u64, 0u32, 0i128, &None, None,
-    );
+    env.as_contract(&client.address, || {
+        crate::events::emit_attestation_submitted(
+            &env, &business, &period, &root, 0u64, 0u32, 0i128, &None, None,
+        );
+    });
 
     let (_cid, _topics, data) = env.events().all().last().unwrap();
     let ev = AttestationSubmittedEvent::try_from_val(&env, &data).unwrap();
@@ -1103,22 +1179,24 @@ fn test_submit_with_zero_fee_emits_event() {
 
 #[test]
 fn test_submit_with_max_u32_version_emits_event() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-12");
     let root = BytesN::from_array(&env, &[255u8; 32]);
 
-    crate::events::emit_attestation_submitted(
-        &env,
-        &business,
-        &period,
-        &root,
-        u64::MAX,
-        u32::MAX,
-        i128::MAX,
-        &None,
-        Some(u64::MAX),
-    );
+    env.as_contract(&client.address, || {
+        crate::events::emit_attestation_submitted(
+            &env,
+            &business,
+            &period,
+            &root,
+            u64::MAX,
+            u32::MAX,
+            i128::MAX,
+            &None,
+            Some(u64::MAX),
+        );
+    });
 
     let (_cid, _topics, data) = env.events().all().last().unwrap();
     let ev = AttestationSubmittedEvent::try_from_val(&env, &data).unwrap();
@@ -1130,12 +1208,14 @@ fn test_submit_with_max_u32_version_emits_event() {
 
 #[test]
 fn test_key_rotation_proposed_boundary_ledger_values() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let old_admin = Address::generate(&env);
     let new_admin = Address::generate(&env);
 
     // Boundary: timelock == expiry (same ledger — degenerate but valid emit)
-    crate::events::emit_key_rotation_proposed(&env, &old_admin, &new_admin, u32::MAX, u32::MAX);
+    env.as_contract(&client.address, || {
+        crate::events::emit_key_rotation_proposed(&env, &old_admin, &new_admin, u32::MAX, u32::MAX);
+    });
 
     let (_cid, _topics, data) = env.events().all().last().unwrap();
     let ev = KeyRotationProposedEvent::try_from_val(&env, &data).unwrap();
@@ -1145,10 +1225,12 @@ fn test_key_rotation_proposed_boundary_ledger_values() {
 
 #[test]
 fn test_rate_limit_boundary_zero_values() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let changed_by = Address::generate(&env);
 
-    crate::events::emit_rate_limit_config_changed(&env, 0, 0, 0, 0, false, &changed_by);
+    env.as_contract(&client.address, || {
+        crate::events::emit_rate_limit_config_changed(&env, 0, 0, 0, 0, false, &changed_by);
+    });
 
     let (_cid, _topics, data) = env.events().all().last().unwrap();
     let ev = RateLimitConfigChangedEvent::try_from_val(&env, &data).unwrap();
@@ -1160,18 +1242,20 @@ fn test_rate_limit_boundary_zero_values() {
 
 #[test]
 fn test_rate_limit_boundary_max_values() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let changed_by = Address::generate(&env);
 
-    crate::events::emit_rate_limit_config_changed(
-        &env,
-        u32::MAX,
-        u64::MAX,
-        u32::MAX,
-        u64::MAX,
-        true,
-        &changed_by,
-    );
+    env.as_contract(&client.address, || {
+        crate::events::emit_rate_limit_config_changed(
+            &env,
+            u32::MAX,
+            u64::MAX,
+            u32::MAX,
+            u64::MAX,
+            true,
+            &changed_by,
+        );
+    });
 
     let (_cid, _topics, data) = env.events().all().last().unwrap();
     let ev = RateLimitConfigChangedEvent::try_from_val(&env, &data).unwrap();
@@ -1195,23 +1279,27 @@ fn test_events_are_ordered_chronologically() {
     let period3 = String::from_str(&env, "2026-03");
 
     submit_default(&client, &env, &business, &period1);
+    assert!(
+        !events_with_topic(&env, TOPIC_ATTESTATION_SUBMITTED).is_empty(),
+        "submission 1 must emit an event"
+    );
     submit_default(&client, &env, &business, &period2);
+    assert!(
+        !events_with_topic(&env, TOPIC_ATTESTATION_SUBMITTED).is_empty(),
+        "submission 2 must emit an event"
+    );
     submit_default(&client, &env, &business, &period3);
+    assert!(
+        !events_with_topic(&env, TOPIC_ATTESTATION_SUBMITTED).is_empty(),
+        "submission 3 must emit an event"
+    );
 
-    let events = env.events().all();
-
-    // Each subsequent call appends to the event log — verify non-empty and
-    // that the ledger did not reorder them.
-    assert!(events.len() >= 3, "expected >= 3 events for 3 submissions");
-
-    // Revocation of period1 must appear AFTER the submission events.
+    // Revocation of period1 emits its own event in the call that performs it.
     let reason = String::from_str(&env, "reorder test");
     client.revoke_attestation(&admin, &business, &period1, &reason, &3u64);
-
-    let events_after = env.events().all();
     assert!(
-        events_after.len() > events.len(),
-        "revocation event must be appended after submissions"
+        !events_with_topic(&env, TOPIC_ATTESTATION_REVOKED).is_empty(),
+        "revocation event must be emitted"
     );
 }
 
@@ -1234,19 +1322,20 @@ fn test_multiple_migrations_emit_incremental_events() {
         &None,
         &None,
     );
-    let count_after_submit = env.events().all().len();
+    assert!(
+        !events_with_topic(&env, TOPIC_ATTESTATION_SUBMITTED).is_empty(),
+        "submission must emit an event"
+    );
 
     client.migrate_attestation(&admin, &business, &period, &root_v2, &2u32);
-    let count_after_v2 = env.events().all().len();
     assert!(
-        count_after_v2 > count_after_submit,
+        !events_with_topic(&env, TOPIC_ATTESTATION_MIGRATED).is_empty(),
         "migration v2 must emit an event"
     );
 
     client.migrate_attestation(&admin, &business, &period, &root_v3, &3u32);
-    let count_after_v3 = env.events().all().len();
     assert!(
-        count_after_v3 > count_after_v2,
+        !events_with_topic(&env, TOPIC_ATTESTATION_MIGRATED).is_empty(),
         "migration v3 must emit an event"
     );
 
@@ -1288,7 +1377,7 @@ fn test_attestation_submitted_timestamps_are_monotonic_per_topic() {
     // strictly increasing.
     let ledger_timestamps: [u64; 5] = [100, 100, 250, 400, 400];
 
-    let start = env.events().all().len();
+    let mut payload_timestamps: std::vec::Vec<u64> = std::vec::Vec::new();
     for (i, business) in businesses.iter().enumerate() {
         advance_ledger_to(&env, ledger_timestamps[i]);
         client.submit_attestation(
@@ -1306,7 +1395,7 @@ fn test_attestation_submitted_timestamps_are_monotonic_per_topic() {
 
     assert_eq!(
         end - start,
-        businesses.len(),
+        businesses.len() as u32,
         "expected exactly one att_sub event per submission — a mismatch \
          here means events were dropped, duplicated, or miscounted"
     );
@@ -1347,31 +1436,59 @@ fn test_attestation_migrated_versions_are_monotonic_per_business_period() {
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
     advance_ledger_to(&env, 100);
-    client.submit_attestation(&business_a, &period, &root, &100u64, &1u32, &0i128, &None, &None);
+    client.submit_attestation(
+        &business_a,
+        &period,
+        &root,
+        &100u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
     advance_ledger_to(&env, 100); // same ledger as business_a's submission
-    client.submit_attestation(&business_b, &period, &root, &100u64, &1u32, &0i128, &None, &None);
+    client.submit_attestation(
+        &business_b,
+        &period,
+        &root,
+        &100u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
 
     let root2 = BytesN::from_array(&env, &[2u8; 32]);
     let root3 = BytesN::from_array(&env, &[3u8; 32]);
 
-    let start = env.events().all().len();
+    let mut new_versions: std::vec::Vec<u32> = std::vec::Vec::new();
     advance_ledger_to(&env, 200);
     client.migrate_attestation(&admin, &business_a, &period, &root2, &2u32);
+    let migs = events_with_topic(&env, TOPIC_ATTESTATION_MIGRATED);
+    assert_eq!(migs.len(), 1, "expected exactly 3 att_mig events");
+    new_versions.push(
+        AttestationMigratedEvent::try_from_val(&env, &migs[0])
+            .unwrap()
+            .new_version,
+    );
     advance_ledger_to(&env, 300);
     client.migrate_attestation(&admin, &business_b, &period, &root2, &2u32);
+    let migs = events_with_topic(&env, TOPIC_ATTESTATION_MIGRATED);
+    assert_eq!(migs.len(), 1, "expected exactly 3 att_mig events");
+    new_versions.push(
+        AttestationMigratedEvent::try_from_val(&env, &migs[0])
+            .unwrap()
+            .new_version,
+    );
     advance_ledger_to(&env, 300); // multiple events in the same ledger
     client.migrate_attestation(&admin, &business_a, &period, &root3, &3u32);
-    let end = env.events().all().len();
-
-    assert_eq!(end - start, 3, "expected exactly 3 att_mig events");
-
-    let all_events = env.events().all();
-    let mut new_versions: std::vec::Vec<u32> = std::vec::Vec::new();
-    for i in start..end {
-        let (_cid, _topics, data) = all_events.get(i as u32).unwrap();
-        let ev = AttestationMigratedEvent::try_from_val(&env, &data).unwrap();
-        new_versions.push(ev.new_version);
-    }
+    let migs = events_with_topic(&env, TOPIC_ATTESTATION_MIGRATED);
+    assert_eq!(migs.len(), 1, "expected exactly 3 att_mig events");
+    new_versions.push(
+        AttestationMigratedEvent::try_from_val(&env, &migs[0])
+            .unwrap()
+            .new_version,
+    );
 
     // Emission order must exactly match call order: business_a's v2, then
     // business_b's v2 (same version number, different business — a global
@@ -1402,18 +1519,31 @@ fn test_attestation_revoked_and_proof_hash_updated_preserve_call_order() {
 
     for (i, period) in periods.iter().enumerate() {
         advance_ledger_to(&env, 100 + (i as u64) * 50);
-        client.submit_attestation(&business, period, &root, &(100 + (i as u64) * 50), &1u32, &0i128, &None, &None);
+        client.submit_attestation(
+            &business,
+            period,
+            &root,
+            &(100 + (i as u64) * 50),
+            &1u32,
+            &0i128,
+            &None,
+            &None,
+        );
     }
 
     let rev_ledger_timestamps: [u64; 4] = [500, 500, 650, 800];
-    let start = env.events().all().len();
+    let mut revoked_periods: std::vec::Vec<String> = std::vec::Vec::new();
     for (i, period) in periods.iter().enumerate() {
         advance_ledger_to(&env, rev_ledger_timestamps[i]);
         client.revoke_attestation(&admin, &business, period, &reason, &(i as u64));
     }
     let end = env.events().all().len();
 
-    assert_eq!(end - start, periods.len(), "expected exactly one att_rev event per revocation");
+    assert_eq!(
+        end - start,
+        periods.len() as u32,
+        "expected exactly one att_rev event per revocation"
+    );
 
     let all_events = env.events().all();
     let mut revoked_periods: std::vec::Vec<String> = std::vec::Vec::new();
@@ -1438,19 +1568,28 @@ fn test_attestation_revoked_and_proof_hash_updated_preserve_call_order() {
     ];
     for (i, period) in ph_periods.iter().enumerate() {
         advance_ledger_to(&env, 1000 + (i as u64) * 10);
-        client.submit_attestation(&business2, period, &root, &(1000 + (i as u64) * 10), &1u32, &0i128, &None, &None);
+        client.submit_attestation(
+            &business2,
+            period,
+            &root,
+            &(1000 + (i as u64) * 10),
+            &1u32,
+            &0i128,
+            &None,
+            &None,
+        );
     }
     let new_hash = BytesN::from_array(&env, &[5u8; 32]);
     let ph_ledger_timestamps: [u64; 3] = [1100, 1100, 1200];
 
-    let ph_start = env.events().all().len();
+    let mut updated_periods: std::vec::Vec<String> = std::vec::Vec::new();
     for (i, period) in ph_periods.iter().enumerate() {
         advance_ledger_to(&env, ph_ledger_timestamps[i]);
         client.update_proof_hash(&admin, &business2, period, &Some(new_hash.clone()));
     }
     let ph_end = env.events().all().len();
 
-    assert_eq!(ph_end - ph_start, ph_periods.len());
+    assert_eq!(ph_end - ph_start, ph_periods.len() as u32);
     let all_events2 = env.events().all();
     let mut updated_periods: std::vec::Vec<String> = std::vec::Vec::new();
     for i in ph_start..ph_end {
@@ -1475,7 +1614,10 @@ fn test_duplicate_period_rejected_no_extra_event() {
     let period = String::from_str(&env, "2026-02");
 
     submit_default(&client, &env, &business, &period);
-    let events_after_first = env.events().all().len();
+    assert!(
+        !events_with_topic(&env, TOPIC_ATTESTATION_SUBMITTED).is_empty(),
+        "first submission must emit an event"
+    );
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         submit_default(&client, &env, &business, &period);
@@ -1484,7 +1626,7 @@ fn test_duplicate_period_rejected_no_extra_event() {
     assert!(result.is_err(), "duplicate period submission must panic");
     assert_eq!(
         env.events().all().len(),
-        events_after_first,
+        0,
         "duplicate rejection must not emit an extra event",
     );
 }
@@ -1495,7 +1637,7 @@ fn test_duplicate_period_rejected_no_extra_event() {
 
 #[test]
 fn test_all_topic_symbols_are_distinct() {
-    let (env, _client, _admin) = setup();
+    let (env, client, _admin) = setup();
 
     let topics: &[soroban_sdk::Symbol] = &[
         TOPIC_ATTESTATION_SUBMITTED,
@@ -1534,7 +1676,7 @@ fn test_all_topic_symbols_are_distinct() {
     }
 
     // Explicitly verify count to catch any future additions.
-    assert_eq!(topics.len(), 20, "expected 20 distinct topic symbols");
+    assert_eq!(topics.len(), 23, "expected 23 distinct topic symbols");
     let _ = env; // env required for Address::generate in other tests
 }
 
@@ -1562,7 +1704,7 @@ fn test_event_json_schemas_emitted_on_build() {
         serde_json::from_str(&index_content).expect("valid index.json");
 
     assert_eq!(catalog["schema_version"], EVENT_SCHEMA_VERSION);
-    assert_eq!(catalog["events_count"], 22);
+    assert_eq!(catalog["events_count"], 39);
     assert!(catalog["aggregate_sha256"].is_string());
 }
 
@@ -1611,8 +1753,7 @@ fn test_schema_hash_catalog_integrity() {
     let catalog: serde_json::Value = serde_json::from_str(&index_content).expect("json parse");
 
     let topics_map = catalog["topics"].as_object().unwrap();
-    // 22 existing + 3 new (ep_ckpt, ep_adv, bkf_chk) = 25
-    assert_eq!(topics_map.len(), 25);
+    assert_eq!(topics_map.len(), 39);
 
     for (topic_symbol, summary) in topics_map {
         let topic_file = schemas_dir.join(alloc::format!("{}.json", topic_symbol));
@@ -1643,8 +1784,8 @@ fn test_edge_case_new_event_topic_coverage() {
     let required_topics = [
         "att_sub", "att_rev", "att_mig", "att_cl", "role_gr", "role_rv", "paused", "unpaus",
         "fee_cfg", "ff_cfg", "rate_lm", "kr_prop", "kr_conf", "kr_canc", "kr_emer", "biz_reg",
-        "biz_apr", "biz_sus", "biz_rea", "ph_upd", "att_exp", "mul_iss",
-        "ep_ckpt", "ep_adv", "bkf_chk",
+        "biz_apr", "biz_sus", "biz_rea", "ph_upd", "att_exp", "mul_iss", "ep_ckpt", "ep_adv",
+        "bkf_chk",
     ];
 
     for expected in &required_topics {

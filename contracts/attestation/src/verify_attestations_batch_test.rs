@@ -469,10 +469,8 @@ fn test_no_authorization_required() {
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    client.initialize(&admin, &0u64);
-
-    // Submit attestation with admin auth
     env.mock_all_auths();
+    client.initialize(&admin, &0u64);
     client.submit_attestation(
         &business,
         &String::from_str(&env, "2026-01"),

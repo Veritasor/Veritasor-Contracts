@@ -1,11 +1,11 @@
 #![cfg(test)]
 extern crate std;
 
+use super::*;
 use crate::access_control::{ROLE_ATTESTOR, ROLE_BUSINESS};
 use crate::dispute::{DisputeOutcome, DisputeType};
-use soroban_sdk::testutils::{Address as _, Ledger, Events};
+use soroban_sdk::testutils::{Address as _, Events, Ledger};
 use soroban_sdk::{Address, BytesN, Env, String};
-use super::*;
 
 fn setup() -> (Env, AttestationContractClient<'static>, Address, Address) {
     let env = Env::default();
