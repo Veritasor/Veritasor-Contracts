@@ -131,6 +131,23 @@ pub enum MultiPeriodKey {
     RootIndex(Address, BytesN<32>),
 }
 
+/// Stores the position of the range with the given merkle_root for a business.
+/// This is the secondary revocation index that makes `revoke_multi_period_attestation`
+/// O(1) instead of O(n).
+fn put_root_index(env: &Env, business: &Address, root: &BytesN<32>, position: u32) {
+    env.storage()
+        .instance()
+        .set(&MultiPeriodKey::RootIndex(business.clone(), root.clone()), &position);
+}
+
+/// Looks up the position of the range with the given merkle_root for a business.
+/// Returns `None` if the root is not indexed (e.g. legacy pre-index data).
+fn get_root_index(env: &Env, business: &Address, root: &BytesN<32>) -> Option<u32> {
+    env.storage()
+        .instance()
+        .get(&MultiPeriodKey::RootIndex(business.clone(), root.clone()))
+}
+
 /// A single item in a batch attestation submission.
 #[contracttype]
 #[derive(Clone)]
