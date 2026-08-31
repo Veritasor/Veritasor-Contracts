@@ -208,7 +208,10 @@ fn test_submit_attestations_batch_rejects_unregistered_business() {
     let result = catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.submit_attestations_batch(&items)
     }));
-    assert!(result.is_err(), "unregistered business in batch should panic");
+    assert!(
+        result.is_err(),
+        "unregistered business in batch should panic"
+    );
     assert_eq!(
         panic_message(result.unwrap_err()),
         StdString::from("business not registered")
