@@ -254,12 +254,9 @@ fn from_reason_str_all_variants() {
         let s = String::from_str(&env, input);
         let got = RevocationReason::from_reason_str(&s);
         assert_eq!(
-            got,
-            *expected,
+            got, *expected,
             "input {:?}: expected {:?}, got {:?}",
-            input,
-            expected,
-            got
+            input, expected, got
         );
     }
 }

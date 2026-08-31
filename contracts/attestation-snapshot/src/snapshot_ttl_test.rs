@@ -60,10 +60,7 @@ fn record(
 }
 
 /// Extract all `PointerTtlBumpedEvent` payloads from the event log for `contract_id`.
-fn bump_events(
-    env: &Env,
-    contract_id: &Address,
-) -> std::vec::Vec<PointerTtlBumpedEvent> {
+fn bump_events(env: &Env, contract_id: &Address) -> std::vec::Vec<PointerTtlBumpedEvent> {
     env.events()
         .all()
         .iter()
@@ -108,7 +105,10 @@ fn bump_nonexistent_pointer_returns_false() {
     assert!(!result, "expected false for non-existent pointer");
 
     let evts = bump_events(&env, &client.address);
-    assert!(evts.is_empty(), "no event should be emitted for absent pointer");
+    assert!(
+        evts.is_empty(),
+        "no event should be emitted for absent pointer"
+    );
 }
 
 /// Non-admin, non-writer callers must be rejected.
@@ -163,13 +163,15 @@ fn bump_idempotent_multiple_times() {
     let business = Address::generate(&env);
     record(&client, &env, &admin, &business, "2026-07");
 
+    // The host event buffer is scoped to a single invocation, so collect the
+    // events of each bump call individually and sum them.
+    let mut total_bump_events = 0;
     for _ in 0..3 {
         let result = client.bump_snapshot_pointer_ttl(&admin, &business, &p(&env, "2026-07"));
         assert!(result);
+        total_bump_events += bump_events(&env, &client.address).len();
     }
-
-    let evts = bump_events(&env, &client.address);
-    assert_eq!(evts.len(), 3, "each bump should emit its own event");
+    assert_eq!(total_bump_events, 3, "each bump should emit its own event");
 }
 
 /// Bumping a pointer for a period that was never written returns false.
@@ -182,7 +184,10 @@ fn bump_wrong_period_returns_false() {
 
     // Attempt bump for a different period on the same business.
     let result = client.bump_snapshot_pointer_ttl(&admin, &business, &p(&env, "2026-09"));
-    assert!(!result, "different period = no snapshot = should return false");
+    assert!(
+        !result,
+        "different period = no snapshot = should return false"
+    );
 }
 
 /// Bumping after epoch finalization still works (finalization does not seal TTL operations).
@@ -195,7 +200,10 @@ fn bump_after_epoch_finalization_succeeds() {
 
     // Finalized epochs must still allow TTL maintenance.
     let result = client.bump_snapshot_pointer_ttl(&admin, &business, &p(&env, "2026-10"));
-    assert!(result, "TTL bump must succeed even after epoch is finalized");
+    assert!(
+        result,
+        "TTL bump must succeed even after epoch is finalized"
+    );
 
     let evts = bump_events(&env, &client.address);
     assert_eq!(evts.len(), 1);
@@ -211,11 +219,12 @@ fn bump_multiple_businesses_same_epoch() {
     record(&client, &env, &admin, &b2, "2026-11");
 
     assert!(client.bump_snapshot_pointer_ttl(&admin, &b1, &p(&env, "2026-11")));
-    assert!(client.bump_snapshot_pointer_ttl(&admin, &b2, &p(&env, "2026-11")));
+    let evts1 = bump_events(&env, &client.address);
+    assert_eq!(evts1.len(), 1, "one event for the first bump");
+    assert_eq!(evts1[0].business, b1);
 
-    let evts = bump_events(&env, &client.address);
-    assert_eq!(evts.len(), 2, "one event per business bump");
-    // Each event references the correct business
-    assert_eq!(evts[0].business, b1);
-    assert_eq!(evts[1].business, b2);
+    assert!(client.bump_snapshot_pointer_ttl(&admin, &b2, &p(&env, "2026-11")));
+    let evts2 = bump_events(&env, &client.address);
+    assert_eq!(evts2.len(), 1, "one event for the second bump");
+    assert_eq!(evts2[0].business, b2);
 }

@@ -59,6 +59,8 @@ pub enum DataKey {
     VotesAgainst(u64),
     HasVoted(u64, Address),
     AttestationFeeConfig,
+    /// True while attestations are paused via an executed DAO proposal.
+    AttestationPaused,
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -384,6 +386,16 @@ fn apply_action(env: &Env, action: &ProposalAction) {
                 .instance()
                 .set(&DataKey::ProposalDuration, &dur);
         }
+        ProposalAction::PauseAttestation => {
+            env.storage()
+                .instance()
+                .set(&DataKey::AttestationPaused, &true);
+        }
+        ProposalAction::UnpauseAttestation => {
+            env.storage()
+                .instance()
+                .set(&DataKey::AttestationPaused, &false);
+        }
     }
 }
 
@@ -599,6 +611,48 @@ impl ProtocolDao {
         id
     }
 
+    /// Create a proposal to pause attestations.
+    ///
+    /// # Auth matrix: Proposer (token holder)
+    pub fn create_pause_proposal(env: Env, creator: Address) -> u64 {
+        creator.require_auth();
+        require_token_holder(&env, &creator);
+
+        let id = next_proposal_id(&env);
+        store_proposal(
+            &env,
+            &Proposal {
+                id,
+                creator,
+                action: ProposalAction::PauseAttestation,
+                status: ProposalStatus::Pending,
+                created_at: env.ledger().sequence(),
+            },
+        );
+        id
+    }
+
+    /// Create a proposal to resume (unpause) attestations.
+    ///
+    /// # Auth matrix: Proposer (token holder)
+    pub fn create_unpause_proposal(env: Env, creator: Address) -> u64 {
+        creator.require_auth();
+        require_token_holder(&env, &creator);
+
+        let id = next_proposal_id(&env);
+        store_proposal(
+            &env,
+            &Proposal {
+                id,
+                creator,
+                action: ProposalAction::UnpauseAttestation,
+                status: ProposalStatus::Pending,
+                created_at: env.ledger().sequence(),
+            },
+        );
+        id
+    }
+
     // ── Voter operations ─────────────────────────────────────────────
 
     /// Vote in favour of a proposal.
@@ -710,6 +764,16 @@ impl ProtocolDao {
 
     pub fn get_proposal(env: Env, id: u64) -> Option<Proposal> {
         env.storage().instance().get(&DataKey::Proposal(id))
+    }
+
+    /// Whether attestations are currently paused by an executed DAO proposal.
+    ///
+    /// Returns `false` when no pause proposal has been executed.
+    pub fn is_attestation_paused(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get::<_, bool>(&DataKey::AttestationPaused)
+            .unwrap_or(false)
     }
 
     pub fn get_votes_for(env: Env, id: u64) -> u32 {

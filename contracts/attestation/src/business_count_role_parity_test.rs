@@ -185,26 +185,55 @@ fn revoke_then_reregister_same_address() {
     let addr = Address::generate(&env);
 
     // Initial state: no businesses.
-    assert_eq!(count_business_role_holders(&env), 0, "initial count must be 0");
+    assert_eq!(
+        count_business_role_holders(&env),
+        0,
+        "initial count must be 0"
+    );
 
     // Grant → count = 1.
     client.grant_role(&admin, &addr, &ROLE_BUSINESS);
-    assert_eq!(count_business_role_holders(&env), 1, "count after first grant must be 1");
-    assert!(client.has_role(&addr, &ROLE_BUSINESS), "addr must have ROLE_BUSINESS after grant");
+    assert_eq!(
+        count_business_role_holders(&env),
+        1,
+        "count after first grant must be 1"
+    );
+    assert!(
+        client.has_role(&addr, &ROLE_BUSINESS),
+        "addr must have ROLE_BUSINESS after grant"
+    );
 
     // Revoke → count = 0.
     client.revoke_role(&admin, &addr, &ROLE_BUSINESS);
-    assert_eq!(count_business_role_holders(&env), 0, "count after revoke must be 0");
-    assert!(!client.has_role(&addr, &ROLE_BUSINESS), "addr must not have ROLE_BUSINESS after revoke");
+    assert_eq!(
+        count_business_role_holders(&env),
+        0,
+        "count after revoke must be 0"
+    );
+    assert!(
+        !client.has_role(&addr, &ROLE_BUSINESS),
+        "addr must not have ROLE_BUSINESS after revoke"
+    );
 
     // Re-grant → count = 1 (no double-counting).
     client.grant_role(&admin, &addr, &ROLE_BUSINESS);
-    assert_eq!(count_business_role_holders(&env), 1, "count after re-grant must be 1 (no duplicate)");
-    assert!(client.has_role(&addr, &ROLE_BUSINESS), "addr must have ROLE_BUSINESS after re-grant");
+    assert_eq!(
+        count_business_role_holders(&env),
+        1,
+        "count after re-grant must be 1 (no duplicate)"
+    );
+    assert!(
+        client.has_role(&addr, &ROLE_BUSINESS),
+        "addr must have ROLE_BUSINESS after re-grant"
+    );
 
     // Final revoke → count = 0.
     client.revoke_role(&admin, &addr, &ROLE_BUSINESS);
-    assert_eq!(count_business_role_holders(&env), 0, "count after final revoke must be 0");
+    assert_eq!(
+        count_business_role_holders(&env),
+        0,
+        "count after final revoke must be 0"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -247,7 +276,10 @@ fn revoke_nonholder_is_stable() {
     client.revoke_role(&admin, &addr, &ROLE_BUSINESS); // must not panic
     let after = count_business_role_holders(&env);
 
-    assert_eq!(before, after, "revoking a non-held role must not change count");
+    assert_eq!(
+        before, after,
+        "revoking a non-held role must not change count"
+    );
     assert!(
         !client.has_role(&addr, &ROLE_BUSINESS),
         "address must not gain ROLE_BUSINESS via revoke"
