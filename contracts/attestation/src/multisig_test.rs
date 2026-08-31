@@ -6,7 +6,7 @@
 
 use super::*;
 use crate::multisig::*;
-use soroban_sdk::testutils::{Address as _, Events as _, Ledger};
+use soroban_sdk::testutils::{Address as _, Events, Ledger};
 use soroban_sdk::{Address, Env, Symbol, TryFromVal, Vec};
 
 /// Helper: register the contract and return a client with multisig setup.
@@ -297,15 +297,15 @@ fn test_execute_add_owner_proposal() {
     let events = env.events().all();
     let (_cid, topics, data) = events.last().unwrap();
     assert_eq!(
-        soroban_sdk::Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+        Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
         crate::events::TOPIC_OWNER_RECOVERY_PHRASE_ACKNOWLEDGED
     );
     assert_eq!(
-        soroban_sdk::Address::try_from_val(&env, &topics.get(1).unwrap()).unwrap(),
+        Address::try_from_val(&env, &topics.get(1).unwrap()).unwrap(),
         new_owner
     );
     let event_data: crate::events::OwnerRecoveryPhraseAcknowledgedEvent =
-        soroban_sdk::FromVal::from_val(&env, &data);
+        crate::events::OwnerRecoveryPhraseAcknowledgedEvent::try_from_val(&env, &data).unwrap();
     assert_eq!(event_data.new_owner, new_owner);
 }
 

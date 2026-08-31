@@ -136,9 +136,9 @@ pub enum DataKey {
     /// Per-business submission timestamps within the current window.
     /// Stores a `Vec<u64>` of ledger timestamps.
     SubmissionTimestamps(Address),
-    /// Per-business high-water mark of the last successful submission
-    /// timestamp. The rate limiter uses it to defend against ledger clock
-    /// rollback (see `rate_limit::effective_timestamp`).
+    /// High-water timestamp used for the token-bucket style rate limiter.
+    /// Keyed by business address; stores the ledger timestamp of the last
+    /// bucket refill (or the last submission when the bucket was empty).
     RateLimitHighWaterTimestamp(Address),
     IsPaused,
 
@@ -639,6 +639,101 @@ fn advance_epoch(env: &Env) -> u64 {
         .set(&DataKey::EpochCounter, &new_epoch);
     crate::events::emit_epoch_advanced(env, new_epoch);
     new_epoch
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Per-epoch submission / fee accumulation (checkpoint support)
+// ════════════════════════════════════════════════════════════════════
+
+/// Increment the per-period submission count for the current epoch by `delta`
+/// and return the new running count.
+///
+/// Used by the single and batch submission paths so indexers can reproduce
+/// per-epoch state deterministically from `EpochCheckpoint` events.
+pub fn increment_epoch_submissions(env: &Env, period: &soroban_sdk::String, delta: u64) -> u64 {
+    let key = DataKey::EpochSubmissions(period.clone());
+    let next = env
+        .storage()
+        .instance()
+        .get::<_, u64>(&key)
+        .unwrap_or(0)
+        .saturating_add(delta);
+    env.storage().instance().set(&key, &next);
+    next
+}
+
+/// Accumulate `fee` into the per-period fee accumulator for the current epoch
+/// and return the new accumulated total.
+///
+/// Used by the single and batch submission paths so indexers can reproduce
+/// per-epoch fee totals deterministically from `EpochCheckpoint` events.
+pub fn accumulate_epoch_fees(env: &Env, period: &soroban_sdk::String, fee: i128) -> i128 {
+    let key = DataKey::EpochFees(period.clone());
+    let next = env
+        .storage()
+        .instance()
+        .get::<_, i128>(&key)
+        .unwrap_or(0)
+        .saturating_add(fee);
+    env.storage().instance().set(&key, &next);
+    next
+}
+
+/// Increment the global backfill submission counter and return the new value.
+///
+/// Used to emit `BackfillCheckpoint` events at a fixed interval so indexers
+/// can resume from intermediate points without a full replay.
+pub fn increment_backfill_count(env: &Env) -> u64 {
+    let next = env
+        .storage()
+        .instance()
+        .get::<_, u64>(&DataKey::BackfillSubmissionCount)
+        .unwrap_or(0)
+        .saturating_add(1);
+    env.storage()
+        .instance()
+        .set(&DataKey::BackfillSubmissionCount, &next);
+    next
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Pending staking contract rebinding (timelocked)
+// ════════════════════════════════════════════════════════════════════
+
+/// Pending attestor-staking contract rebinding proposal.
+///
+/// Written by `propose_staking_contract`; consumed by `commit_staking_contract`
+/// after the timelock elapses, or removed by `cancel_pending_staking_contract`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingStakingContract {
+    /// The staking contract address to activate once the timelock elapses.
+    pub new_contract: Address,
+    /// Ledger timestamp before which the proposal cannot be committed.
+    pub effective_at: u64,
+    /// Address of the admin that proposed the rebinding.
+    pub proposed_by: Address,
+}
+
+/// Read the pending staking contract proposal, if any.
+pub fn get_pending_staking_contract(env: &Env) -> Option<PendingStakingContract> {
+    env.storage()
+        .instance()
+        .get(&DataKey::PendingStakingContract)
+}
+
+/// Store a pending staking contract proposal.
+pub fn set_pending_staking_contract(env: &Env, pending: &PendingStakingContract) {
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingStakingContract, pending);
+}
+
+/// Remove any pending staking contract proposal.
+pub fn clear_pending_staking_contract(env: &Env) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::PendingStakingContract);
 }
 
 // ════════════════════════════════════════════════════════════════════

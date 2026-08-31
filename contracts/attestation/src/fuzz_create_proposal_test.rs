@@ -62,7 +62,8 @@ use std::format;
 
 use super::*;
 use crate::multisig::{
-    get_next_proposal_id, ProposalAction, ProposalStatus, DEFAULT_PROPOSAL_EXPIRY,
+    get_approvals, get_next_proposal_id, get_proposal, get_vote_weight_snapshot, ProposalAction,
+    ProposalStatus, DEFAULT_PROPOSAL_EXPIRY,
 };
 use proptest::prelude::*;
 use soroban_sdk::testutils::{Address as _, Ledger};
@@ -253,9 +254,8 @@ fn test_create_proposal_all_variants_valid_owner() {
         assert_eq!(proposal.proposer, admin, "C3: proposer");
 
         // C4: VoteWeightSnapshot present and consistent
-        let snap = client
-            .get_proposal_snapshot(&id)
-            .expect("C4: VoteWeightSnapshot must be written");
+        let snap =
+            get_vote_weight_snapshot(&env, id).expect("C4: VoteWeightSnapshot must be written");
         let live_count = client.get_multisig_owners().len();
         assert_eq!(snap.owners.len(), live_count, "C4: owner count");
         assert_eq!(
@@ -290,13 +290,6 @@ fn test_proposal_expiry_boundary() {
         let (env, client, admin, _owners) = fresh_env();
         let id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
         let created_at = client.get_proposal(&id).unwrap().created_at;
-        // Refresh the instance TTL BEFORE the jump: the 100k-ledger advance
-        // would otherwise archive the instance and make reads panic.
-        env.as_contract(&client.address, || {
-            env.storage()
-                .instance()
-                .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP * 10);
-        });
         env.ledger()
             .set_sequence_number(created_at + DEFAULT_PROPOSAL_EXPIRY);
         assert!(
@@ -309,11 +302,6 @@ fn test_proposal_expiry_boundary() {
         let (env, client, admin, _owners) = fresh_env();
         let id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
         let created_at = client.get_proposal(&id).unwrap().created_at;
-        env.as_contract(&client.address, || {
-            env.storage()
-                .instance()
-                .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP * 10);
-        });
         env.ledger()
             .set_sequence_number(created_at + DEFAULT_PROPOSAL_EXPIRY + 1);
         assert!(
@@ -344,20 +332,20 @@ fn test_non_owner_rejected_no_storage_written() {
         "C7: unexpected panic message"
     );
     assert_eq!(
-        with_contract(&env, &client.address, |e| get_next_proposal_id(e)),
+        get_next_proposal_id(&env),
         id_before,
         "C7: NextProposalId unchanged"
     );
     assert!(
-        client.get_proposal(&id_before).is_none(),
+        get_proposal(&env, id_before).is_none(),
         "C7: no Proposal written"
     );
     assert!(
-        client.get_proposal_snapshot(&id_before).is_none(),
+        get_vote_weight_snapshot(&env, id_before).is_none(),
         "C7: no snapshot written"
     );
     assert_eq!(
-        client.get_proposal_approvals(&id_before).len(),
+        get_approvals(&env, id_before).len(),
         0,
         "C7: no Approvals written"
     );
@@ -381,14 +369,10 @@ fn test_non_owner_add_self_no_storage() {
         result.is_err(),
         "C7: AddOwner(self) by non-owner must panic"
     );
-    assert_eq!(
-        with_contract(&env, &client.address, |e| get_next_proposal_id(e)),
-        id_before,
-        "C7: ID unchanged"
-    );
-    assert!(client.get_proposal(&id_before).is_none(), "C7: no Proposal");
+    assert_eq!(get_next_proposal_id(&env), id_before, "C7: ID unchanged");
+    assert!(get_proposal(&env, id_before).is_none(), "C7: no Proposal");
     assert!(
-        client.get_proposal_snapshot(&id_before).is_none(),
+        get_vote_weight_snapshot(&env, id_before).is_none(),
         "C7: no snapshot"
     );
 }
@@ -411,14 +395,10 @@ fn test_non_owner_emergency_rotate_no_storage() {
         result.is_err(),
         "C7: EmergencyRotateAdmin by non-owner must panic"
     );
-    assert_eq!(
-        with_contract(&env, &client.address, |e| get_next_proposal_id(e)),
-        id_before,
-        "C7: ID unchanged"
-    );
-    assert!(client.get_proposal(&id_before).is_none(), "C7: no Proposal");
+    assert_eq!(get_next_proposal_id(&env), id_before, "C7: ID unchanged");
+    assert!(get_proposal(&env, id_before).is_none(), "C7: no Proposal");
     assert!(
-        client.get_proposal_snapshot(&id_before).is_none(),
+        get_vote_weight_snapshot(&env, id_before).is_none(),
         "C7: no snapshot"
     );
 }
@@ -525,9 +505,8 @@ fn test_create_at_boundary_max_calldata_len() {
 
     assert_eq!(boundary_id, MAX_CALLDATA_LEN as u64, "C8: boundary ID");
 
-    let snap = client
-        .get_proposal_snapshot(&boundary_id)
-        .expect("C8: snapshot must exist at boundary");
+    let snap =
+        get_vote_weight_snapshot(&env, boundary_id).expect("C8: snapshot must exist at boundary");
     assert_eq!(snap.owners.len(), 3);
     assert_eq!(snap.threshold, 2);
     assert_eq!(client.get_approval_count(&boundary_id), 1);

@@ -52,8 +52,11 @@
 //! a potential regression requiring investigation.
 
 use super::*;
-use soroban_sdk::testutils::{Address as _, Ledger as _};
+use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{token, Address, BytesN, Env, String};
+
+use std::format;
+use std::println;
 
 extern crate std;
 
@@ -354,7 +357,7 @@ fn bench_check_rate_limit_with_pruning() {
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
     // Submit at timestamp 1000
-    env.ledger().set_timestamp(1_000);
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
     client.submit_attestation(
         &business,
         &period,
@@ -367,7 +370,7 @@ fn bench_check_rate_limit_with_pruning() {
     );
 
     // Advance time past the window (100s) so the timestamp is expired
-    env.ledger().set_timestamp(1_200);
+    env.ledger().with_mut(|l| l.timestamp = 1_200);
 
     // check_rate_limit will now prune the expired timestamp
     let before = BudgetSnapshot::capture(&env);
@@ -1495,7 +1498,8 @@ fn bench_check_rate_limit_pruning_only() {
     for i in 1..=5 {
         let period = String::from_str(&env, &std::format!("2026-{:02}", i));
         let root = BytesN::from_array(&env, &[i as u8; 32]);
-        env.ledger().set_timestamp(1_000_000_000 + i * 1000);
+        env.ledger()
+            .with_mut(|l| l.timestamp = 1_000_000_000 + i * 1000);
         client.submit_attestation(
             &business,
             &period,
@@ -1509,7 +1513,7 @@ fn bench_check_rate_limit_pruning_only() {
     }
 
     // Advance time so some entries expire (window is 3600s, we advance 5000s)
-    env.ledger().set_timestamp(1_005_000_000);
+    env.ledger().with_mut(|l| l.timestamp = 1_005_000_000);
 
     let before = BudgetSnapshot::capture(&env);
     env.as_contract(&client.address, || {
@@ -3240,7 +3244,7 @@ fn setup_expired_attestations(
             arr
         });
 
-        env.ledger().set_timestamp(0);
+        env.ledger().with_mut(|l| l.timestamp = 0);
         client.submit_attestation(
             &business,
             &period,
@@ -3255,7 +3259,7 @@ fn setup_expired_attestations(
     }
 
     // Advance ledger past expiry so every attestation is expired.
-    env.ledger().set_timestamp(100);
+    env.ledger().with_mut(|l| l.timestamp = 100);
     pairs
 }
 
@@ -3457,7 +3461,7 @@ fn bench_cleanup_business_self_cleanup() {
     );
 
     // Advance ledger past expiry.
-    env.ledger().set_timestamp(50);
+    env.ledger().with_mut(|l| l.timestamp = 50);
 
     let before = BudgetSnapshot::capture(&env);
     // The business cleans up its own attestation (caller == business).

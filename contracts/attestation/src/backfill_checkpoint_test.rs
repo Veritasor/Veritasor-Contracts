@@ -26,6 +26,8 @@
 
 extern crate std;
 
+use std::format;
+
 use crate::events::{BackfillCheckpointEvent, TOPIC_BACKFILL_CHECKPOINT};
 use crate::{AttestationContract, AttestationContractClient, BACKFILL_CHECKPOINT_INTERVAL};
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};

@@ -42,7 +42,7 @@ use crate::events::{
 };
 use soroban_sdk::testutils::{Address as _, Events as _};
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
-use soroban_sdk::{symbol_short, Address, BytesN, Env, String, Symbol, TryFromVal, Val};
+use soroban_sdk::{symbol_short, Address, BytesN, Env, String, Symbol, TryFromVal};
 
 // ════════════════════════════════════════════════════════════════════
 //  Test helpers
@@ -255,16 +255,14 @@ fn test_attestation_revoked_schema_snapshot() {
     let revoked_by = Address::generate(&env);
     let reason = String::from_str(&env, "fraudulent data detected");
 
-    env.as_contract(&client.address, || {
-        crate::events::emit_attestation_revoked(
-            &env,
-            &business,
-            &period,
-            &revoked_by,
-            &reason,
-            RevocationReason::Fraud,
-        );
-    });
+    crate::events::emit_attestation_revoked(
+        &env,
+        &business,
+        &period,
+        &revoked_by,
+        &reason,
+        crate::events::RevocationReason::Admin,
+    );
 
     let (_cid, topics, data) = env.events().all().last().unwrap();
 
@@ -1392,15 +1390,21 @@ fn test_attestation_submitted_timestamps_are_monotonic_per_topic() {
             &None,
             &None,
         );
-        // SDK 22 clears the event buffer per call: capture per submission.
-        let subs = events_with_topic(&env, TOPIC_ATTESTATION_SUBMITTED);
-        assert_eq!(
-            subs.len(),
-            1,
-            "expected exactly one att_sub event per submission — a mismatch \
-             here means events were dropped, duplicated, or miscounted"
-        );
-        let ev = AttestationSubmittedEvent::try_from_val(&env, &subs[0]).unwrap();
+    }
+    let end = env.events().all().len();
+
+    assert_eq!(
+        end - start,
+        businesses.len() as u32,
+        "expected exactly one att_sub event per submission — a mismatch \
+         here means events were dropped, duplicated, or miscounted"
+    );
+
+    let all_events = env.events().all();
+    let mut payload_timestamps: std::vec::Vec<u64> = std::vec::Vec::new();
+    for i in start..end {
+        let (_cid, _topics, data) = all_events.get(i as u32).unwrap();
+        let ev = AttestationSubmittedEvent::try_from_val(&env, &data).unwrap();
         payload_timestamps.push(ev.timestamp);
     }
 
@@ -1532,14 +1536,20 @@ fn test_attestation_revoked_and_proof_hash_updated_preserve_call_order() {
     for (i, period) in periods.iter().enumerate() {
         advance_ledger_to(&env, rev_ledger_timestamps[i]);
         client.revoke_attestation(&admin, &business, period, &reason, &(i as u64));
-        // SDK 22 clears the event buffer per call: capture per revocation.
-        let revs = events_with_topic(&env, TOPIC_ATTESTATION_REVOKED);
-        assert_eq!(
-            revs.len(),
-            1,
-            "expected exactly one att_rev event per revocation"
-        );
-        let ev = AttestationRevokedEvent::try_from_val(&env, &revs[0]).unwrap();
+    }
+    let end = env.events().all().len();
+
+    assert_eq!(
+        end - start,
+        periods.len() as u32,
+        "expected exactly one att_rev event per revocation"
+    );
+
+    let all_events = env.events().all();
+    let mut revoked_periods: std::vec::Vec<String> = std::vec::Vec::new();
+    for i in start..end {
+        let (_cid, _topics, data) = all_events.get(i as u32).unwrap();
+        let ev = AttestationRevokedEvent::try_from_val(&env, &data).unwrap();
         revoked_periods.push(ev.period);
     }
     assert_eq!(
@@ -1576,10 +1586,15 @@ fn test_attestation_revoked_and_proof_hash_updated_preserve_call_order() {
     for (i, period) in ph_periods.iter().enumerate() {
         advance_ledger_to(&env, ph_ledger_timestamps[i]);
         client.update_proof_hash(&admin, &business2, period, &Some(new_hash.clone()));
-        // SDK 22 clears the event buffer per call: capture per update.
-        let ups = events_with_topic(&env, TOPIC_PROOF_HASH_UPDATED);
-        assert_eq!(ups.len(), 1, "expected exactly one ph_upd event per update");
-        let ev = ProofHashUpdatedEvent::try_from_val(&env, &ups[0]).unwrap();
+    }
+    let ph_end = env.events().all().len();
+
+    assert_eq!(ph_end - ph_start, ph_periods.len() as u32);
+    let all_events2 = env.events().all();
+    let mut updated_periods: std::vec::Vec<String> = std::vec::Vec::new();
+    for i in ph_start..ph_end {
+        let (_cid, _topics, data) = all_events2.get(i as u32).unwrap();
+        let ev = ProofHashUpdatedEvent::try_from_val(&env, &data).unwrap();
         updated_periods.push(ev.period);
     }
     assert_eq!(

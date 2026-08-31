@@ -1,11 +1,8 @@
 #![cfg(test)]
 
 use super::*;
-use crate::dynamic_fees::FEE_TIMELOCK_SECONDS;
-use crate::NONCE_CHANNEL_ADMIN;
-use soroban_sdk::testutils::Address as _;
-use soroban_sdk::testutils::Ledger as _;
-use soroban_sdk::{token, Address, BytesN, Env, String, Symbol, Vec};
+use soroban_sdk::testutils::{Address as _, Ledger};
+use soroban_sdk::{token, Address, BytesN, Env, String};
 use veritasor_attestor_staking::AttestorStakingContract;
 use veritasor_attestor_staking::AttestorStakingContractClient as StakingClient;
 use veritasor_common::replay_protection;
@@ -1219,7 +1216,7 @@ fn batch_with_duplicate_fails_entirely() {
 }
 
 #[test]
-fn test_slash_on_invalid_attestation_after_duplicate_merge() {
+fn test_slash_on_invalid_attestation_duplicate_batch() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -1840,7 +1837,7 @@ fn batch_submission_fails_when_paused() {
 }
 
 #[test]
-fn test_slash_on_invalid_attestation_after_duplicate_merge_2() {
+fn test_slash_on_invalid_attestation_when_paused() {
     let env = Env::default();
     env.mock_all_auths();
 

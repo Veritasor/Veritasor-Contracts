@@ -4,6 +4,8 @@
 //! mandatory timelock. Covers positive paths, edge cases, authorization
 //! failures, and event emission.
 
+use std::format;
+
 use super::*;
 use crate::access_control::ROLE_ADMIN;
 use crate::dynamic_fees::FEE_TIMELOCK_SECONDS;
@@ -463,9 +465,9 @@ fn test_commit_after_long_delay_succeeds() {
 
 #[test]
 fn test_configure_fees_still_works_immediately() {
-    let (env, client, _admin) = setup();
-    let token = Address::generate(&env);
-    let collector = Address::generate(&env);
+    let (_env, client, _admin) = setup();
+    let token = Address::generate(&_env);
+    let collector = Address::generate(&_env);
 
     // The original configure_fees should still apply immediately
     client.configure_fees(&token, &collector, &42i128, &true);

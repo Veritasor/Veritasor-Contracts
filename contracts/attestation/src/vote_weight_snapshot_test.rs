@@ -21,11 +21,14 @@
 
 #![allow(unused_variables)]
 
+use std::format;
+use std::vec;
+
 use super::*;
 use crate::events::VoteWeightSnapshotCreatedEvent;
 use crate::multisig::DEFAULT_PROPOSAL_EXPIRY;
-use soroban_sdk::testutils::{Address as _, Events as _, Ledger};
-use soroban_sdk::{symbol_short, vec, Address, Env, Symbol, TryFromVal, Vec};
+use soroban_sdk::testutils::{Address as _, Events, Ledger};
+use soroban_sdk::{symbol_short, Address, Env, Symbol, TryFromVal, Vec};
 
 // ────────────────────────────────────────────────────────────────────
 //  Test setup helpers
@@ -200,7 +203,8 @@ fn vw_snapshot_event_emitted_with_matching_fields() {
         "exactly one VoteWeightSnapshotCreated event per create_proposal",
     );
     let (_cid, _topics, data) = new_events.last().unwrap();
-    let payload: VoteWeightSnapshotCreatedEvent = soroban_sdk::FromVal::from_val(&env, data);
+    let payload: VoteWeightSnapshotCreatedEvent =
+        VoteWeightSnapshotCreatedEvent::try_from_val(&env, data).unwrap();
     assert_eq!(payload.proposal_id, id);
     assert_eq!(payload.owners_count, 3);
     assert_eq!(payload.threshold, 3);
@@ -244,7 +248,7 @@ fn vw_flash_vote_attack_blocked_on_add_owner() {
         "attacker MUST NOT be able to approve a proposal whose snapshot predates their promotion",
     );
 
-    client.approve_proposal(&owner2, &victim_id, &0u64);
+    client.approve_proposal(&owner2, &victim_id, &1u64);
     assert!(
         client
             .get_proposal_approvals(&victim_id)
@@ -552,8 +556,7 @@ fn vw_snapshot_action_tag_for_every_variant() {
         .set_sequence_number(2 * crate::multisig::PROPOSAL_COOLDOWN_LEDGERS);
 
     // (action, expected action_tag)
-    let cases: Vec<(ProposalAction, u32)> = vec![
-        &env,
+    let cases: std::vec::Vec<(ProposalAction, u32)> = vec![
         (ProposalAction::Pause, 1),
         (ProposalAction::Unpause, 2),
         (ProposalAction::AddOwner(new_addr.clone()), 3),
@@ -574,14 +577,9 @@ fn vw_snapshot_action_tag_for_every_variant() {
         (ProposalAction::EmergencyRotateAdmin(new_addr.clone()), 9),
     ];
 
-    // Each owner has its own replay-protection nonce sequence, so track
-    // per-owner counters instead of a single shared one.
-    let mut nonces: [u64; 3] = [0; 3];
-    for (i, (action, expected_tag)) in cases.iter().enumerate() {
-        let owner_idx = (i % 3) as usize;
-        let proposer = owners.get(owner_idx as u32).unwrap();
-        let nonce = nonces[owner_idx];
-        nonces[owner_idx] += 1;
+    let mut nonce: u64 = 0;
+    for (i, (action, expected_tag)) in cases.iter().cloned().enumerate() {
+        let proposer = owners.get((i % 3) as u32).unwrap();
         let id = client.create_proposal(&proposer, &action, &nonce);
         let snap = client.get_proposal_snapshot(&id).unwrap();
         assert_eq!(

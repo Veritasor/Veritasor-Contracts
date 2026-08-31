@@ -1,9 +1,6 @@
 extern crate std;
 
-use crate::{
-    dynamic_fees::FEE_TIMELOCK_SECONDS, events::SlashTriggeredEvent, AttestationContract,
-    AttestationContractClient,
-};
+use crate::{events::SlashTriggeredEvent, AttestationContract, AttestationContractClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     Address, Env, String,

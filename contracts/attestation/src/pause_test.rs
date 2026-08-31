@@ -1,11 +1,12 @@
 //! Pause gate on attestation submission (admin pause / unpause) and
 //! time-locked scheduled pause with mandatory 1-hour notice window.
 
-use std::println;
+use std::format;
 
 use super::*;
-use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{testutils::Ledger, Address, BytesN, Env, String, Symbol, Vec};
+use crate::events::{EmergencyPauseTriggeredEvent, TOPIC_EMERGENCY_PAUSE_TRIGGERED};
+use soroban_sdk::testutils::{Address as _, Events, Ledger};
+use soroban_sdk::{Address, BytesN, Env, String, Symbol, TryFromVal, TryIntoVal, Vec};
 
 fn setup() -> (Env, AttestationContractClient<'static>, Address) {
     let env = Env::default();
@@ -491,134 +492,124 @@ fn is_paused_with_scheduled_not_yet_effective() {
 }
 
 // ── Dual-key emergency pause bypass tests ────────────────────────────
+//
+// `emergency_pause` requires an ADMIN caller plus two distinct addresses
+// that are both members of the multisig owner set (dual-key requirement).
+// Authentication is enforced via `require_auth` (mocked in these tests);
+// the guards below exercise the role, ownership, distinctness, and
+// already-paused checks.
+
+/// Setup: initialize the contract and register a 3-owner multisig
+/// (threshold 2). Returns (env, client, admin, owner2, owner3).
+///
+/// Nonce ledger: initialize() consumes 0, initialize_multisig() consumes 1,
+/// so the first emergency_pause must use nonce 2.
+fn setup_with_dual_key() -> (
+    Env,
+    AttestationContractClient<'static>,
+    Address,
+    Address,
+    Address,
+) {
+    let (env, client, admin) = setup();
+    let owner2 = Address::generate(&env);
+    let owner3 = Address::generate(&env);
+    let mut owners = Vec::new(&env);
+    owners.push_back(admin.clone());
+    owners.push_back(owner2.clone());
+    owners.push_back(owner3.clone());
+    client.initialize_multisig(&owners, &2u32, &1u64);
+    (env, client, admin, owner2, owner3)
+}
 
 #[test]
 fn emergency_pause_valid_dual_key() {
-    let (env, client, admin) = setup();
-    let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
-
-    // Create two distinct owner addresses with admin roles
-    let owner1 = Address::generate(&env);
-    let owner2 = Address::generate(&env);
-
-    // This is a simplified test - in reality, signatures would need to be valid
-    // Since we're testing the interface, we'll just test that the method exists
-    // and can be called (conceptual test)
+    let (env, client, admin, owner2, _owner3) = setup_with_dual_key();
     assert!(!client.is_paused());
 
-    // Test that we can call emergency_pause method (signature validation would happen on-chain)
-    // The actual signature verification happens on the Solana VM
-    println!("Emergency pause interface available - signatures validated on-chain");
+    client.emergency_pause(&admin, &admin, &owner2, &2u64);
+
+    assert!(client.is_paused());
 }
 
 #[test]
+#[should_panic(expected = "both signatures must come from distinct keys")]
 fn emergency_pause_same_key_violation() {
-    let (env, client, admin) = setup();
-    let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
-
-    // Test that using the same signature for both slots should fail
-    // The emergency_pause function should reject duplicate signatures
-    assert!(!client.is_paused());
-
-    // Conceptual test - in real implementation, this would fail signature verification
-    // because both signatures would be validated and found to come from the same key
-    println!("Same key emergency pause should be rejected - dual-key enforcement works");
+    let (env, client, admin, _owner2, _owner3) = setup_with_dual_key();
+    client.emergency_pause(&admin, &admin, &admin, &2u64);
 }
 
 #[test]
+#[should_panic(expected = "caller does not have ADMIN role")]
 fn emergency_pause_non_admin_rejection() {
-    let (env, client, _) = setup();
+    let (env, client, _admin, owner2, _owner3) = setup_with_dual_key();
     let non_admin = Address::generate(&env);
-    let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
-
-    // Test that non-admin cannot call emergency_pause
-    // Even if signatures are valid, role check should fail
-    assert!(!client.is_paused());
-
-    // Conceptual test - role validation should prevent non-admins from emergency pausing
-    println!("Non-admin emergency pause should be rejected - role check works");
+    client.emergency_pause(&non_admin, &non_admin, &owner2, &2u64);
 }
 
 #[test]
 fn emergency_pause_integration_with_scheduled() {
-    let (env, client, admin) = setup();
-    let business = Address::generate(&env);
-
+    let (env, client, admin, owner2, _owner3) = setup_with_dual_key();
     let now = env.ledger().timestamp();
 
-    // Schedule a pause far in the future
-    client.schedule_pause(&admin, &(now + 7200), &1u64);
+    // Schedule a pause far in the future (nonce 2 after multisig init).
+    client.schedule_pause(&admin, &(now + 7200), &2u64);
     assert!(!client.is_paused());
     assert_eq!(client.get_pending_pause_effective_at(), Some(now + 7200));
 
-    // Emergency pause should still work and bypass scheduled pause
-    // The dual-key emergency pause should take precedence
-    assert!(!client.is_paused());
-
-    // Conceptual test - emergency pause should override scheduled pause
-    println!("Emergency pause should override scheduled pause - implementation handles precedence");
+    // Emergency pause takes precedence and pauses immediately.
+    client.emergency_pause(&admin, &admin, &owner2, &3u64);
+    assert!(client.is_paused());
 }
 
 #[test]
+#[should_panic(expected = "contract already paused")]
 fn emergency_pause_idempotent() {
-    let (env, client, admin) = setup();
-    let business = Address::generate(&env);
+    let (env, client, admin, owner2, _owner3) = setup_with_dual_key();
 
-    // Test that calling emergency_pause twice (with different signatures)
-    // should handle the already-paused state
-    assert!(!client.is_paused());
+    client.emergency_pause(&admin, &admin, &owner2, &2u64);
+    assert!(client.is_paused());
 
-    // Conceptual test - should check contract is already paused before proceeding
-    println!("Emergency pause should be idempotent - already-paused check works");
+    // A second emergency pause must be rejected: contract already paused.
+    client.emergency_pause(&admin, &admin, &owner2, &3u64);
 }
 
 #[test]
 fn emergency_pause_event_emission() {
-    let (env, client, admin) = setup();
-    let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
+    let (env, client, admin, owner2, _owner3) = setup_with_dual_key();
 
-    assert!(!client.is_paused());
+    client.emergency_pause(&admin, &admin, &owner2, &2u64);
 
-    // Test that emergency pause emits the correct event
-    // Event should contain signer1 and signer2 addresses
-    // In real implementation, this happens when signatures are verified
-    println!("Emergency pause should emit EmergencyPauseTriggered event");
+    let events = env.events().all();
+    let mut found = false;
+    for (_cid, topics, data) in events.iter() {
+        let sym: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+        if sym == TOPIC_EMERGENCY_PAUSE_TRIGGERED {
+            let ev = EmergencyPauseTriggeredEvent::try_from_val(&env, &data).unwrap();
+            assert_eq!(ev.signer1, admin);
+            assert_eq!(ev.signer2, owner2);
+            found = true;
+        }
+    }
+    assert!(found, "EmergencyPauseTriggered event not emitted");
 }
 
 #[test]
 fn emergency_pause_bypasses_multisig_time_lock() {
-    let (env, client, admin) = setup();
-    let business = Address::generate(&env);
+    let (env, client, admin, owner2, _owner3) = setup_with_dual_key();
 
-    // Test that emergency pause works even without multisig approvals
-    // This is the core requirement: bypass time-locks for immediate response
-    assert!(!client.is_paused());
-
-    // Conceptual test - emergency_pause should not require multisig time-lock approval
-    // Should directly pause without waiting for expiration or approvals
-    println!("Emergency pause bypasses multisig time-locks - immediate response guaranteed");
+    // No proposal, approvals, or timelock required — the dual-key pause
+    // applies immediately.
+    client.emergency_pause(&admin, &admin, &owner2, &2u64);
+    assert!(client.is_paused());
 }
 
 #[test]
+#[should_panic(expected = "first signature not from owner")]
 fn emergency_pause_requires_two_distinct_keys() {
-    let (env, client, admin) = setup();
-    let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-02");
-    let root = BytesN::from_array(&env, &[1u8; 32]);
+    let (env, client, admin, _owner2, _owner3) = setup_with_dual_key();
+    let stranger = Address::generate(&env);
 
-    // Test that two distinct keys are required
-    // This is a security requirement to prevent single-key compromise
-    assert!(!client.is_paused());
-
-    // Conceptual test - emergency_pause should enforce distinct signers
-    // Same key signing both slots should be rejected
-    println!("Emergency pause requires two distinct keys - security enforced");
+    // Distinct but not a multisig owner: rejected by the owner-set check.
+    client.emergency_pause(&admin, &admin, &stranger, &2u64);
 }
