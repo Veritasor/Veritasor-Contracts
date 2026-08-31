@@ -1,7 +1,12 @@
 //! Fee bucket reconciliation: stored `fee_paid` must match pre-submit `get_fee_quote`.
 //!
-//! Issue #374 — confirms no drift between quote (`calculate_fee` + `calculate_flat_fee`)
-//! and collection (`collect_fee_from` + `collect_flat_fee`) at submission time.
+//! Issues #374 and #787 — confirms no drift between quote (`calculate_fee` +
+//! `calculate_flat_fee`) and collection (`collect_fee_from` +
+//! `collect_flat_fee`) at submission time.
+//!
+//! Validates the invariant `total_fee == dynamic_fee + flat_fee` across all fee
+//! configurations: enabled/disabled, tier/volume discount permutations, batch
+//! submissions, and property-based sweeps over `base_fee ∈ [0, 1e9]`.
 
 extern crate std;
 
@@ -212,6 +217,147 @@ fn reconcile_dynamic_truncated_to_zero_flat_positive() {
     assert_reconciles_with_quote(&ctx, &business, "2026-03", 3, Some(&dyn_token));
 }
 
+// ── Fees-disabled reconciliation ──────────────────────────────────────
+
+#[test]
+fn reconcile_fees_fully_disabled() {
+    let ctx = fresh_ctx();
+    let business = Address::generate(&ctx.env);
+    let collector = Address::generate(&ctx.env);
+    let token = deploy_and_fund(&ctx.env, &business, 0);
+    ctx.client
+        .configure_fees(&token, &collector, &1_000, &false);
+    ctx.client
+        .configure_flat_fee(&token, &collector, &250, &false);
+    assert_eq!(ctx.client.get_fee_quote(&business), 0);
+    assert_reconciles_with_quote(&ctx, &business, "2026-disabled", 1, None);
+}
+
+#[test]
+fn reconcile_zero_base_fee_with_flat() {
+    let ctx = fresh_ctx();
+    let business = Address::generate(&ctx.env);
+    let collector = Address::generate(&ctx.env);
+    let token = deploy_and_fund(&ctx.env, &business, 10_000);
+    ctx.client
+        .configure_fees(&token, &collector, &0, &true);
+    ctx.client
+        .configure_flat_fee(&token, &collector, &400, &true);
+    let quote = ctx.client.get_fee_quote(&business);        let (base, _tier_bps, _vol_bps, dynamic, flat) = ctx.client.get_fee_quote_detailed(&business);
+    assert_eq!(base, 0);
+    assert_eq!(dynamic, 0);
+    assert_eq!(flat, 400);
+    assert_eq!(quote, 400);
+    assert_reconciles_with_quote(&ctx, &business, "2026-zero-base", 1, None);
+}
+
+#[test]
+fn reconcile_flat_fee_zero_amount_enabled() {
+    let ctx = fresh_ctx();
+    let business = Address::generate(&ctx.env);
+    let collector = Address::generate(&ctx.env);
+    let token = deploy_and_fund(&ctx.env, &business, 0);
+    ctx.client
+        .configure_flat_fee(&token, &collector, &0, &true);
+    assert_eq!(ctx.client.get_fee_quote(&business), 0);
+    assert_reconciles_with_quote(&ctx, &business, "2026-flat-zero", 1, None);
+}
+
+// ── Multi-business reconciliation ───────────────────────────────────
+
+#[test]
+fn reconcile_multiple_businesses_different_tiers() {
+    let ctx = fresh_ctx();
+    let biz_a = Address::generate(&ctx.env);
+    let biz_b = Address::generate(&ctx.env);
+    let collector = Address::generate(&ctx.env);
+    let token = deploy_and_fund(&ctx.env, &biz_a, 1_000_000_000);
+    StellarAssetClient::new(&ctx.env, &token).mint(&biz_b, &1_000_000_000);
+
+    ctx.client
+        .configure_fees(&token, &collector, &1_000_000, &true);
+    ctx.client.set_tier_discount(&0, &0);
+    ctx.client.set_tier_discount(&1, &5_000);
+    ctx.client.set_business_tier(&biz_a, &0);
+    ctx.client.set_business_tier(&biz_b, &1);
+
+    let quote_a = ctx.client.get_fee_quote(&biz_a);
+    let quote_b = ctx.client.get_fee_quote(&biz_b);
+    assert!(quote_a > quote_b, "tier-0 must pay more than tier-1");
+
+    submit(&ctx.client, &ctx.env, &biz_a, "m-a", 1);
+    submit(&ctx.client, &ctx.env, &biz_b, "m-b", 2);
+
+    let stored_a = ctx.client.get_attestation(&biz_a, &String::from_str(&ctx.env, "m-a")).unwrap();
+    let stored_b = ctx.client.get_attestation(&biz_b, &String::from_str(&ctx.env, "m-b")).unwrap();
+    assert_eq!(stored_a.3, quote_a, "biz_a fee_paid must match pre-submit quote");
+    assert_eq!(stored_b.3, quote_b, "biz_b fee_paid must match pre-submit quote");
+}
+
+// ── Batch submission reconciliation ──────────────────────────────────
+
+#[test]
+fn reconcile_batch_submission_fee_paid() {
+    let ctx = fresh_ctx();
+    let business = Address::generate(&ctx.env);
+    let collector = Address::generate(&ctx.env);
+    let token = deploy_and_fund(&ctx.env, &business, 1_000_000_000);
+    ctx.client
+        .configure_fees(&token, &collector, &500_000, &true);
+
+    let periods = ["b-p1", "b-p2", "b-p3"];
+    let mut q0 = 0i128;
+    let mut q1 = 0i128;
+    let mut q2 = 0i128;
+    for (i, p) in periods.iter().enumerate() {
+        // Business count increments each submission, which can change volume discount.
+        let q = ctx.client.get_fee_quote(&business);
+        match i {
+            0 => q0 = q,
+            1 => q1 = q,
+            _ => q2 = q,
+        }
+        let period_s = String::from_str(&ctx.env, p);
+        let root = BytesN::from_array(&ctx.env, &[0xAA; 32]);
+        ctx.client.submit_attestation(
+            &business,
+            &period_s,
+            &root,
+            &1_700_000_000u64,
+            &1u32,
+            &0i128,
+            &None,
+            &None,
+        );
+    }
+
+    let quotes = [q0, q1, q2];
+    for (i, p) in periods.iter().enumerate() {
+        let stored = ctx.client.get_attestation(&business, &String::from_str(&ctx.env, p)).unwrap();
+        assert_eq!(stored.3, quotes[i], "batch item {} fee_paid must match pre-submit quote", i);
+    }
+}
+
+// ── Fee quote stability after submission ─────────────────────────────
+
+#[test]
+fn reconcile_quote_stable_after_submission() {
+    let ctx = fresh_ctx();
+    let business = Address::generate(&ctx.env);
+    let collector = Address::generate(&ctx.env);
+    let token = deploy_and_fund(&ctx.env, &business, 1_000_000_000);
+    ctx.client
+        .configure_fees(&token, &collector, &1_000, &true);
+    ctx.client.set_tier_discount(&0, &2_000);
+    ctx.client.set_business_tier(&business, &0);
+
+    let before = ctx.client.get_fee_quote(&business);
+    submit(&ctx.client, &ctx.env, &business, "stable-1", 1);
+    let after = ctx.client.get_fee_quote(&business);
+
+    assert_eq!(before, after, "quote must be stable (no volume brackets configured)");
+}
+
 // ── Property-based sweep ────────────────────────────────────────────
 
 proptest! {
@@ -265,6 +411,49 @@ proptest! {
             .get_attestation(&business, &String::from_str(&ctx.env, "2026-prop"))
             .unwrap();
         prop_assert_eq!(stored.3, quote);
+    }
+
+    /// Property: total_fee must always equal dynamic_fee + flat_fee for every
+    /// combination of base_fee, tier discount, volume discount, and flat fee
+    /// configuration.
+    #[test]
+    fn prop_total_fee_equals_dynamic_plus_flat(
+        base_fee in 0i128..=1_000_000_000i128,
+        tier_bps in 0u32..=10_000u32,
+        vol_bps in 0u32..=10_000u32,
+        flat_amount in 0i128..=100_000i128,
+        flat_enabled in proptest::bool::ANY,
+    ) {
+        let ctx = fresh_ctx();
+        let business = Address::generate(&ctx.env);
+        let dyn_collector = Address::generate(&ctx.env);
+        let flat_collector = Address::generate(&ctx.env);
+        let dyn_token = deploy_and_fund(&ctx.env, &business, 0);
+        let flat_token = deploy_and_fund(&ctx.env, &business, 0);
+
+        ctx.client.configure_fees(&dyn_token, &dyn_collector, &base_fee, &true);
+        ctx.client.set_tier_discount(&1, &tier_bps);
+        ctx.client.set_business_tier(&business, &1);
+        if vol_bps > 0 {
+            let thresholds = vec![&ctx.env, 1u64];
+            let discounts = vec![&ctx.env, vol_bps];
+            ctx.client.set_volume_brackets(&thresholds, &discounts);
+            let warm_quote = ctx.client.get_fee_quote(&business);
+            StellarAssetClient::new(&ctx.env, &dyn_token).mint(&business, &warm_quote.saturating_add(1_000_000));
+            if flat_enabled && flat_amount > 0 {
+                StellarAssetClient::new(&ctx.env, &flat_token).mint(&business, &flat_amount.saturating_add(1_000_000));
+            }
+            submit(&ctx.client, &ctx.env, &business, "2026-warm", 8);
+        }
+        ctx.client.configure_flat_fee(&flat_token, &flat_collector, &flat_amount, &flat_enabled);
+
+        let (base_q, _tier_q, _vol_q, dynamic, flat) = ctx.client.get_fee_quote_detailed(&business);
+        let total = dynamic + flat;
+        prop_assert_eq!(total, ctx.client.get_fee_quote(&business));
+        prop_assert!(dynamic >= 0, "dynamic fee must be non-negative");
+        prop_assert!(flat >= 0, "flat fee must be non-negative");
+        prop_assert!(total >= 0, "total fee must be non-negative");
+        prop_assert!(total <= base_q.saturating_add(flat_amount), "total must not exceed base_fee + flat_amount");
     }
 
     /// Invariant: sum of collector balance deltas across all submissions equals
@@ -348,7 +537,7 @@ proptest! {
             prop_assert_eq!(
                 collector_delta,
                 cumulative_event_fee,
-                "cumulative collector delta must equal cumulative event fee_paid after submission {i}"
+                "cumulative collector delta must equal cumulative event fee_paid"
             );
         }
     }
