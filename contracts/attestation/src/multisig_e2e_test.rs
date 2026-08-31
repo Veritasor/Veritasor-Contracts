@@ -35,8 +35,12 @@ fn setup_3_of_5() -> MultisigCtx {
     for _ in 0..4 {
         owners.push_back(Address::generate(&env));
     }
-
     client.initialize_multisig(&owners, &3u32, &1u64);
+
+    // Move past the quorum-change cooldown so `ChangeThreshold` proposals
+    // can be created in every test without advancing the ledger each time.
+    env.ledger()
+        .set_sequence_number(2 * crate::multisig::PROPOSAL_COOLDOWN_LEDGERS);
 
     env.as_contract(&contract_id, || {
         env.storage()
@@ -302,16 +306,21 @@ fn e2e_remove_owner_mid_proposal_preserves_snapshot_vote() {
     assert!(ctx.client.is_paused());
 }
 
-
 // ── Cleanup / Grace Period Tests ──────────────────────────────────
 
 #[test]
 fn e2e_cleanup_expired_proposals_basic() {
     let ctx = setup_3_of_5();
     let proposer = ctx.owners.get(0).unwrap();
-    let id1 = ctx.client.create_proposal(&proposer, &ProposalAction::Pause, &0u64);
-    let id2 = ctx.client.create_proposal(&proposer, &ProposalAction::Unpause, &1u64);
-    let id3 = ctx.client.create_proposal(&proposer, &ProposalAction::Pause, &2u64);
+    let id1 = ctx
+        .client
+        .create_proposal(&proposer, &ProposalAction::Pause, &0u64);
+    let id2 = ctx
+        .client
+        .create_proposal(&proposer, &ProposalAction::Unpause, &1u64);
+    let id3 = ctx
+        .client
+        .create_proposal(&proposer, &ProposalAction::Pause, &2u64);
     let current_seq = ctx.env.ledger().sequence();
     let advance = DEFAULT_PROPOSAL_EXPIRY + 10001;
     ctx.env.ledger().set_sequence_number(current_seq + advance);
@@ -327,7 +336,9 @@ fn e2e_cleanup_expired_proposals_basic() {
 fn e2e_cleanup_expired_proposals_all() {
     let ctx = setup_3_of_5();
     let proposer = ctx.owners.get(0).unwrap();
-    let id1 = ctx.client.create_proposal(&proposer, &ProposalAction::Pause, &0u64);
+    let id1 = ctx
+        .client
+        .create_proposal(&proposer, &ProposalAction::Pause, &0u64);
     let current_seq = ctx.env.ledger().sequence();
     let advance = DEFAULT_PROPOSAL_EXPIRY + 10001;
     ctx.env.ledger().set_sequence_number(current_seq + advance);
@@ -347,9 +358,13 @@ fn e2e_cleanup_no_expired_proposals() {
 fn e2e_cleanup_grace_period_not_elapsed() {
     let ctx = setup_3_of_5();
     let proposer = ctx.owners.get(0).unwrap();
-    let id1 = ctx.client.create_proposal(&proposer, &ProposalAction::Pause, &0u64);
+    let id1 = ctx
+        .client
+        .create_proposal(&proposer, &ProposalAction::Pause, &0u64);
     let current_seq = ctx.env.ledger().sequence();
-    ctx.env.ledger().set_sequence_number(current_seq + DEFAULT_PROPOSAL_EXPIRY + 5000);
+    ctx.env
+        .ledger()
+        .set_sequence_number(current_seq + DEFAULT_PROPOSAL_EXPIRY + 5000);
     let cleaned = ctx.client.cleanup_expired_proposals(&10u32);
     assert_eq!(cleaned, 0);
     assert!(ctx.client.get_proposal(&id1).is_some());
@@ -361,9 +376,13 @@ fn e2e_cleanup_with_custom_grace_period() {
     let proposer = ctx.owners.get(0).unwrap();
     let admin = ctx.owners.get(0).unwrap();
     ctx.client.set_proposal_expiry_grace(&admin, &100u32);
-    let id1 = ctx.client.create_proposal(&proposer, &ProposalAction::Pause, &0u64);
+    let id1 = ctx
+        .client
+        .create_proposal(&proposer, &ProposalAction::Pause, &0u64);
     let current_seq = ctx.env.ledger().sequence();
-    ctx.env.ledger().set_sequence_number(current_seq + DEFAULT_PROPOSAL_EXPIRY + 101);
+    ctx.env
+        .ledger()
+        .set_sequence_number(current_seq + DEFAULT_PROPOSAL_EXPIRY + 101);
     let cleaned = ctx.client.cleanup_expired_proposals(&10u32);
     assert_eq!(cleaned, 1);
     assert!(ctx.client.get_proposal(&id1).is_none());

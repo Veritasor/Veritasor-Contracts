@@ -136,6 +136,10 @@ pub enum DataKey {
     /// Per-business submission timestamps within the current window.
     /// Stores a `Vec<u64>` of ledger timestamps.
     SubmissionTimestamps(Address),
+    /// Per-business high-water mark of the last successful submission
+    /// timestamp. The rate limiter uses it to defend against ledger clock
+    /// rollback (see `rate_limit::effective_timestamp`).
+    RateLimitHighWaterTimestamp(Address),
     IsPaused,
 
     // ── Relayer gas metering ───────────────────────────────────
@@ -173,6 +177,10 @@ pub enum DataKey {
     // ── Archive Tier ─────────────────────────────────────────────
     /// Global archive index.
     ArchiveIndex,
+    /// Snapshot of an attestation stored under the archival tier; used by
+    /// the lazy-rehydration read path to serve archived attestations and
+    /// restore them into active storage on first access.
+    AttestationSnapshot(Address, soroban_sdk::String),
     /// Full attestation record stored in the archive.
     ArchivedAttestation(Address, soroban_sdk::String),
     /// Lightweight archive pointer.
@@ -353,9 +361,7 @@ pub fn set_pending_fee_config(env: &Env, pending: &PendingFeeConfig) {
 
 /// Remove any pending fee configuration.
 pub fn clear_pending_fee_config(env: &Env) {
-    env.storage()
-        .instance()
-        .remove(&DataKey::PendingFeeConfig);
+    env.storage().instance().remove(&DataKey::PendingFeeConfig);
 }
 
 /// If a pending fee config's timelock has expired, apply it to the live config
@@ -684,10 +690,7 @@ pub fn increment_cleanup_count(env: &Env) {
 pub fn handle_epoch_rollover(env: &Env) {
     let current_bucket = env.ledger().timestamp() / FEE_BUCKET_WINDOW_SECONDS;
 
-    let initialized = env
-        .storage()
-        .instance()
-        .has(&DataKey::LastFeeBucket);
+    let initialized = env.storage().instance().has(&DataKey::LastFeeBucket);
 
     if !initialized {
         // First-ever call: record the current bucket and start epoch 1.
@@ -712,6 +715,101 @@ pub fn handle_epoch_rollover(env: &Env) {
     env.storage()
         .instance()
         .set(&DataKey::LastFeeBucket, &current_bucket);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Per-epoch checkpoint accumulators & backfill counter
+// ════════════════════════════════════════════════════════════════════
+
+/// Increment the running submission count for `period` within the current
+/// epoch and return the new count.
+///
+/// Backed by [`DataKey::EpochSubmissions`]; used to emit `EpochCheckpoint`
+/// events after each submission (single and batch paths).
+pub fn increment_epoch_submissions(env: &Env, period: &soroban_sdk::String, amount: u64) -> u64 {
+    let current = env
+        .storage()
+        .instance()
+        .get::<_, u64>(&DataKey::EpochSubmissions(period.clone()))
+        .unwrap_or(0u64);
+    let next = current.saturating_add(amount);
+    env.storage()
+        .instance()
+        .set(&DataKey::EpochSubmissions(period.clone()), &next);
+    next
+}
+
+/// Accumulate `amount` into the epoch fee total for `period` and return the
+/// new accumulated total.
+///
+/// Backed by [`DataKey::EpochFees`]; used to emit `EpochCheckpoint` events.
+pub fn accumulate_epoch_fees(env: &Env, period: &soroban_sdk::String, amount: i128) -> i128 {
+    let current = env
+        .storage()
+        .instance()
+        .get::<_, i128>(&DataKey::EpochFees(period.clone()))
+        .unwrap_or(0i128);
+    let next = current.saturating_add(amount);
+    env.storage()
+        .instance()
+        .set(&DataKey::EpochFees(period.clone()), &next);
+    next
+}
+
+/// Increment the global backfill submission counter and return the new value.
+///
+/// Backed by [`DataKey::BackfillSubmissionCount`]; the counter drives
+/// `BackfillCheckpoint` emission every `BACKFILL_CHECKPOINT_INTERVAL`
+/// submissions.
+pub fn increment_backfill_count(env: &Env) -> u64 {
+    let current = env
+        .storage()
+        .instance()
+        .get::<_, u64>(&DataKey::BackfillSubmissionCount)
+        .unwrap_or(0u64);
+    let next = current.saturating_add(1);
+    env.storage()
+        .instance()
+        .set(&DataKey::BackfillSubmissionCount, &next);
+    next
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Time-locked staking contract rebinding
+// ════════════════════════════════════════════════════════════════════
+
+/// Pending attestor staking contract rebinding, enforced with a 24 h
+/// timelock between proposal and commit (see `docs/timelock-staking-binding.md`).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PendingStakingContract {
+    /// Proposed staking contract address.
+    pub new_contract: Address,
+    /// Ledger timestamp at which the proposal becomes effective.
+    pub effective_at: u64,
+    /// Admin that proposed the rebinding.
+    pub proposed_by: Address,
+}
+
+/// Read the pending staking contract rebinding proposal, if any.
+pub fn get_pending_staking_contract(env: &Env) -> Option<PendingStakingContract> {
+    env.storage()
+        .instance()
+        .get(&DataKey::PendingStakingContract)
+}
+
+/// Store a pending staking contract rebinding proposal.
+pub fn set_pending_staking_contract(env: &Env, pending: &PendingStakingContract) {
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingStakingContract, pending);
+}
+
+/// Remove any pending staking contract rebinding proposal.
+pub fn clear_pending_staking_contract(env: &Env) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::PendingStakingContract);
 }
 
 //  Archive tier types and helpers
@@ -757,9 +855,7 @@ pub fn get_archive_index(env: &Env) -> u64 {
 /// Increment the global archive index and return the *new* value.
 pub fn next_archive_index(env: &Env) -> u64 {
     let next = get_archive_index(env) + 1;
-    env.storage()
-        .instance()
-        .set(&DataKey::ArchiveIndex, &next);
+    env.storage().instance().set(&DataKey::ArchiveIndex, &next);
     next
 }
 
@@ -770,9 +866,10 @@ pub fn set_archived_attestation(
     period: &soroban_sdk::String,
     data: &crate::AttestationData,
 ) {
-    env.storage()
-        .instance()
-        .set(&DataKey::ArchivedAttestation(business.clone(), period.clone()), data);
+    env.storage().instance().set(
+        &DataKey::ArchivedAttestation(business.clone(), period.clone()),
+        data,
+    );
 }
 
 /// Read a full attestation from the archive tier.
@@ -781,9 +878,10 @@ pub fn get_archived_attestation(
     business: &Address,
     period: &soroban_sdk::String,
 ) -> Option<crate::AttestationData> {
-    env.storage()
-        .instance()
-        .get(&DataKey::ArchivedAttestation(business.clone(), period.clone()))
+    env.storage().instance().get(&DataKey::ArchivedAttestation(
+        business.clone(),
+        period.clone(),
+    ))
 }
 
 /// Write the lightweight archive pointer for a (business, period).
@@ -793,9 +891,10 @@ pub fn set_archive_pointer(
     period: &soroban_sdk::String,
     pointer: &ArchivePointerRecord,
 ) {
-    env.storage()
-        .instance()
-        .set(&DataKey::ArchivePointer(business.clone(), period.clone()), pointer);
+    env.storage().instance().set(
+        &DataKey::ArchivePointer(business.clone(), period.clone()),
+        pointer,
+    );
 }
 
 /// Read the lightweight archive pointer for a (business, period).
@@ -862,14 +961,13 @@ pub fn clear_compaction_retention(env: &Env) {
 /// Called by `compact_archival` after verifying the retention policy.
 /// The `ArchivePointer` (Merkle commitment) is preserved; only the
 /// `ArchivedAttestation` (full data) is deleted.
-pub fn remove_archived_attestation(
-    env: &Env,
-    business: &Address,
-    period: &soroban_sdk::String,
-) {
+pub fn remove_archived_attestation(env: &Env, business: &Address, period: &soroban_sdk::String) {
     env.storage()
         .instance()
-        .remove(&DataKey::ArchivedAttestation(business.clone(), period.clone()));
+        .remove(&DataKey::ArchivedAttestation(
+            business.clone(),
+            period.clone(),
+        ));
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -879,9 +977,7 @@ pub fn remove_archived_attestation(
 /// Get the optional reputation contract address.
 /// Returns `None` if reputation gating is disabled.
 pub fn get_reputation_contract(env: &Env) -> Option<Address> {
-    env.storage()
-        .instance()
-        .get(&DataKey::ReputationContract)
+    env.storage().instance().get(&DataKey::ReputationContract)
 }
 
 /// Set the reputation contract address (enables reputation gating).

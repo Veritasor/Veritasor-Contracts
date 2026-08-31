@@ -1,9 +1,11 @@
 //! Pause gate on attestation submission (admin pause / unpause) and
 //! time-locked scheduled pause with mandatory 1-hour notice window.
 
+use std::println;
+
 use super::*;
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{testutils::Ledger, Address, BytesN, Env, String, Vec};
+use soroban_sdk::{testutils::Ledger, Address, BytesN, Env, String, Symbol, Vec};
 
 fn setup() -> (Env, AttestationContractClient<'static>, Address) {
     let env = Env::default();
@@ -30,6 +32,19 @@ fn batch_item(
         proof_hash: None,
         expiry_timestamp: None,
     }
+}
+
+/// Register a business so batch submissions (which require an active
+/// business) can succeed.
+fn register_business(client: &AttestationContractClient, admin: &Address, business: &Address) {
+    client.grant_role(admin, business, &ROLE_BUSINESS);
+    client.register_business(
+        business,
+        &BytesN::from_array(&client.env, &[1u8; 32]),
+        &Symbol::new(&client.env, "US"),
+        &Vec::new(&client.env),
+    );
+    client.approve_business(admin, business);
 }
 
 /// Advance the ledger timestamp by `seconds`.
@@ -108,6 +123,8 @@ fn submit_attestations_batch_succeeds_after_unpause() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
 
+    register_business(&client, &admin, &business);
+
     client.pause(&admin, &1u64);
     client.unpause(&admin, &2u64);
 
@@ -171,30 +188,38 @@ fn get_attestation_while_paused() {
 fn schedule_pause_then_auto_applies_on_submission() {
     let (env, client, admin) = setup();
     let business = Address::generate(&env);
+    register_business(&client, &admin, &business);
 
     let now = env.ledger().timestamp();
     let effective_at = now + 4000; // > 1 hour notice (3600 + some buffer)
     client.schedule_pause(&admin, &effective_at, &1u64);
 
     // Before effective_at — submission still works
-    client.submit_attestations_batch(&Vec::new(&env));
+    let mut items = Vec::new(&env);
+    items.push_back(batch_item(&env, &business, "2026-01", &[1u8; 32]));
+    client.submit_attestations_batch(&items);
     assert!(!client.is_paused());
 
     // Advance past effective_at
     advance_time(&env, 4000);
 
-    // Next submission triggers auto-apply and then fails because paused
-    let mut items = Vec::new(&env);
-    items.push_back(batch_item(&env, &business, "2026-02", &[1u8; 32]));
+    // Next submission triggers auto-apply and then fails because paused.
+    // Note: the blocked call panics, so its storage writes (including the
+    // auto-applied pause) are rolled back atomically — the enforcement is
+    // that the submission is rejected, not that the pause flag persists.
+    let mut items2 = Vec::new(&env);
+    items2.push_back(batch_item(&env, &business, "2026-02", &[1u8; 32]));
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.submit_attestations_batch(&items);
+        client.submit_attestations_batch(&items2);
     }));
     assert!(result.is_err());
 
-    // Contract is now paused
-    assert!(client.is_paused());
-    // Pending pause should be cleared
-    assert_eq!(client.get_pending_pause_effective_at(), None);
+    // Pending pause remains scheduled and keeps blocking submissions.
+    assert_eq!(
+        client.get_pending_pause_effective_at(),
+        Some(effective_at),
+        "pending pause survives the rolled-back submission"
+    );
 }
 
 #[test]
@@ -246,10 +271,7 @@ fn schedule_pause_auto_applies_on_schedule_pause_call() {
     client.schedule_pause(&admin, &future, &2u64);
     // Auto-apply pauses the contract, then a new pause is scheduled for the future
     assert!(client.is_paused());
-    assert_eq!(
-        client.get_pending_pause_effective_at(),
-        Some(future)
-    );
+    assert_eq!(client.get_pending_pause_effective_at(), Some(future));
 }
 
 #[test]
@@ -294,6 +316,7 @@ fn cancel_scheduled_pause_before_effective() {
     // Advance past the original effective_at — submission should still work
     advance_time(&env, 7200);
     let business = Address::generate(&env);
+    register_business(&client, &admin, &business);
     let mut items = Vec::new(&env);
     items.push_back(batch_item(&env, &business, "2026-02", &[3u8; 32]));
     client.submit_attestations_batch(&items);
@@ -350,10 +373,7 @@ fn emergency_pause_still_works_independently() {
     assert!(!client.is_paused());
 
     // The scheduled pause should still be pending
-    assert_eq!(
-        client.get_pending_pause_effective_at(),
-        Some(now + 100_000)
-    );
+    assert_eq!(client.get_pending_pause_effective_at(), Some(now + 100_000));
 }
 
 #[test]
@@ -404,10 +424,7 @@ fn full_schedule_cancel_reschedule_lifecycle() {
 
     // 3. Re-schedule with different time
     client.schedule_pause(&admin, &(now + 10_800), &3u64);
-    assert_eq!(
-        client.get_pending_pause_effective_at(),
-        Some(now + 10_800)
-    );
+    assert_eq!(client.get_pending_pause_effective_at(), Some(now + 10_800));
 
     // 4. Cancel again
     client.cancel_scheduled_pause(&admin, &4u64);
@@ -423,6 +440,7 @@ fn scheduled_pause_does_not_block_before_effective() {
 
     // Should be able to submit while pending
     let business = Address::generate(&env);
+    register_business(&client, &admin, &business);
     let mut items = Vec::new(&env);
     items.push_back(batch_item(&env, &business, "2026-02", &[4u8; 32]));
     client.submit_attestations_batch(&items);
@@ -455,7 +473,10 @@ fn submit_attestation_blocked_by_auto_applied_scheduled_pause() {
         );
     }));
     assert!(result.is_err());
-    assert!(client.is_paused());
+    // The blocked call panics, rolling back its storage writes; the pause
+    // flag is applied by the next successful state-changing call. What is
+    // guaranteed here is that the submission is rejected.
+    assert_eq!(client.get_pending_pause_effective_at(), Some(now + 4000));
 }
 
 #[test]
@@ -481,10 +502,6 @@ fn emergency_pause_valid_dual_key() {
     // Create two distinct owner addresses with admin roles
     let owner1 = Address::generate(&env);
     let owner2 = Address::generate(&env);
-    // Note: In a real test, these would need admin roles, but for simplicity
-    // we'll test the emergency_pause call directly with signatures
-    let sig1 = Signature::Ed25519(BytesN::from_array(&env, &[1u8; 64]));
-    let sig2 = Signature::Ed25519(BytesN::from_array(&env, &[2u8; 64]));
 
     // This is a simplified test - in reality, signatures would need to be valid
     // Since we're testing the interface, we'll just test that the method exists
@@ -502,8 +519,6 @@ fn emergency_pause_same_key_violation() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-
-    let sig = Signature::Ed25519(BytesN::from_array(&env, &[1u8; 64]));
 
     // Test that using the same signature for both slots should fail
     // The emergency_pause function should reject duplicate signatures
@@ -524,9 +539,6 @@ fn emergency_pause_non_admin_rejection() {
 
     // Test that non-admin cannot call emergency_pause
     // Even if signatures are valid, role check should fail
-    let sig1 = Signature::Ed25519(BytesN::from_array(&env, &[1u8; 64]));
-    let sig2 = Signature::Ed25519(BytesN::from_array(&env, &[2u8; 64]));
-
     assert!(!client.is_paused());
 
     // Conceptual test - role validation should prevent non-admins from emergency pausing

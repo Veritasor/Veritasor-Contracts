@@ -5,7 +5,7 @@ use crate::dynamic_fees::FEE_TIMELOCK_SECONDS;
 use crate::NONCE_CHANNEL_ADMIN;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Ledger as _;
-use soroban_sdk::{token, Address, BytesN, Env, String};
+use soroban_sdk::{token, Address, BytesN, Env, String, Symbol, Vec};
 use veritasor_attestor_staking::AttestorStakingContract;
 use veritasor_attestor_staking::AttestorStakingContractClient as StakingClient;
 use veritasor_common::replay_protection;
@@ -72,6 +72,10 @@ fn attestor_submit_fails_when_not_eligible() {
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     // Setup attestor role but do NOT stake
     let attestor = Address::generate(&env);
@@ -126,7 +130,10 @@ fn attestor_submit_succeeds_when_eligible() {
     let att_client = AttestationContractClient::new(&env, &attestation_id);
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
-    register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     // Setup attestor role + stake
     let attestor = Address::generate(&env);
@@ -188,7 +195,10 @@ fn attestor_batch_submit_succeeds_when_eligible() {
     let att_client = AttestationContractClient::new(&env, &attestation_id);
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
-    register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     // Setup attestor role + stake
     let attestor = Address::generate(&env);
@@ -198,6 +208,15 @@ fn attestor_batch_submit_succeeds_when_eligible() {
 
     // Batch items
     let business = Address::generate(&env);
+    // Batch submission requires an active (registered + approved) business.
+    att_client.grant_role(&admin, &business, &ROLE_BUSINESS);
+    att_client.register_business(
+        &business,
+        &BytesN::from_array(&env, &[1u8; 32]),
+        &Symbol::new(&env, "US"),
+        &Vec::new(&env),
+    );
+    att_client.approve_business(&admin, &business);
     let mut items = Vec::new(&env);
     items.push_back(BatchAttestationItem {
         business: business.clone(),
@@ -264,6 +283,10 @@ fn attestor_with_exact_min_stake_is_eligible() {
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
@@ -321,6 +344,10 @@ fn attestor_one_below_min_stake_is_ineligible() {
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
@@ -378,6 +405,10 @@ fn multiple_attestors_independent_eligibility() {
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     // Attestor 1 - eligible
     let attestor1 = Address::generate(&env);
@@ -446,6 +477,10 @@ fn get_staking_contract_returns_configured_address() {
 
     // Configure
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     // After configuration - should return the address
     let after = att_client.get_attestor_staking_contract();
@@ -511,6 +546,10 @@ fn non_attestor_cannot_submit_as_attestor() {
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     // User with stake but NO role
     let user = Address::generate(&env);
@@ -565,6 +604,10 @@ fn slashing_below_min_stake_makes_ineligible() {
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
@@ -613,6 +656,10 @@ fn slashing_above_min_stake_keeps_eligible() {
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
@@ -700,6 +747,10 @@ fn batch_submit_fails_when_ineligible() {
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
@@ -739,7 +790,7 @@ fn test_slash_on_invalid_attestation() {
     let staking = StakingClient::new(&env, &staking_id);
     let staking_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
-    
+
     // Dispute contract is the attestation contract
     staking.initialize(
         &staking_admin,
@@ -750,6 +801,10 @@ fn test_slash_on_invalid_attestation() {
         &0u64,
     );
     register_staking_contract(&env, &att_client, &admin, &staking_id);
+    att_client.propose_staking_contract(&admin, &staking_id, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     // Setup attestor
     let attestor = Address::generate(&env);
@@ -827,6 +882,10 @@ fn min_stake_increase_makes_ineligible() {
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
@@ -875,6 +934,10 @@ fn min_stake_decrease_makes_eligible() {
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
@@ -928,6 +991,10 @@ fn pending_unstake_counts_toward_eligibility() {
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
@@ -976,6 +1043,10 @@ fn full_withdrawal_makes_ineligible() {
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
@@ -1026,6 +1097,10 @@ fn duplicate_attestation_rejected() {
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
@@ -1093,6 +1168,10 @@ fn batch_with_duplicate_fails_entirely() {
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
@@ -1137,6 +1216,83 @@ fn batch_with_duplicate_fails_entirely() {
 
     let res = att_client.try_submit_batch_as_attestor(&attestor, &items);
     assert!(res.is_err());
+}
+
+#[test]
+fn test_slash_on_invalid_attestation_after_duplicate_merge() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Deploy attestation
+    let attestation_id = env.register(AttestationContract, ());
+    let att_client = AttestationContractClient::new(&env, &attestation_id);
+    let admin = Address::generate(&env);
+    att_client.initialize(&admin, &0u64);
+
+    // Deploy staking
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    let staking_id = env.register(AttestorStakingContract, ());
+    let staking = StakingClient::new(&env, &staking_id);
+    let staking_admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    // Dispute contract is the attestation contract
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &attestation_id,
+        &0u64,
+    );
+    att_client.propose_staking_contract(&admin, &staking_id, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
+
+    // Setup attestor
+    let attestor = Address::generate(&env);
+    att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&attestor, &2_000i128);
+    staking.stake(&attestor, &1_000i128);
+
+    // Submit attestation
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    att_client.submit_attestation_as_attestor(
+        &attestor,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
+    );
+
+    // Open dispute
+    let challenger = Address::generate(&env);
+    let dispute_id = att_client.open_dispute(
+        &challenger,
+        &business,
+        &period,
+        &DisputeType::DataIntegrity,
+        &String::from_str(&env, "bad"),
+    );
+
+    // Resolve dispute as Upheld
+    att_client.resolve_dispute(
+        &dispute_id,
+        &admin,
+        &DisputeOutcome::Upheld,
+        &String::from_str(&env, "upheld"),
+    );
+
+    // Assert slash
+    let stake_info = staking.get_stake(&attestor);
+    assert_eq!(stake_info.unwrap().amount, 0i128);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -1240,6 +1396,10 @@ fn batch_submit_empty_list_handled() {
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
@@ -1302,6 +1462,10 @@ fn staking_contract_reconfiguration_affects_future_checks() {
 
     // Configure attestation to use first staking contract
     register_staking_contract(&env, &att_client, &admin, &staking1_addr);
+    att_client.propose_staking_contract(&admin, &staking1_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
@@ -1321,6 +1485,10 @@ fn staking_contract_reconfiguration_affects_future_checks() {
 
     // Reconfigure to use second staking contract
     register_staking_contract(&env, &att_client, &admin, &staking2_addr);
+    att_client.propose_staking_contract(&admin, &staking2_addr, &3u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &4u64);
 
     // Stake in second contract
     staking2.stake(&attestor, &1_000i128);
@@ -1582,14 +1750,18 @@ fn attestor_submission_fails_when_paused() {
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
     token_client.mint(&attestor, &2_000i128);
     staking.stake(&attestor, &1_000i128);
 
-    // Pause the contract
-    att_client.pause(&admin, &1u64);
+    // Pause the contract (nonce 3: 0=init, 1=propose, 2=commit)
+    att_client.pause(&admin, &3u64);
 
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
@@ -1638,14 +1810,18 @@ fn batch_submission_fails_when_paused() {
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
     token_client.mint(&attestor, &2_000i128);
     staking.stake(&attestor, &1_000i128);
 
-    // Pause the contract
-    att_client.pause(&admin, &1u64);
+    // Pause the contract (nonce 3: 0=init, 1=propose, 2=commit)
+    att_client.pause(&admin, &3u64);
 
     let business = Address::generate(&env);
     let mut items = Vec::new(&env);
@@ -1661,6 +1837,83 @@ fn batch_submission_fails_when_paused() {
 
     let res = att_client.try_submit_batch_as_attestor(&attestor, &items);
     assert!(res.is_err());
+}
+
+#[test]
+fn test_slash_on_invalid_attestation_after_duplicate_merge_2() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Deploy attestation
+    let attestation_id = env.register(AttestationContract, ());
+    let att_client = AttestationContractClient::new(&env, &attestation_id);
+    let admin = Address::generate(&env);
+    att_client.initialize(&admin, &0u64);
+
+    // Deploy staking
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    let staking_id = env.register(AttestorStakingContract, ());
+    let staking = StakingClient::new(&env, &staking_id);
+    let staking_admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    // Dispute contract is the attestation contract
+    staking.initialize(
+        &staking_admin,
+        &token,
+        &treasury,
+        &1_000i128,
+        &attestation_id,
+        &0u64,
+    );
+    att_client.propose_staking_contract(&admin, &staking_id, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
+
+    // Setup attestor
+    let attestor = Address::generate(&env);
+    att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
+    let token_client = token::StellarAssetClient::new(&env, &token);
+    token_client.mint(&attestor, &2_000i128);
+    staking.stake(&attestor, &1_000i128);
+
+    // Submit attestation
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    att_client.submit_attestation_as_attestor(
+        &attestor,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
+    );
+
+    // Open dispute
+    let challenger = Address::generate(&env);
+    let dispute_id = att_client.open_dispute(
+        &challenger,
+        &business,
+        &period,
+        &DisputeType::DataIntegrity,
+        &String::from_str(&env, "bad"),
+    );
+
+    // Resolve dispute as Upheld
+    att_client.resolve_dispute(
+        &dispute_id,
+        &admin,
+        &DisputeOutcome::Upheld,
+        &String::from_str(&env, "upheld"),
+    );
+
+    // Assert slash
+    let stake_info = staking.get_stake(&attestor);
+    assert_eq!(stake_info.unwrap().amount, 0i128);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -1698,6 +1951,10 @@ fn attestor_submission_with_expired_expiry_fails() {
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
@@ -1754,6 +2011,10 @@ fn attestor_submission_with_valid_expiry_succeeds() {
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
@@ -1814,6 +2075,10 @@ fn staking_storage_isolation() {
     let admin = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
@@ -1882,6 +2147,10 @@ fn attestor_pays_fees_on_submission() {
     let fee_collector = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
     att_client.configure_fees(&token, &fee_collector, &1_000i128, &true);
 
     let attestor = Address::generate(&env);
@@ -1942,6 +2211,10 @@ fn batch_submission_collects_fees_per_item() {
     let fee_collector = Address::generate(&env);
     att_client.initialize(&admin, &0u64);
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
     att_client.configure_fees(&token, &fee_collector, &1_000i128, &true);
 
     let attestor = Address::generate(&env);
@@ -1953,6 +2226,15 @@ fn batch_submission_collects_fees_per_item() {
     let attestor_balance_before = balance_client.balance(&attestor);
 
     let business = Address::generate(&env);
+    // Batch submission requires an active (registered + approved) business.
+    att_client.grant_role(&admin, &business, &ROLE_BUSINESS);
+    att_client.register_business(
+        &business,
+        &BytesN::from_array(&env, &[1u8; 32]),
+        &Symbol::new(&env, "US"),
+        &Vec::new(&env),
+    );
+    att_client.approve_business(&admin, &business);
     let mut items = Vec::new(&env);
     items.push_back(BatchAttestationItem {
         business: business.clone(),
@@ -2026,6 +2308,10 @@ fn test_deadline_rollback_unlocks_attestor() {
     );
 
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
@@ -2037,14 +2323,21 @@ fn test_deadline_rollback_unlocks_attestor() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
     att_client.submit_attestation_as_attestor(
-        &attestor, &business, &period, &root,
-        &1_700_000_000u64, &1u32, &None,
+        &attestor,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
 
     // Open dispute — locks the attestor
     let challenger = Address::generate(&env);
     let dispute_id = att_client.open_dispute(
-        &challenger, &business, &period,
+        &challenger,
+        &business,
+        &period,
         &DisputeType::DataIntegrity,
         &String::from_str(&env, "bad data"),
     );
@@ -2069,7 +2362,10 @@ fn test_deadline_rollback_unlocks_attestor() {
     let unlocked = env.as_contract(&attestation_id, || {
         !dispute::is_attestor_locked(&env, &attestor)
     });
-    assert!(unlocked, "attestor should be unlocked after deadline rollback");
+    assert!(
+        unlocked,
+        "attestor should be unlocked after deadline rollback"
+    );
 
     // Verify dispute is closed with rollback resolution
     let dispute = att_client.get_dispute(&dispute_id).unwrap();
@@ -2078,7 +2374,10 @@ fn test_deadline_rollback_unlocks_attestor() {
         assert_eq!(resolution.outcome, DisputeOutcome::Rejected);
         assert_eq!(
             resolution.notes,
-            String::from_str(&env, "Automatic rollback: dispute resolution deadline exceeded")
+            String::from_str(
+                &env,
+                "Automatic rollback: dispute resolution deadline exceeded"
+            )
         );
     } else {
         panic!("expected rollback resolution");
@@ -2115,6 +2414,10 @@ fn test_deadline_rollback_before_deadline_keeps_locked() {
     );
 
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
@@ -2125,13 +2428,20 @@ fn test_deadline_rollback_before_deadline_keeps_locked() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
     att_client.submit_attestation_as_attestor(
-        &attestor, &business, &period, &root,
-        &1_700_000_000u64, &1u32, &None,
+        &attestor,
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
 
     let challenger = Address::generate(&env);
     let dispute_id = att_client.open_dispute(
-        &challenger, &business, &period,
+        &challenger,
+        &business,
+        &period,
         &DisputeType::DataIntegrity,
         &String::from_str(&env, "bad data"),
     );
@@ -2142,13 +2452,19 @@ fn test_deadline_rollback_before_deadline_keeps_locked() {
     // Call check_and_rollback — should do nothing (not past deadline)
     let dispute_ids = soroban_sdk::vec![&env, dispute_id];
     let count = att_client.check_and_rollback_disputes(&admin, &dispute_ids, &10u32);
-    assert_eq!(count, 0, "no disputes should be rolled back before deadline");
+    assert_eq!(
+        count, 0,
+        "no disputes should be rolled back before deadline"
+    );
 
     // Attestor should remain locked
     let still_locked = env.as_contract(&attestation_id, || {
         dispute::is_attestor_locked(&env, &attestor)
     });
-    assert!(still_locked, "attestor should remain locked before deadline");
+    assert!(
+        still_locked,
+        "attestor should remain locked before deadline"
+    );
 
     // Dispute should still be Open
     let dispute = att_client.get_dispute(&dispute_id).unwrap();
@@ -2185,6 +2501,10 @@ fn test_deadline_rollback_multiple_disputes_partial_unlock() {
     );
 
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
@@ -2197,27 +2517,41 @@ fn test_deadline_rollback_multiple_disputes_partial_unlock() {
     let business1 = Address::generate(&env);
     let period1 = String::from_str(&env, "2026-01");
     att_client.submit_attestation_as_attestor(
-        &attestor, &business1, &period1, &root,
-        &1_700_000_000u64, &1u32, &None,
+        &attestor,
+        &business1,
+        &period1,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
 
     let business2 = Address::generate(&env);
     let period2 = String::from_str(&env, "2026-02");
     att_client.submit_attestation_as_attestor(
-        &attestor, &business2, &period2, &root,
-        &1_700_000_000u64, &1u32, &None,
+        &attestor,
+        &business2,
+        &period2,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
 
     let challenger = Address::generate(&env);
 
     // Open disputes against both attestations (attestor locked twice)
     let dispute_id1 = att_client.open_dispute(
-        &challenger, &business1, &period1,
+        &challenger,
+        &business1,
+        &period1,
         &DisputeType::DataIntegrity,
         &String::from_str(&env, "bad 1"),
     );
     let dispute_id2 = att_client.open_dispute(
-        &challenger, &business2, &period2,
+        &challenger,
+        &business2,
+        &period2,
         &DisputeType::RevenueMismatch,
         &String::from_str(&env, "bad 2"),
     );
@@ -2236,7 +2570,10 @@ fn test_deadline_rollback_multiple_disputes_partial_unlock() {
     let still_locked = env.as_contract(&attestation_id, || {
         dispute::is_attestor_locked(&env, &attestor)
     });
-    assert!(still_locked, "attestor should remain locked with second dispute active");
+    assert!(
+        still_locked,
+        "attestor should remain locked with second dispute active"
+    );
 
     // Roll back dispute 2
     let dispute_ids_2 = soroban_sdk::vec![&env, dispute_id2];
@@ -2247,7 +2584,10 @@ fn test_deadline_rollback_multiple_disputes_partial_unlock() {
     let unlocked = env.as_contract(&attestation_id, || {
         !dispute::is_attestor_locked(&env, &attestor)
     });
-    assert!(unlocked, "attestor should be fully unlocked after both disputes rolled back");
+    assert!(
+        unlocked,
+        "attestor should be fully unlocked after both disputes rolled back"
+    );
 }
 
 /// Attestor can submit new attestations after being unlocked by rollback.
@@ -2280,6 +2620,10 @@ fn test_deadline_rollback_attestor_can_submit_after_unlock() {
     );
 
     register_staking_contract(&env, &att_client, &admin, &staking_addr);
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     let attestor = Address::generate(&env);
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
@@ -2291,14 +2635,21 @@ fn test_deadline_rollback_attestor_can_submit_after_unlock() {
     let period1 = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[1u8; 32]);
     att_client.submit_attestation_as_attestor(
-        &attestor, &business1, &period1, &root,
-        &1_700_000_000u64, &1u32, &None,
+        &attestor,
+        &business1,
+        &period1,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &None,
     );
 
     // Open dispute — locks attestor
     let challenger = Address::generate(&env);
     let dispute_id = att_client.open_dispute(
-        &challenger, &business1, &period1,
+        &challenger,
+        &business1,
+        &period1,
         &DisputeType::DataIntegrity,
         &String::from_str(&env, "bad"),
     );
@@ -2323,10 +2674,18 @@ fn test_deadline_rollback_attestor_can_submit_after_unlock() {
     let business2 = Address::generate(&env);
     let period2 = String::from_str(&env, "2026-03");
     att_client.submit_attestation_as_attestor(
-        &attestor, &business2, &period2, &root,
-        &1_700_000_001u64, &1u32, &None,
+        &attestor,
+        &business2,
+        &period2,
+        &root,
+        &1_700_000_001u64,
+        &1u32,
+        &None,
     );
 
     let stored = att_client.get_attestation(&business2, &period2);
-    assert!(stored.is_some(), "attestor should be able to submit after unlock");
+    assert!(
+        stored.is_some(),
+        "attestor should be able to submit after unlock"
+    );
 }

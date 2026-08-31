@@ -177,12 +177,21 @@ fn test_cancel_emits_fee_config_cancelled_event() {
 
     client.propose_fee_config(&admin, &token, &collector, &100i128, &true, &1u64);
 
-    let events_before = env.events().all().len();
-
     client.cancel_pending_fee_config(&admin, &2u64);
 
+    // SDK 22 resets the event buffer at the start of each invocation, so only
+    // the cancel event from this call is visible.
     let all_events = env.events().all();
-    assert!(all_events.len() > events_before);
+    assert!(!all_events.is_empty(), "expected a cancelled event");
+    let last = all_events.last().unwrap();
+    let topics = last.1.clone();
+    assert_eq!(topics.len(), 2);
+    assert_eq!(
+        Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+        TOPIC_FEE_CONFIG_PROPOSED
+    );
+    let ev = FeeConfigCancelledEvent::try_from_val(&env, &last.2).unwrap();
+    assert_eq!(ev.cancelled_by, admin);
 }
 
 #[test]
@@ -454,7 +463,7 @@ fn test_commit_after_long_delay_succeeds() {
 
 #[test]
 fn test_configure_fees_still_works_immediately() {
-    let (_env, client, _admin) = setup();
+    let (env, client, _admin) = setup();
     let token = Address::generate(&env);
     let collector = Address::generate(&env);
 

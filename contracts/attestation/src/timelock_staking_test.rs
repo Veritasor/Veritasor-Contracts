@@ -134,10 +134,7 @@ fn test_commit_overwrites_previously_live_address() {
     advance_time(&env, FEE_TIMELOCK_SECONDS + 1);
     client.commit_staking_contract(&admin, &4u64);
 
-    assert_eq!(
-        client.get_attestor_staking_contract().unwrap(),
-        second
-    );
+    assert_eq!(client.get_attestor_staking_contract().unwrap(), second);
 }
 
 // ════════════════════════════════════════════════════════════════════

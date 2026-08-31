@@ -201,14 +201,7 @@ fn test_cleanup_summary_zero_on_epoch_advance() {
     env.ledger().set_timestamp(FEE_BUCKET_WINDOW_SECONDS);
 
     let business = Address::generate(&env);
-    submit_with_expiry(
-        &client,
-        &env,
-        &business,
-        "202601",
-        1,
-        far_expiry(&env),
-    );
+    submit_with_expiry(&client, &env, &business, "202601", 1, far_expiry(&env));
 
     let summaries = cleanup_summary_events(&env);
     assert!(
@@ -243,14 +236,7 @@ fn test_cleanup_summary_reports_prior_epoch_count() {
 
     // Cross into the next fee-bucket window.
     env.ledger().set_timestamp(FEE_BUCKET_WINDOW_SECONDS * 2);
-    submit_with_expiry(
-        &client,
-        &env,
-        &business,
-        "next",
-        9,
-        far_expiry(&env),
-    );
+    submit_with_expiry(&client, &env, &business, "next", 9, far_expiry(&env));
     assert_eq!(client.get_epoch(), 2);
 
     let summaries = cleanup_summary_events(&env);
