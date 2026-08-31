@@ -1112,6 +1112,25 @@ impl AttestationContract {
 
         let key = DataKey::Attestation(business.clone(), period.clone());
         if env.storage().instance().has(&key) {
+            // Double-submission / expiry-reuse rejection: this business+period
+            // already holds an attestation. When an attestor is known, record
+            // the relevant slashing condition before rejecting the submission.
+            if let Some(attestor) = attestor {
+                let existing: Option<AttestationData> = env.storage().instance().get(&key);
+                let condition = match &existing {
+                    Some(data) if Self::attestation_expired(env, data) => {
+                        events::SlashingCondition::ExpiredReuse
+                    }
+                    _ => events::SlashingCondition::DoubleSubmission,
+                };
+                Self::try_trigger_slash(
+                    env,
+                    condition,
+                    attestor,
+                    1000i128,
+                    Self::next_condition_slash_id(env),
+                );
+            }
             panic!("attestation already exists for this business and period");
         }
         Self::validate_expiry(env, timestamp, expiry_timestamp);
@@ -2996,11 +3015,14 @@ impl AttestationContract {
             d.resolution = OptionalResolution::Some(resolution);
             dispute::store_dispute(&env, &d);
 
-            if is_upheld {
-                let staking_addr = Self::get_attestor_staking_contract(env.clone())
-                    .expect("staking contract not configured");
-                let staking_client = AttestorStakingClient::new(&env, &staking_addr);
-                staking_client.slash(&d.attestor, &1000i128, &dispute_id);
+            if outcome == DisputeOutcome::Upheld {
+                Self::try_trigger_slash(
+                    &env,
+                    events::SlashingCondition::DisputeUpheld,
+                    &d.attestor,
+                    1000i128,
+                    dispute_id,
+                );
             }
             if let Some(attestor) =
                 dispute::get_attestor_for_attestation(&env, &d.business, &d.period)
@@ -3096,6 +3118,48 @@ impl AttestationContract {
         dispute::get_dispute_deadline(&env)
     }
 
+    /// Monotonic id for condition-based slashes (i.e. slashes not associated
+    /// with a user-created dispute). Tracking a per-contract counter keeps each
+    /// condition slash idempotent in the staking contract via `Slashed(id)`.
+    fn next_condition_slash_id(env: &Env) -> u64 {
+        let key = DataKey::ConditionSlashCounter;
+        let next: u64 = env.storage().instance().get(&key).unwrap_or(0) + 1;
+        env.storage().instance().set(&key, &next);
+        next
+    }
+
+    /// Best-effort trigger of a slash for a cataloged `SlashingCondition`.
+    ///
+    /// Reads the configured attestor-staking contract and asks it to slash
+    /// `attestor` by `amount` (keyed by `dispute_id`, which deduplicates the
+    /// slash so it is idempotent per dispute). Emits a `SlashTriggered` event
+    /// carrying the condition so off-chain indexers can attribute the slash to
+    /// the concrete rule that fired.
+    ///
+    /// If no staking contract is configured the helper records the observed
+    /// condition as a zero-amount `SlashTriggered` event and returns `false`
+    /// rather than panicking, keeping slashing fully optional.
+    ///
+    /// # Returns
+    ///
+    /// `true` when the slash was dispatched to the staking contract.
+    fn try_trigger_slash(
+        env: &Env,
+        condition: events::SlashingCondition,
+        attestor: &Address,
+        amount: i128,
+        dispute_id: u64,
+    ) -> bool {
+        let Some(staking_addr) = Self::get_attestor_staking_contract(env.clone()) else {
+            events::emit_slash_triggered(env, condition, attestor, 0, dispute_id);
+            return false;
+        };
+        let staking_client = AttestorStakingClient::new(env, &staking_addr);
+        staking_client.slash(attestor, &amount, &dispute_id);
+        events::emit_slash_triggered(env, condition, attestor, amount, dispute_id);
+        true
+    }
+
     /// Triggers a slash for a resolved dispute and records the event in the audit log.
     pub fn trigger_slash(
         env: Env,
@@ -3121,7 +3185,13 @@ impl AttestationContract {
             args,
         );
 
-        events::emit_slash_triggered(&env, &attestor, amount, dispute_id);
+        events::emit_slash_triggered(
+            &env,
+            events::SlashingCondition::DisputeUpheld,
+            &attestor,
+            amount,
+            dispute_id,
+        );
 
         if let Some(audit_log) = Self::get_audit_log_contract(env.clone()) {
             let audit_client = AuditLogContractClient::new(&env, &audit_log);

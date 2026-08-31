@@ -48,6 +48,7 @@
 //! | `CleanupSummary`            | `cl_sum`       | *(none)*          |
 //! | `BackfillCheckpoint`        | `bkf_chk`      | *(none)*          |
 //! | `DisputeRolledBack`         | `dsp_rb`       | `business`        |
+//! | `SlashTriggered`            | `sl_trg`       | `attestor`        |
 //!
 //! ## Indexer Compatibility Contract
 //!
@@ -178,40 +179,8 @@ pub const TOPIC_BACKFILL_CHECKPOINT: Symbol = symbol_short!("bkf_chk");
 pub const TOPIC_ARCHIVAL_COMPACTED: Symbol = symbol_short!("arc_cmp");
 /// Topic: reputation gating check performed
 pub const TOPIC_REPUTATION_GATE_CHECK: Symbol = symbol_short!("rep_gat");
-/// Topic: delegated-submission permit cancelled (nonce burned)
-pub const TOPIC_PERMIT_CANCELLED: Symbol = symbol_short!("perm_canc");
-/// Topic: attestor slash triggered after an upheld dispute
-pub const TOPIC_SLASH_TRIGGERED: Symbol = symbol_short!("sl_trig");
-/// Topic: relayer gas reported for a delegated submission
-pub const TOPIC_RELAYER_GAS_REPORTED: Symbol = symbol_short!("rl_gas");
-/// Topic: pause scheduled (delayed effective timestamp)
-pub const TOPIC_PAUSE_SCHEDULED: Symbol = symbol_short!("p_sch");
-/// Topic: scheduled pause cancelled
-pub const TOPIC_PAUSE_SCHEDULED_CANCELLED: Symbol = symbol_short!("p_canc");
-/// Topic: new multisig owner acknowledged recovery-phrase custody
-pub const TOPIC_OWNER_RECOVERY_PHRASE_ACKNOWLEDGED: Symbol = symbol_short!("own_ack");
-/// Topic: staking contract rebinding proposed (24 h timelock)
-pub const TOPIC_STAKING_CONTRACT_PROPOSED: Symbol = symbol_short!("stk_prp");
-/// Topic: staking contract rebinding committed
-pub const TOPIC_STAKING_CONTRACT_COMMITTED: Symbol = symbol_short!("stk_cmt");
-/// Topic: staking contract rebinding cancelled
-pub const TOPIC_STAKING_CONTRACT_CANCELLED: Symbol = symbol_short!("stk_cnc");
-/// Topic: admin voting weight changed
-pub const TOPIC_ADMIN_WEIGHT_CHANGED: Symbol = symbol_short!("adm_wt");
-/// Topic: attestor locked while a dispute is open
-pub const TOPIC_ATTESTOR_LOCKED_FOR_DISPUTE: Symbol = symbol_short!("att_lck");
-/// Topic: vote-weight snapshot captured at proposal creation
-pub const TOPIC_VOTE_WEIGHT_SNAPSHOT_CREATED: Symbol = symbol_short!("vw_snap");
-/// Topic: expired multisig proposal cleaned up
-pub const TOPIC_PROPOSAL_CLEANED: Symbol = symbol_short!("prp_cln");
-/// Topic: dispute automatically rolled back after its deadline
-pub const TOPIC_DISPUTE_ROLLED_BACK: Symbol = symbol_short!("dsp_rb");
-/// Topic: DAO controller rotation proposed
-pub const TOPIC_DAO_ROTATION_PROPOSED: Symbol = symbol_short!("dao_prp");
-/// Topic: DAO controller rotation accepted
-pub const TOPIC_DAO_ROTATION_ACCEPTED: Symbol = symbol_short!("dao_acc");
-/// Topic: orphaned revocation index entries cleaned up
-pub const TOPIC_REVOCATION_INDEX_CLEANED: Symbol = symbol_short!("rv_cln");
+/// Topic: a slashing condition was triggered against an attestor
+pub const TOPIC_SLASH_TRIGGERED: Symbol = symbol_short!("sl_trg");
 
 // ════════════════════════════════════════════════════════════════════
 //  Normalized Event Data Structures
@@ -853,6 +822,33 @@ pub struct DisputeRolledBackEvent {
     pub deadline_seconds: u64,
 }
 
+/// A catalog of slashing conditions that may trigger a slash against an attestor.
+///
+/// Every condition carries a stable numeric `code()` used as the canonical
+/// identifier for off-chain indexers and dashboards. Codes are append-only and
+/// MUST NOT be repurposed once assigned.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlashingCondition {
+    /// The attestor submitted a duplicate attestation for a business+period
+    /// that already has an active (non-revoked) attestation.
+    DoubleSubmission = 1,
+    /// The attestor resubmitted an attestation for a period that was revoked.
+    RevokedResubmit = 2,
+    /// The attestor attempted to reuse an expired attestation as if it were
+    /// still valid (expiry-reuse).
+    ExpiredReuse = 3,
+    /// A dispute against an attestor's attestation was resolved as Upheld.
+    DisputeUpheld = 4,
+}
+
+impl SlashingCondition {
+    /// Stable numeric code for indexers and dashboards.
+    pub fn code(&self) -> u32 {
+        *self as u32
+    }
+}
+
 /// Normalized payload for `SlashTriggered` events.
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -860,6 +856,8 @@ pub struct SlashTriggeredEvent {
     pub attestor: Address,
     pub amount: i128,
     pub dispute_id: u64,
+    /// The slashing condition that provoked this slash.
+    pub condition: SlashingCondition,
 }
 
 /// Normalized payload for `RelayerGasReported` events.
@@ -1215,11 +1213,18 @@ pub fn emit_permit_cancelled(env: &Env, business: &Address, nonce: u64, permit_e
 }
 
 /// Emit a `SlashTriggered` event.
-pub fn emit_slash_triggered(env: &Env, attestor: &Address, amount: i128, dispute_id: u64) {
+pub fn emit_slash_triggered(
+    env: &Env,
+    condition: SlashingCondition,
+    attestor: &Address,
+    amount: i128,
+    dispute_id: u64,
+) {
     let event = SlashTriggeredEvent {
         attestor: attestor.clone(),
         amount,
         dispute_id,
+        condition,
     };
     env.events()
         .publish((TOPIC_SLASH_TRIGGERED, attestor.clone()), event);
