@@ -39,6 +39,8 @@
 use super::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, Env, String};
+use std::vec;
+use std::vec::Vec;
 
 // ════════════════════════════════════════════════════════════════════
 //  Test helpers
@@ -46,12 +48,7 @@ use soroban_sdk::{Address, Env, String};
 
 /// Canonical setup: initialised registry ready for key registration.
 /// Returns `(env, client, admin, initial_impl)`.
-fn setup() -> (
-    Env,
-    AttestationRegistryClient<'static>,
-    Address,
-    Address,
-) {
+fn setup() -> (Env, AttestationRegistryClient<'static>, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -69,11 +66,19 @@ fn setup() -> (
 fn period(env: &Env, year: u32, month: u32) -> String {
     // Zero-pad month so keys are consistently 7 chars (e.g. "2026-01").
     let s = match month {
-        1  => "2026-01", 2  => "2026-02", 3  => "2026-03",
-        4  => "2026-04", 5  => "2026-05", 6  => "2026-06",
-        7  => "2026-07", 8  => "2026-08", 9  => "2026-09",
-        10 => "2026-10", 11 => "2026-11", 12 => "2026-12",
-        _  => "2026-01",
+        1 => "2026-01",
+        2 => "2026-02",
+        3 => "2026-03",
+        4 => "2026-04",
+        5 => "2026-05",
+        6 => "2026-06",
+        7 => "2026-07",
+        8 => "2026-08",
+        9 => "2026-09",
+        10 => "2026-10",
+        11 => "2026-11",
+        12 => "2026-12",
+        _ => "2026-01",
     };
     // Allow overriding year prefix for uniqueness in tests that need it.
     let _ = year; // year parameter reserved for future parametrisation
@@ -82,19 +87,12 @@ fn period(env: &Env, year: u32, month: u32) -> String {
 
 /// Register a single `(business, period_key)` pair and return it for later
 /// assertion use.  Mirrors what a caller would do before batch submission.
-fn register_key(
-    client: &AttestationRegistryClient,
-    business: &Address,
-    key: &String,
-) {
+fn register_key(client: &AttestationRegistryClient, business: &Address, key: &String) {
     client.register_attestation_key(business, key);
 }
 
 /// Batch-register a slice of `(business, key)` pairs in order.
-fn register_batch(
-    client: &AttestationRegistryClient,
-    items: &[(&Address, &String)],
-) {
+fn register_batch(client: &AttestationRegistryClient, items: &[(&Address, &String)]) {
     for (business, key) in items {
         register_key(client, business, key);
     }
@@ -570,11 +568,26 @@ fn registry_snapshot_matches_batch_input_exactly() {
         let b1 = Address::generate(&env);
         let b2 = Address::generate(&env);
         vec![
-            BatchItem { business: b1.clone(), period_key: period(&env, 2026, 1) },
-            BatchItem { business: b1.clone(), period_key: period(&env, 2026, 2) },
-            BatchItem { business: b1.clone(), period_key: period(&env, 2026, 3) },
-            BatchItem { business: b2.clone(), period_key: period(&env, 2026, 1) },
-            BatchItem { business: b2.clone(), period_key: period(&env, 2026, 4) },
+            BatchItem {
+                business: b1.clone(),
+                period_key: period(&env, 2026, 1),
+            },
+            BatchItem {
+                business: b1.clone(),
+                period_key: period(&env, 2026, 2),
+            },
+            BatchItem {
+                business: b1.clone(),
+                period_key: period(&env, 2026, 3),
+            },
+            BatchItem {
+                business: b2.clone(),
+                period_key: period(&env, 2026, 1),
+            },
+            BatchItem {
+                business: b2.clone(),
+                period_key: period(&env, 2026, 4),
+            },
         ]
     };
 
@@ -726,11 +739,7 @@ fn registry_keys_survive_rollback() {
     assert_eq!(client.get_current_version(), Some(1u32));
 
     // Both keys must still be present even though implementation rolled back.
-    assert_registry_state(
-        &client,
-        &[(&business, &key_v1), (&business, &key_v2)],
-        &[],
-    );
+    assert_registry_state(&client, &[(&business, &key_v1), (&business, &key_v2)], &[]);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -812,7 +821,8 @@ fn end_to_end_guard_flow_n_items_consistent() {
         assert!(
             !client.has_attestation_key(b, k),
             "pre-flight failed: key ({:?}, {:?}) was already registered",
-            b, k
+            b,
+            k
         );
     }
 
@@ -847,7 +857,8 @@ fn end_to_end_guard_flow_n_items_consistent() {
         assert!(
             result.is_err(),
             "replay of ({:?}, {:?}) was not rejected",
-            b, k
+            b,
+            k
         );
     }
 }

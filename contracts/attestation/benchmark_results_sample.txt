@@ -1,9 +1,9 @@
 === submit_attestation (no fee) ===
-CPU instructions: 35750
-Memory bytes: 5648
+CPU instructions: 154345
+Memory bytes: 16022
 === submit_attestation (with fee) ===
-CPU instructions: 150524
-Memory bytes: 21975
+CPU instructions: 292898
+Memory bytes: 35786
 === verify_attestation ===
 CPU instructions: 0
 Memory bytes: 0
