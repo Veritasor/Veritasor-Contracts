@@ -36,9 +36,11 @@
 //! See `docs/attestation-vote-weight-snapshot.md` for the full threat model,
 //! security notes, and migration considerations.
 
-use soroban_sdk::{contracttype, symbol_short, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{
+    contracttype, signature, symbol_short, Address, Env, Signature, String, Symbol, Vec,
+};
 
-use crate::access_control::{emergency_pause_execute, is_paused, set_paused};
+use crate::access_control::{is_paused, set_paused};
 use crate::events;
 
 /// Default proposal expiry, expressed in ledger sequences after creation.
@@ -703,7 +705,7 @@ pub fn emergency_pause(env: &Env, signer1: &Address, signer2: &Address) {
 
     // Ensure distinct signers (different hardware keys)
     assert!(
-        signer1 != signer2,
+        addr1 != addr2,
         "both signatures must come from distinct keys"
     );
 
@@ -747,9 +749,9 @@ pub fn cleanup_expired_proposals(env: &Env, limit: u32) -> u32 {
     let current_seq = env.ledger().sequence();
     let mut cleaned = 0;
     let max = if (limit as u64) < next_id {
-        limit as u64
+        limit
     } else {
-        next_id
+        next_id as u32
     };
     for id in 0..max {
         let id_u64 = id as u64;
@@ -801,9 +803,9 @@ pub fn revoke_approval(env: &Env, approver: &Address, id: u64) {
     let pos = approvals.iter().position(|a| a == *approver);
     if let Some(idx) = pos {
         let last = approvals.len() - 1;
-        if idx as u32 != last {
+        if idx != last {
             let last_addr = approvals.get(last).unwrap();
-            approvals.set(idx as u32, last_addr);
+            approvals.set(idx, last_addr);
         }
         approvals.pop_back();
         env.storage()

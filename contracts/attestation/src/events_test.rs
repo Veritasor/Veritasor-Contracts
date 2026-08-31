@@ -1541,7 +1541,7 @@ fn test_attestation_revoked_and_proof_hash_updated_preserve_call_order() {
 
     assert_eq!(
         end - start,
-        periods.len() as u32,
+        periods.len(),
         "expected exactly one att_rev event per revocation"
     );
 

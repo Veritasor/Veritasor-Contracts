@@ -516,6 +516,8 @@ fn test_fuzz_grant_revoke_role_random_bitmaps() {
     ];
     let invalid_bitmaps = [0b10000u32, 0b100000u32, 0xFFFFu32, 0xDEADu32, 0xFFFFFFFFu32];
 
+    let user1 = soroban_sdk::Address::generate(&e);
+
     for &roles in valid_roles.iter() {
         access_control::set_roles(&e, &user1, 0u32);
         if roles == 0 {

@@ -203,8 +203,7 @@ fn vw_snapshot_event_emitted_with_matching_fields() {
         "exactly one VoteWeightSnapshotCreated event per create_proposal",
     );
     let (_cid, _topics, data) = new_events.last().unwrap();
-    let payload: VoteWeightSnapshotCreatedEvent =
-        VoteWeightSnapshotCreatedEvent::try_from_val(&env, data).unwrap();
+    let payload: VoteWeightSnapshotCreatedEvent = soroban_sdk::FromVal::from_val(&env, &data);
     assert_eq!(payload.proposal_id, id);
     assert_eq!(payload.owners_count, 3);
     assert_eq!(payload.threshold, 3);

@@ -8,8 +8,8 @@ extern crate std;
 
 use core::cmp::Ordering;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, token, Address, BytesN, Env, IntoVal, String, Symbol,
-    TryIntoVal, Vec,
+    contract, contractimpl, contracttype, signature, token, Address, BytesN, Env, Signature,
+    String, Symbol, TryIntoVal, Vec,
 };
 
 use veritasor_common::merkle;
@@ -93,10 +93,7 @@ pub use access_control::{ROLE_ADMIN, ROLE_ATTESTOR, ROLE_BUSINESS, ROLE_OPERATOR
 pub use dispute::{
     Dispute, DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType, OptionalResolution,
 };
-pub use dynamic_fees::{
-    add_relayer_gas, compute_fee, get_relayer_gas, DataKey, FeeConfig, PendingFeeConfig,
-    FEE_TIMELOCK_SECONDS,
-};
+pub use dynamic_fees::{add_relayer_gas, compute_fee, get_relayer_gas, DataKey, FeeConfig};
 pub use dynamic_fees::{ArchivePointerRecord, CompactionRetentionPolicy};
 pub use dynamic_fees::{RevokeProposal, DEFAULT_REVOKE_GRACE_SECONDS};
 pub use events::{
@@ -1380,7 +1377,7 @@ impl AttestationContract {
     pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
         if let Some(att_data) = env
             .storage()
-            .instance()
+            .persistent()
             .get::<_, AttestationData>(&DataKey::Attestation(business.clone(), period.clone()))
         {
             env.storage()
@@ -1390,20 +1387,24 @@ impl AttestationContract {
         }
 
         // Try reading from archive
-        let archive_key = DataKey::ArchivedAttestation(business.clone(), period.clone());
+        let archive_key = DataKey::AttestationSnapshot(business.clone(), period.clone());
         if let Some(archived_att_data) = env
             .storage()
-            .instance()
+            .persistent()
             .get::<_, AttestationData>(&archive_key)
         {
+            let current_config = network_config::get_config(&env);
+
             // Rehydrate back to active storage
             let active_key = DataKey::Attestation(business.clone(), period.clone());
             env.storage()
-                .instance()
+                .persistent()
                 .set(&active_key, &archived_att_data);
-            env.storage()
-                .instance()
-                .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+            env.storage().persistent().extend_ttl(
+                &active_key,
+                current_config.min_persistent_entry_ttl,
+                current_config.max_entry_ttl,
+            );
 
             // Emit rehydrate event
             events::emit_rehydrated_from_archive(&env, &business, &period, archived_att_data.3);
@@ -1868,31 +1869,38 @@ impl AttestationContract {
                 .instance()
                 .get::<_, AttestationData>(&DataKey::Attestation(business.clone(), period.clone()))
             {
-                env.storage()
-                    .instance()
-                    .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+                let current_config = network_config::get_config(&env);
+                env.storage().persistent().extend_ttl(
+                    &DataKey::Attestation(business.clone(), period.clone()),
+                    current_config.min_persistent_entry_ttl,
+                    current_config.max_entry_ttl,
+                );
                 result.push_back((
                     period.clone(),
-                    Some(att_data.clone()),
+                    att_data.clone(),
                     Self::get_revocation_info(env.clone(), business.clone(), period.clone()),
                 ));
                 found = true;
             }
 
             if !found {
-                let archive_key = DataKey::ArchivedAttestation(business.clone(), period.clone());
+                let archive_key = DataKey::AttestationSnapshot(business.clone(), period.clone());
                 if let Some(archived_att_data) = env
                     .storage()
-                    .instance()
+                    .persistent()
                     .get::<_, AttestationData>(&archive_key)
                 {
+                    let current_config = network_config::get_config(&env);
+
                     let active_key = DataKey::Attestation(business.clone(), period.clone());
                     env.storage()
-                        .instance()
+                        .persistent()
                         .set(&active_key, &archived_att_data);
-                    env.storage()
-                        .instance()
-                        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+                    env.storage().persistent().extend_ttl(
+                        &active_key,
+                        current_config.min_persistent_entry_ttl,
+                        current_config.max_entry_ttl,
+                    );
 
                     events::emit_rehydrated_from_archive(
                         &env,
@@ -1900,11 +1908,11 @@ impl AttestationContract {
                         &period,
                         archived_att_data.3,
                     );
-                    env.storage().instance().remove(&archive_key);
+                    env.storage().persistent().remove(&archive_key);
 
                     result.push_back((
                         period.clone(),
-                        Some(archived_att_data),
+                        archived_att_data,
                         Self::get_revocation_info(env.clone(), business.clone(), period.clone()),
                     ));
                 }
@@ -2139,12 +2147,11 @@ impl AttestationContract {
     pub fn emergency_pause(
         env: Env,
         caller: Address,
-        signer1: Address,
-        signer2: Address,
+        sig1: Signature,
+        sig2: Signature,
         nonce: u64,
     ) {
-        access_control::require_admin(&env, &caller);
-        let admin = dynamic_fees::require_admin(&env);
+        let admin = access_control::require_admin(&env, &caller);
         replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
         multisig::emergency_pause(&env, &signer1, &signer2);
     }

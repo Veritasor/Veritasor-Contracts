@@ -297,15 +297,18 @@ fn test_execute_add_owner_proposal() {
     let events = env.events().all();
     let (_cid, topics, data) = events.last().unwrap();
     assert_eq!(
-        Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
-        crate::events::TOPIC_OWNER_RECOVERY_PHRASE_ACKNOWLEDGED
+        topics.get(0).unwrap(),
+        soroban_sdk::IntoVal::into_val(
+            &crate::events::TOPIC_OWNER_RECOVERY_PHRASE_ACKNOWLEDGED,
+            &env
+        )
     );
     assert_eq!(
         Address::try_from_val(&env, &topics.get(1).unwrap()).unwrap(),
         new_owner
     );
     let event_data: crate::events::OwnerRecoveryPhraseAcknowledgedEvent =
-        crate::events::OwnerRecoveryPhraseAcknowledgedEvent::try_from_val(&env, &data).unwrap();
+        soroban_sdk::FromVal::from_val(&env, &data);
     assert_eq!(event_data.new_owner, new_owner);
 }
 

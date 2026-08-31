@@ -1213,13 +1213,7 @@ pub fn emit_permit_cancelled(env: &Env, business: &Address, nonce: u64, permit_e
 }
 
 /// Emit a `SlashTriggered` event.
-pub fn emit_slash_triggered(
-    env: &Env,
-    condition: SlashingCondition,
-    attestor: &Address,
-    amount: i128,
-    dispute_id: u64,
-) {
+pub fn emit_slash_triggered(env: &Env, attestor: &Address, amount: i128, dispute_id: u64) {
     let event = SlashTriggeredEvent {
         attestor: attestor.clone(),
         amount,
@@ -2381,7 +2375,7 @@ pub fn emit_rehydrated_from_archive(
         business.clone(),
         period.clone(),
     );
-    env.events().publish(topics, total_fee);
+    env.events().publish(topics, source_epoch);
 }
 
 /// Emit a `ReputationGateCheck` event.

@@ -85,7 +85,7 @@ fn reputation_gating_disabled_by_default_passthrough() {
     // Setup attestor with stake
     let staking = StakingClient::new(&env, &staking_addr);
     let attestor = Address::generate(&env);
-    let token_client = token::StellarAssetClient::new(&env, &token);
+    let token_client = token::Client::new(&env, &token);
 
     // Mint tokens to attestor
     token_client.mint(&attestor, &1_000i128);
@@ -179,7 +179,7 @@ fn reputation_score_zero_below_floor() {
 
     // Setup attestor with NO stake (reputation = 0)
     let attestor = Address::generate(&env);
-    let _token_client = token::StellarAssetClient::new(&env, &token);
+    let _token_client = token::Client::new(&env, &token);
 
     // Attestor is NOT eligible (no stake), so submit_attestation_as_attestor should fail
     // even before reputation check (due to staking eligibility check)
@@ -224,7 +224,7 @@ fn reputation_score_below_floor_rejected() {
 
     // Setup attestor with some stake (less than min_reputation)
     let attestor = Address::generate(&env);
-    let token_client = token::StellarAssetClient::new(&env, &token);
+    let token_client = token::Client::new(&env, &token);
 
     // Mint tokens to attestor
     token_client.mint(&attestor, &1_000i128);
@@ -274,7 +274,7 @@ fn reputation_score_at_threshold_accepted() {
 
     // Setup attestor with exactly 500 stake
     let attestor = Address::generate(&env);
-    let token_client = token::StellarAssetClient::new(&env, &token);
+    let token_client = token::Client::new(&env, &token);
 
     // Mint tokens to attestor
     token_client.mint(&attestor, &1_000i128);
@@ -326,7 +326,7 @@ fn reputation_score_above_floor_accepted() {
 
     // Setup attestor with 1000 stake (well above floor)
     let attestor = Address::generate(&env);
-    let token_client = token::StellarAssetClient::new(&env, &token);
+    let token_client = token::Client::new(&env, &token);
 
     // Mint tokens to attestor
     token_client.mint(&attestor, &2_000i128);

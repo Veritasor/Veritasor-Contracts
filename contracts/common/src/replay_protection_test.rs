@@ -2567,7 +2567,7 @@ mod proptest_nonce_monotonicity {
     use std::collections::BTreeMap;
 
     use proptest::prelude::*;
-    use proptest_state_machine::ReferenceStateMachine;
+    use proptest_state_machine::{proptest_state_machine, ReferenceStateMachine};
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{Address, Env};
 
@@ -2656,9 +2656,8 @@ mod proptest_nonce_monotonicity {
             ];
 
             // Correct nonce submission: use the exact current nonce.
-            let correct_channels = channels.clone();
             let correct_submit = channel.clone().prop_flat_map(move |ch| {
-                let current = correct_channels.get(&ch).copied().unwrap_or(0);
+                let current = state.channels.get(&ch).copied().unwrap_or(0);
                 Just(NonceCommand::SubmitNonce {
                     channel_id: ch,
                     nonce: current,
@@ -2668,9 +2667,8 @@ mod proptest_nonce_monotonicity {
             // Stale nonce: a value below the current nonce for the channel.
             // If current = 0, there is no stale value below 0, so generate
             // an arbitrary wrong value instead.
-            let stale_channels = channels.clone();
             let stale_submit = channel.clone().prop_flat_map(move |ch| {
-                let current = stale_channels.get(&ch).copied().unwrap_or(0);
+                let current = state.channels.get(&ch).copied().unwrap_or(0);
                 if current > 0 {
                     (0..current)
                         .prop_map(move |stale| NonceCommand::SubmitNonce {

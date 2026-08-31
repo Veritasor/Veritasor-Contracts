@@ -4,27 +4,7 @@ use crate::{LenderConsumerContract, LenderConsumerContractClient, REJECTION_REVO
 use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String, Vec};
 use veritasor_attestation::AttestationContract;
 use veritasor_attestation::AttestationContractClient;
-use veritasor_lender_access_list::{
-    LenderAccessListContract, LenderAccessListContractClient, LenderMetadata,
-};
-
-fn setup_lender(
-    access_list_client: &LenderAccessListContractClient<'_>,
-    admin: &Address,
-    lender: &Address,
-    tier: u32,
-) {
-    access_list_client.set_lender(
-        admin,
-        lender,
-        &tier,
-        &LenderMetadata {
-            name: String::from_str(&access_list_client.env, "Lender"),
-            url: String::from_str(&access_list_client.env, ""),
-            notes: String::from_str(&access_list_client.env, ""),
-        },
-    );
-}
+use veritasor_lender_access_list::{LenderAccessListClient, LenderAccessListContract};
 
 fn setup_env() -> (
     Env,

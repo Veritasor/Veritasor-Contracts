@@ -621,21 +621,6 @@ fn test_verify_merkle_proof_invalid_proof() {
 fn test_replay_nonce_channel_isolation_admin_vs_business() {
     let (env, client, admin, _contract_id) = setup();
     let business = Address::generate(&env);
-    
-    // Perform admin operation that increments admin channel nonce
-    let token = Address::generate(&env);
-    let collector = Address::generate(&env);
-    client.propose_fee_config(&admin, &token, &collector, &100i128, &true, &1u64);
-    
-    // Admin channel nonce should be incremented
-    let admin_nonce = client.get_replay_nonce(&admin, &NONCE_CHANNEL_ADMIN);
-    assert_eq!(admin_nonce, 2u64); // initialize (0->1) + propose_fee_config (1->2)
-    
-    // Business channel nonce should still be 0 (unchanged)
-    let business_nonce = client.get_replay_nonce(&admin, &NONCE_CHANNEL_BUSINESS);
-    assert_eq!(business_nonce, 0u64);
-    
-    // Submit attestation which uses business channel
     let period = String::from_str(&env, "202401");
 
     let leaf = BytesN::from_array(&env, &[1u8; 32]);
@@ -677,13 +662,7 @@ fn test_verify_merkle_proof_revoked_attestation() {
     );
 
     // Revoke the attestation
-    client.revoke_attestation(
-        &admin,
-        &business,
-        &period,
-        &String::from_str(&env, "test revocation"),
-        &0u64,
-    );
+    client.revoke_attestation(&admin, &business, &period);
 
     // Should return false for revoked attestation
     let mut proof = soroban_sdk::Vec::new(&env);
@@ -693,12 +672,9 @@ fn test_verify_merkle_proof_revoked_attestation() {
 }
 
 #[test]
-fn test_replay_nonce_different_actors_same_channel() {
-    let (env, client, admin, _contract_id) = setup();
-    let business1 = Address::generate(&env);
-    let business2 = Address::generate(&env);
-    
-    // Submit attestation for business1
+fn test_verify_merkle_proof_single_leaf_tree() {
+    let (env, client, _admin, _contract_id) = setup();
+    let business = Address::generate(&env);
     let period = String::from_str(&env, "202401");
 
     // Single leaf tree: leaf is the root
