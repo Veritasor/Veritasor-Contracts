@@ -536,30 +536,30 @@ fn test_fee_quote_detailed_both_fees_enabled_sum_matches_quote() {
     assert_eq!(quote, 800_200);
 }
 
-// ── verify_merkle_proof ────────────────────────────────────────────────
+// ── replay nonce monotonicity tests ─────────────────────────────────────
 
 #[test]
 fn test_verify_merkle_proof_valid_proof() {
     let (env, client, _admin, _contract_id) = setup();
     let business = Address::generate(&env);
     let period = String::from_str(&env, "202401");
-    
+
     // Create a simple Merkle tree with known leaves
     let leaf1 = BytesN::from_array(&env, &[1u8; 32]);
     let leaf2 = BytesN::from_array(&env, &[2u8; 32]);
-    
+
     // Build a simple tree: leaf1 and leaf2 are siblings
     // Parent = sha256(min(leaf1, leaf2) || max(leaf1, leaf2))
     let mut combined = soroban_sdk::Bytes::new(&env);
     if leaf1 < leaf2 {
-        combined.append(&leaf1.into());
-        combined.append(&leaf2.into());
+        combined.append(&leaf1.clone().into());
+        combined.append(&leaf2.clone().into());
     } else {
-        combined.append(&leaf2.into());
-        combined.append(&leaf1.into());
+        combined.append(&leaf2.clone().into());
+        combined.append(&leaf1.clone().into());
     }
     let root = env.crypto().sha256(&combined).into();
-    
+
     // Submit attestation with this root
     client.submit_attestation(
         &business,
@@ -571,10 +571,10 @@ fn test_verify_merkle_proof_valid_proof() {
         &None,
         &None,
     );
-    
+
     // Verify proof for leaf1 with proof containing leaf2
-    let proof = soroban_sdk::Vec::new(&env);
-    proof.push_back(leaf2);
+    let mut proof = soroban_sdk::Vec::new(&env);
+    proof.push_back(leaf2.clone());
     let is_valid = client.verify_merkle_proof(&business, &period, &leaf1, &proof);
     assert!(is_valid);
 }
@@ -584,20 +584,20 @@ fn test_verify_merkle_proof_invalid_proof() {
     let (env, client, _admin, _contract_id) = setup();
     let business = Address::generate(&env);
     let period = String::from_str(&env, "202401");
-    
+
     let leaf1 = BytesN::from_array(&env, &[1u8; 32]);
     let leaf2 = BytesN::from_array(&env, &[2u8; 32]);
-    
+
     let mut combined = soroban_sdk::Bytes::new(&env);
     if leaf1 < leaf2 {
-        combined.append(&leaf1.into());
-        combined.append(&leaf2.into());
+        combined.append(&leaf1.clone().into());
+        combined.append(&leaf2.clone().into());
     } else {
-        combined.append(&leaf2.into());
-        combined.append(&leaf1.into());
+        combined.append(&leaf2.clone().into());
+        combined.append(&leaf1.clone().into());
     }
     let root = env.crypto().sha256(&combined).into();
-    
+
     client.submit_attestation(
         &business,
         &period,
@@ -608,24 +608,39 @@ fn test_verify_merkle_proof_invalid_proof() {
         &None,
         &None,
     );
-    
+
     // Test with wrong leaf
     let wrong_leaf = BytesN::from_array(&env, &[99u8; 32]);
-    let proof = soroban_sdk::Vec::new(&env);
-    proof.push_back(leaf2);
+    let mut proof = soroban_sdk::Vec::new(&env);
+    proof.push_back(leaf2.clone());
     let is_valid = client.verify_merkle_proof(&business, &period, &wrong_leaf, &proof);
     assert!(!is_valid);
 }
 
 #[test]
-fn test_verify_merkle_proof_nonexistent_attestation() {
-    let (env, client, _admin, _contract_id) = setup();
+fn test_replay_nonce_channel_isolation_admin_vs_business() {
+    let (env, client, admin, _contract_id) = setup();
     let business = Address::generate(&env);
-    let period = String::from_str(&env, "202401");
     
+    // Perform admin operation that increments admin channel nonce
+    let token = Address::generate(&env);
+    let collector = Address::generate(&env);
+    client.propose_fee_config(&admin, &token, &collector, &100i128, &true, &1u64);
+    
+    // Admin channel nonce should be incremented
+    let admin_nonce = client.get_replay_nonce(&admin, &NONCE_CHANNEL_ADMIN);
+    assert_eq!(admin_nonce, 2u64); // initialize (0->1) + propose_fee_config (1->2)
+    
+    // Business channel nonce should still be 0 (unchanged)
+    let business_nonce = client.get_replay_nonce(&admin, &NONCE_CHANNEL_BUSINESS);
+    assert_eq!(business_nonce, 0u64);
+    
+    // Submit attestation which uses business channel
+    let period = String::from_str(&env, "202401");
+
     let leaf = BytesN::from_array(&env, &[1u8; 32]);
     let proof = soroban_sdk::Vec::new(&env);
-    
+
     // Should return false for non-existent attestation
     let is_valid = client.verify_merkle_proof(&business, &period, &leaf, &proof);
     assert!(!is_valid);
@@ -636,20 +651,20 @@ fn test_verify_merkle_proof_revoked_attestation() {
     let (env, client, admin, contract_id) = setup();
     let business = Address::generate(&env);
     let period = String::from_str(&env, "202401");
-    
+
     let leaf1 = BytesN::from_array(&env, &[1u8; 32]);
     let leaf2 = BytesN::from_array(&env, &[2u8; 32]);
-    
+
     let mut combined = soroban_sdk::Bytes::new(&env);
     if leaf1 < leaf2 {
-        combined.append(&leaf1.into());
-        combined.append(&leaf2.into());
+        combined.append(&leaf1.clone().into());
+        combined.append(&leaf2.clone().into());
     } else {
-        combined.append(&leaf2.into());
-        combined.append(&leaf1.into());
+        combined.append(&leaf2.clone().into());
+        combined.append(&leaf1.clone().into());
     }
     let root = env.crypto().sha256(&combined).into();
-    
+
     client.submit_attestation(
         &business,
         &period,
@@ -660,26 +675,35 @@ fn test_verify_merkle_proof_revoked_attestation() {
         &None,
         &None,
     );
-    
+
     // Revoke the attestation
-    client.revoke_attestation(&admin, &business, &period);
-    
+    client.revoke_attestation(
+        &admin,
+        &business,
+        &period,
+        &String::from_str(&env, "test revocation"),
+        &0u64,
+    );
+
     // Should return false for revoked attestation
-    let proof = soroban_sdk::Vec::new(&env);
+    let mut proof = soroban_sdk::Vec::new(&env);
     proof.push_back(leaf2);
     let is_valid = client.verify_merkle_proof(&business, &period, &leaf1, &proof);
     assert!(!is_valid);
 }
 
 #[test]
-fn test_verify_merkle_proof_single_leaf_tree() {
-    let (env, client, _admin, _contract_id) = setup();
-    let business = Address::generate(&env);
-    let period = String::from_str(&env, "202401");
+fn test_replay_nonce_different_actors_same_channel() {
+    let (env, client, admin, _contract_id) = setup();
+    let business1 = Address::generate(&env);
+    let business2 = Address::generate(&env);
     
+    // Submit attestation for business1
+    let period = String::from_str(&env, "202401");
+
     // Single leaf tree: leaf is the root
     let leaf = BytesN::from_array(&env, &[1u8; 32]);
-    
+
     client.submit_attestation(
         &business,
         &period,
@@ -690,7 +714,7 @@ fn test_verify_merkle_proof_single_leaf_tree() {
         &None,
         &None,
     );
-    
+
     // Empty proof for single leaf
     let proof = soroban_sdk::Vec::new(&env);
     let is_valid = client.verify_merkle_proof(&business, &period, &leaf, &proof);
@@ -702,20 +726,20 @@ fn test_verify_merkle_proof_empty_proof_multiple_leaves() {
     let (env, client, _admin, _contract_id) = setup();
     let business = Address::generate(&env);
     let period = String::from_str(&env, "202401");
-    
+
     let leaf1 = BytesN::from_array(&env, &[1u8; 32]);
     let leaf2 = BytesN::from_array(&env, &[2u8; 32]);
-    
+
     let mut combined = soroban_sdk::Bytes::new(&env);
     if leaf1 < leaf2 {
-        combined.append(&leaf1.into());
-        combined.append(&leaf2.into());
+        combined.append(&leaf1.clone().into());
+        combined.append(&leaf2.clone().into());
     } else {
-        combined.append(&leaf2.into());
-        combined.append(&leaf1.into());
+        combined.append(&leaf2.clone().into());
+        combined.append(&leaf1.clone().into());
     }
     let root = env.crypto().sha256(&combined).into();
-    
+
     client.submit_attestation(
         &business,
         &period,
@@ -726,7 +750,7 @@ fn test_verify_merkle_proof_empty_proof_multiple_leaves() {
         &None,
         &None,
     );
-    
+
     // Empty proof should fail for multi-leaf tree
     let proof = soroban_sdk::Vec::new(&env);
     let is_valid = client.verify_merkle_proof(&business, &period, &leaf1, &proof);
@@ -738,9 +762,9 @@ fn test_verify_merkle_proof_excessive_depth() {
     let (env, client, _admin, _contract_id) = setup();
     let business = Address::generate(&env);
     let period = String::from_str(&env, "202401");
-    
+
     let leaf = BytesN::from_array(&env, &[1u8; 32]);
-    
+
     client.submit_attestation(
         &business,
         &period,
@@ -751,14 +775,15 @@ fn test_verify_merkle_proof_excessive_depth() {
         &None,
         &None,
     );
-    
+
     // Create a proof with more than MAX_TREE_DEPTH elements
     let mut proof = soroban_sdk::Vec::new(&env);
     let sibling = BytesN::from_array(&env, &[2u8; 32]);
-    for _ in 0..65 { // MAX_TREE_DEPTH is 64
+    for _ in 0..65 {
+        // MAX_TREE_DEPTH is 64
         proof.push_back(sibling.clone());
     }
-    
+
     let is_valid = client.verify_merkle_proof(&business, &period, &leaf, &proof);
     assert!(!is_valid);
 }

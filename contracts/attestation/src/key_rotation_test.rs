@@ -58,7 +58,9 @@ fn setup_with_multisig() -> (
     owners.push_back(owner2.clone());
     owners.push_back(owner3.clone());
 
-    client.initialize_multisig(&owners, &2u32, &0u64);
+    // `initialize` above consumed nonce 0 on the admin channel, so the
+    // multisig initialization must use nonce 1.
+    client.initialize_multisig(&owners, &2u32, &1u64);
     (env, client, admin, owners)
 }
 
@@ -77,9 +79,10 @@ fn test_configure_key_rotation() {
     });
 
     let config = client.get_key_rotation_config();
-    assert_eq!(config.timelock_ledgers, 100);
-    assert_eq!(config.confirmation_window_ledgers, 200);
-    assert_eq!(config.cooldown_ledgers, 50);
+    assert_eq!(config.timelock_ledgers, 10);
+    assert_eq!(config.confirmation_window_ledgers, 20);
+    assert_eq!(config.cooldown_ledgers, 5);
+    assert_eq!(config.grace_period_ledgers, 10);
 }
 
 #[test]
@@ -194,8 +197,8 @@ fn test_emergency_rotation_via_multisig() {
     // Second owner approves (threshold = 2)
     client.approve_proposal(&owner2, &proposal_id, &0u64);
 
-    // Execute
-    client.execute_proposal(&admin, &proposal_id, &0u64);
+    // Execute (admin's second call on the multisig channel → nonce 1)
+    client.execute_proposal(&admin, &proposal_id, &1u64);
 
     // Verify admin transferred
     assert_eq!(client.get_admin(), new_admin);
@@ -215,7 +218,7 @@ fn test_emergency_rotation_records_history() {
         &0u64,
     );
     client.approve_proposal(&owner2, &proposal_id, &0u64);
-    client.execute_proposal(&admin, &proposal_id, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &1u64);
 
     assert_eq!(client.get_key_rotation_count(), 1);
     let history = client.get_key_rotation_history();
@@ -241,7 +244,7 @@ fn test_emergency_rotation_clears_pending_planned() {
         &0u64,
     );
     client.approve_proposal(&owner2, &proposal_id, &0u64);
-    client.execute_proposal(&admin, &proposal_id, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &1u64);
 
     assert!(!client.has_pending_key_rotation());
     assert_eq!(client.get_admin(), emergency_new);

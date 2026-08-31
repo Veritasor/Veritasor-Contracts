@@ -1,6 +1,6 @@
 use super::dispute::{DisputeOutcome, DisputeStatus, DisputeType, OptionalResolution};
 use super::*;
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{Address, BytesN, Env, String};
 
 /// Custom deadline of 1 hour for tests that need short deadlines.
@@ -685,13 +685,21 @@ fn test_check_and_rollback_disputes_before_deadline() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
     client.submit_attestation(
-        &business, &period, &root,
-        &1700000000u64, &1u32, &0i128, &None, &None,
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
     );
 
     let challenger = Address::generate(&env);
     let dispute_id = client.open_dispute(
-        &challenger, &business, &period,
+        &challenger,
+        &business,
+        &period,
         &DisputeType::RevenueMismatch,
         &String::from_str(&env, "Test dispute"),
     );
@@ -699,7 +707,10 @@ fn test_check_and_rollback_disputes_before_deadline() {
     // Current time is right after dispute creation — not past deadline
     let dispute_ids = soroban_sdk::vec![&env, dispute_id];
     let count = client.check_and_rollback_disputes(&admin, &dispute_ids, &10u32);
-    assert_eq!(count, 0, "no disputes should be rolled back before deadline");
+    assert_eq!(
+        count, 0,
+        "no disputes should be rolled back before deadline"
+    );
 
     // Verify the dispute is still Open
     let dispute = client.get_dispute(&dispute_id).unwrap();
@@ -718,13 +729,21 @@ fn test_check_and_rollback_disputes_after_deadline() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
     client.submit_attestation(
-        &business, &period, &root,
-        &1700000000u64, &1u32, &0i128, &None, &None,
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
     );
 
     let challenger = Address::generate(&env);
     let dispute_id = client.open_dispute(
-        &challenger, &business, &period,
+        &challenger,
+        &business,
+        &period,
         &DisputeType::RevenueMismatch,
         &String::from_str(&env, "Test dispute"),
     );
@@ -746,7 +765,10 @@ fn test_check_and_rollback_disputes_after_deadline() {
         assert_eq!(resolution.outcome, DisputeOutcome::Rejected);
         assert_eq!(
             resolution.notes,
-            String::from_str(&env, "Automatic rollback: dispute resolution deadline exceeded")
+            String::from_str(
+                &env,
+                "Automatic rollback: dispute resolution deadline exceeded"
+            )
         );
         assert_eq!(resolution.timestamp, now + 3601);
     } else {
@@ -765,13 +787,21 @@ fn test_check_and_rollback_disputes_resolved_skipped() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
     client.submit_attestation(
-        &business, &period, &root,
-        &1700000000u64, &1u32, &0i128, &None, &None,
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
     );
 
     let challenger = Address::generate(&env);
     let dispute_id = client.open_dispute(
-        &challenger, &business, &period,
+        &challenger,
+        &business,
+        &period,
         &DisputeType::RevenueMismatch,
         &String::from_str(&env, "Test dispute"),
     );
@@ -779,7 +809,8 @@ fn test_check_and_rollback_disputes_resolved_skipped() {
     // Resolve the dispute normally
     let resolver = Address::generate(&env);
     client.resolve_dispute(
-        &dispute_id, &resolver,
+        &dispute_id,
+        &resolver,
         &DisputeOutcome::Upheld,
         &String::from_str(&env, "Resolved on time"),
     );
@@ -809,24 +840,40 @@ fn test_check_and_rollback_disputes_limit() {
     let business2 = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    
+
     client.submit_attestation(
-        &business1, &period, &root,
-        &1700000000u64, &1u32, &0i128, &None, &None,
+        &business1,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
     );
     client.submit_attestation(
-        &business2, &period, &root,
-        &1700000000u64, &1u32, &0i128, &None, &None,
+        &business2,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
     );
 
     let challenger = Address::generate(&env);
     let dispute_id1 = client.open_dispute(
-        &challenger, &business1, &period,
+        &challenger,
+        &business1,
+        &period,
         &DisputeType::RevenueMismatch,
         &String::from_str(&env, "Dispute 1"),
     );
     let dispute_id2 = client.open_dispute(
-        &challenger, &business2, &period,
+        &challenger,
+        &business2,
+        &period,
         &DisputeType::DataIntegrity,
         &String::from_str(&env, "Dispute 2"),
     );
@@ -838,7 +885,10 @@ fn test_check_and_rollback_disputes_limit() {
     // With limit=1, only one dispute should be rolled back
     let dispute_ids = soroban_sdk::vec![&env, dispute_id1, dispute_id2];
     let count = client.check_and_rollback_disputes(&admin, &dispute_ids, &1u32);
-    assert_eq!(count, 1, "only one dispute should be rolled back due to limit");
+    assert_eq!(
+        count, 1,
+        "only one dispute should be rolled back due to limit"
+    );
 
     // Second call with limit=1 rolls back the other
     let count2 = client.check_and_rollback_disputes(&admin, &dispute_ids, &1u32);
@@ -884,13 +934,21 @@ fn test_check_and_rollback_disputes_exact_at_deadline_boundary() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
     client.submit_attestation(
-        &business, &period, &root,
-        &1700000000u64, &1u32, &0i128, &None, &None,
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
     );
 
     let challenger = Address::generate(&env);
     let dispute_id = client.open_dispute(
-        &challenger, &business, &period,
+        &challenger,
+        &business,
+        &period,
         &DisputeType::RevenueMismatch,
         &String::from_str(&env, "Test dispute"),
     );
@@ -922,15 +980,23 @@ fn test_check_and_rollback_disputes_basic_closure() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    
+
     client.submit_attestation(
-        &business, &period, &root,
-        &1700000000u64, &1u32, &0i128, &None, &None,
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
     );
 
     let challenger = Address::generate(&env);
     let dispute_id = client.open_dispute(
-        &challenger, &business, &period,
+        &challenger,
+        &business,
+        &period,
         &DisputeType::RevenueMismatch,
         &String::from_str(&env, "Test dispute"),
     );
@@ -947,7 +1013,7 @@ fn test_check_and_rollback_disputes_basic_closure() {
     // Verify dispute is closed with rollback resolution
     let dispute = client.get_dispute(&dispute_id).unwrap();
     assert_eq!(dispute.status, DisputeStatus::Closed);
-    
+
     // Note: attestor unlock is tested implicitly here. When no attestor lock
     // exists, unlock_attestor is a safe no-op. Full attestor unlock testing
     // requires the attestor staking contract setup which is done in the
@@ -963,43 +1029,67 @@ fn test_check_and_rollback_disputes_multiple_with_mixed_statuses() {
 
     // Create 3 attestations with different business/period combos
     let root = BytesN::from_array(&env, &[1u8; 32]);
-    
+
     let business1 = Address::generate(&env);
     let period1 = String::from_str(&env, "2026-01");
     client.submit_attestation(
-        &business1, &period1, &root,
-        &1700000000u64, &1u32, &0i128, &None, &None,
+        &business1,
+        &period1,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
     );
 
     let business2 = Address::generate(&env);
     let period2 = String::from_str(&env, "2026-02");
     client.submit_attestation(
-        &business2, &period2, &root,
-        &1700000000u64, &1u32, &0i128, &None, &None,
+        &business2,
+        &period2,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
     );
 
     let business3 = Address::generate(&env);
     let period3 = String::from_str(&env, "2026-03");
     client.submit_attestation(
-        &business3, &period3, &root,
-        &1700000000u64, &1u32, &0i128, &None, &None,
+        &business3,
+        &period3,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
     );
 
     let challenger = Address::generate(&env);
-    
+
     // Open 3 disputes
     let dispute_id1 = client.open_dispute(
-        &challenger, &business1, &period1,
+        &challenger,
+        &business1,
+        &period1,
         &DisputeType::RevenueMismatch,
         &String::from_str(&env, "Dispute 1"),
     );
     let dispute_id2 = client.open_dispute(
-        &challenger, &business2, &period2,
+        &challenger,
+        &business2,
+        &period2,
         &DisputeType::DataIntegrity,
         &String::from_str(&env, "Dispute 2"),
     );
     let dispute_id3 = client.open_dispute(
-        &challenger, &business3, &period3,
+        &challenger,
+        &business3,
+        &period3,
         &DisputeType::Other,
         &String::from_str(&env, "Dispute 3"),
     );
@@ -1007,7 +1097,8 @@ fn test_check_and_rollback_disputes_multiple_with_mixed_statuses() {
     // Resolve dispute 2 normally
     let resolver = Address::generate(&env);
     client.resolve_dispute(
-        &dispute_id2, &resolver,
+        &dispute_id2,
+        &resolver,
         &DisputeOutcome::Upheld,
         &String::from_str(&env, "Resolved on time"),
     );
@@ -1022,11 +1113,23 @@ fn test_check_and_rollback_disputes_multiple_with_mixed_statuses() {
     // Only dispute 1 (Open + past deadline) should be rolled back
     let dispute_ids = soroban_sdk::vec![&env, dispute_id1, dispute_id2, dispute_id3];
     let count = client.check_and_rollback_disputes(&admin, &dispute_ids, &10u32);
-    assert_eq!(count, 1, "only the open dispute past deadline should roll back");
+    assert_eq!(
+        count, 1,
+        "only the open dispute past deadline should roll back"
+    );
 
-    assert_eq!(client.get_dispute(&dispute_id1).unwrap().status, DisputeStatus::Closed);
-    assert_eq!(client.get_dispute(&dispute_id2).unwrap().status, DisputeStatus::Resolved);
-    assert_eq!(client.get_dispute(&dispute_id3).unwrap().status, DisputeStatus::Closed);
+    assert_eq!(
+        client.get_dispute(&dispute_id1).unwrap().status,
+        DisputeStatus::Closed
+    );
+    assert_eq!(
+        client.get_dispute(&dispute_id2).unwrap().status,
+        DisputeStatus::Resolved
+    );
+    assert_eq!(
+        client.get_dispute(&dispute_id3).unwrap().status,
+        DisputeStatus::Closed
+    );
 }
 
 #[test]
@@ -1071,4 +1174,3 @@ fn test_submit_dispute_witness_dispute_not_open_rejected() {
     let res = client.try_submit_dispute_witness(&dispute_id, &leaf, &proof);
     assert!(res.is_err());
 }
-

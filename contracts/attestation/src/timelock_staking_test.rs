@@ -22,6 +22,8 @@
 //! - **Legacy entrypoint disabled**: `set_attestor_staking_contract` panics
 //! - **Long delay commit**: commit succeeds after much more than 24 h
 
+use std::format;
+
 use super::*;
 use crate::dynamic_fees::FEE_TIMELOCK_SECONDS;
 use crate::events::{
@@ -134,10 +136,7 @@ fn test_commit_overwrites_previously_live_address() {
     advance_time(&env, FEE_TIMELOCK_SECONDS + 1);
     client.commit_staking_contract(&admin, &4u64);
 
-    assert_eq!(
-        client.get_attestor_staking_contract().unwrap(),
-        second
-    );
+    assert_eq!(client.get_attestor_staking_contract().unwrap(), second);
 }
 
 // ════════════════════════════════════════════════════════════════════
