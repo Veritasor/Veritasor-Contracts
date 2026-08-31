@@ -6,6 +6,9 @@
 
 #![cfg(test)]
 
+use std::format;
+use std::vec::Vec as StdVec;
+
 use super::*;
 use proptest::prelude::*;
 use soroban_sdk::testutils::Address as _;
@@ -813,7 +816,14 @@ fn test_revoke_unsubmitted_overlapping_range_panics() {
 
     // Submit only [10, 30].
     client.submit_multi_period_attestation(
-        &business, &10u32, &30u32, &root_10_30, &1000u64, &1u32, &None, &None,
+        &business,
+        &10u32,
+        &30u32,
+        &root_10_30,
+        &1000u64,
+        &1u32,
+        &None,
+        &None,
     );
 
     // [20, 40] was never submitted, so no root was ever indexed for it.

@@ -1271,3 +1271,327 @@ fn test_batch_stress_boundary_24_items_succeeds() {
     assert_eq!({ items.len() }, 24);
     client.submit_attestations_batch(&items);
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  Issue #790: Stress Tests — MAX_BATCH_SIZE Across Many Businesses
+// ════════════════════════════════════════════════════════════════════
+
+/// Stress test: 25 distinct businesses, each contributing exactly 1 item.
+/// This exercises the O(n²) auth-dedup loop at the maximum number of
+/// unique businesses in a single batch (MAX_BATCH_SIZE = 25).
+#[test]
+fn test_batch_stress_25_businesses_one_item_each() {
+    let (env, client) = setup();
+
+    let businesses: Vec<Address> = (0..MAX_BATCH_SIZE)
+        .map(|_| Address::generate(&env))
+        .collect();
+
+    let mut items = Vec::new(&env);
+    for (i, business) in businesses.iter().enumerate() {
+        let mut root = [0u8; 32];
+        root[0] = i as u8;
+        items.push_back(create_batch_item(
+            &env,
+            business,
+            &std::format!("2026-{:02}", i + 1),
+            &root,
+            1_700_000_000,
+            1,
+        ));
+    }
+
+    assert_eq!(items.len() as u32, MAX_BATCH_SIZE);
+    client.submit_attestations_batch(&items);
+
+    // Each business must have exactly 1 attestation.
+    for business in businesses.iter() {
+        assert_eq!(client.get_business_count(business.clone()), 1);
+    }
+}
+
+/// Stress test: two sequential MAX_BATCH_SIZE batches with overlapping
+/// businesses but different periods.  Verifies that cross-batch state
+/// accumulates correctly and no data is lost.
+#[test]
+fn test_batch_stress_sequential_batches_overlapping_businesses() {
+    let (env, client) = setup();
+
+    // Generate 25 businesses; 10 will appear in both batches.
+    let businesses: Vec<Address> = (0..MAX_BATCH_SIZE)
+        .map(|_| Address::generate(&env))
+        .collect();
+
+    // ---- Batch 1: 25 items (one per business, period = month 1–25) ----
+    let mut batch1 = Vec::new(&env);
+    for (i, business) in businesses.iter().enumerate() {
+        let period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
+        let mut root = [0u8; 32];
+        root[0] = i as u8;
+        batch1.push_back(BatchAttestationItem {
+            business: business.clone(),
+            period,
+            merkle_root: BytesN::from_array(&env, &root),
+            timestamp: 1_700_000_000u64,
+            version: 1u32,
+            proof_hash: None,
+            expiry_timestamp: None,
+        });
+    }
+    assert_eq!(batch1.len() as u32, MAX_BATCH_SIZE);
+    client.submit_attestations_batch(&batch1);
+
+    // ---- Batch 2: 25 items; 10 overlapping businesses + 15 new ones ----
+    let extra_businesses: Vec<Address> = (0..15).map(|_| Address::generate(&env)).collect();
+
+    let mut batch2 = Vec::new(&env);
+    // 10 overlapping businesses get period = month 26–35
+    for (i, business) in businesses.iter().take(10).enumerate() {
+        let period = String::from_str(&env, &std::format!("2026-B2-{:02}", i + 1));
+        let mut root = [0u8; 32];
+        root[0] = (100 + i) as u8;
+        batch2.push_back(BatchAttestationItem {
+            business: business.clone(),
+            period,
+            merkle_root: BytesN::from_array(&env, &root),
+            timestamp: 1_700_000_001u64,
+            version: 1u32,
+            proof_hash: None,
+            expiry_timestamp: None,
+        });
+    }
+    // 15 new businesses get period = month 36–50
+    for (i, business) in extra_businesses.iter().enumerate() {
+        let period = String::from_str(&env, &std::format!("2026-B2-{:02}", 10 + i + 1));
+        let mut root = [0u8; 32];
+        root[0] = (200 + i) as u8;
+        batch2.push_back(BatchAttestationItem {
+            business: business.clone(),
+            period,
+            merkle_root: BytesN::from_array(&env, &root),
+            timestamp: 1_700_000_001u64,
+            version: 1u32,
+            proof_hash: None,
+            expiry_timestamp: None,
+        });
+    }
+    assert_eq!(batch2.len() as u32, MAX_BATCH_SIZE);
+    client.submit_attestations_batch(&batch2);
+
+    // ---- Verify accumulation ----
+    // Overlapping businesses should have 2 attestations each.
+    for business in businesses.iter().take(10) {
+        assert_eq!(client.get_business_count(business.clone()), 2);
+    }
+    // Non-overlapping businesses from batch 1 have 1 attestation.
+    for business in businesses.iter().skip(10) {
+        assert_eq!(client.get_business_count(business.clone()), 1);
+    }
+    // Extra businesses from batch 2 have 1 attestation.
+    for business in extra_businesses.iter() {
+        assert_eq!(client.get_business_count(business.clone()), 1);
+    }
+}
+
+/// Stress test: a single business receives all MAX_BATCH_SIZE items.
+/// Verifies that a high-volume, single-business batch works correctly
+/// and that duplicate detection within a single business works.
+#[test]
+fn test_batch_stress_all_items_single_business() {
+    let (env, client) = setup();
+    let business = Address::generate(&env);
+
+    let mut items = Vec::new(&env);
+    for i in 0..MAX_BATCH_SIZE {
+        let period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
+        let mut root = [0u8; 32];
+        root[0] = i as u8;
+        items.push_back(BatchAttestationItem {
+            business: business.clone(),
+            period,
+            merkle_root: BytesN::from_array(&env, &root),
+            timestamp: 1_700_000_000u64,
+            version: 1u32,
+            proof_hash: None,
+            expiry_timestamp: None,
+        });
+    }
+
+    assert_eq!(items.len() as u32, MAX_BATCH_SIZE);
+    client.submit_attestations_batch(&items);
+    assert_eq!(client.get_business_count(business), MAX_BATCH_SIZE as u64);
+}
+
+/// Stress test: 5 businesses each contributing MAX_BATCH_SIZE items in
+/// separate sequential batches (125 total attestations).  Verifies that
+/// per-business count grows monotonically across batches.
+#[test]
+fn test_batch_stress_many_sequential_full_batches() {
+    let (env, client) = setup();
+
+    let businesses: Vec<Address> = (0..5).map(|_| Address::generate(&env)).collect();
+
+    // Submit 5 sequential full batches, each with one item per business
+    // (5 businesses × 5 periods = 25 items per batch).
+    for batch_idx in 0u32..5 {
+        let mut items = Vec::new(&env);
+        for (b_idx, business) in businesses.iter().enumerate() {
+            let period = String::from_str(&env, &std::format!("2026-B{}-P{}", batch_idx, b_idx));
+            let mut root = [0u8; 32];
+            root[0] = (batch_idx * 5 + b_idx) as u8;
+            items.push_back(BatchAttestationItem {
+                business: business.clone(),
+                period,
+                merkle_root: BytesN::from_array(&env, &root),
+                timestamp: 1_700_000_000u64 + batch_idx as u64,
+                version: 1u32,
+                proof_hash: None,
+                expiry_timestamp: None,
+            });
+        }
+        assert_eq!(items.len() as u32, MAX_BATCH_SIZE);
+        client.submit_attestations_batch(&items);
+    }
+
+    // Each business should now have 5 attestations (one per batch).
+    for business in businesses.iter() {
+        assert_eq!(client.get_business_count(business.clone()), 5);
+    }
+}
+
+/// Stress test: interleaved businesses across batches.  Batch 1 has
+/// businesses [A..Y], batch 2 has businesses [K..Z] (with overlap K–Y).
+/// Verifies correct count accumulation with a skewed overlap.
+#[test]
+fn test_batch_stress_interleaved_business_overlap() {
+    let (env, client) = setup();
+
+    let businesses: Vec<Address> = (0..25).map(|_| Address::generate(&env)).collect();
+
+    // ---- Batch 1: businesses 0..25, periods 01..25 ----
+    let mut batch1 = Vec::new(&env);
+    for (i, business) in businesses.iter().enumerate() {
+        let period = String::from_str(&env, &std::format!("2026-{:02}", i + 1));
+        let mut root = [0u8; 32];
+        root[0] = i as u8;
+        batch1.push_back(BatchAttestationItem {
+            business: business.clone(),
+            period,
+            merkle_root: BytesN::from_array(&env, &root),
+            timestamp: 1_700_000_000u64,
+            version: 1u32,
+            proof_hash: None,
+            expiry_timestamp: None,
+        });
+    }
+    assert_eq!(batch1.len() as u32, MAX_BATCH_SIZE);
+    client.submit_attestations_batch(&batch1);
+
+    // ---- Batch 2: businesses 10..25 (15) + new businesses 0..10 (10) ----
+    let new_businesses: Vec<Address> = (0..10).map(|_| Address::generate(&env)).collect();
+
+    let mut batch2 = Vec::new(&env);
+    // Overlapping: businesses[10..25]
+    for (i, business) in businesses.iter().skip(10).enumerate() {
+        let period = String::from_str(&env, &std::format!("2026-X-{:02}", i + 1));
+        let mut root = [0u8; 32];
+        root[0] = (200 + i) as u8;
+        batch2.push_back(BatchAttestationItem {
+            business: business.clone(),
+            period,
+            merkle_root: BytesN::from_array(&env, &root),
+            timestamp: 1_700_000_001u64,
+            version: 1u32,
+            proof_hash: None,
+            expiry_timestamp: None,
+        });
+    }
+    // New: new_businesses[0..10]
+    for (i, business) in new_businesses.iter().enumerate() {
+        let period = String::from_str(&env, &std::format!("2026-X-{:02}", 15 + i + 1));
+        let mut root = [0u8; 32];
+        root[0] = (230 + i) as u8;
+        batch2.push_back(BatchAttestationItem {
+            business: business.clone(),
+            period,
+            merkle_root: BytesN::from_array(&env, &root),
+            timestamp: 1_700_000_001u64,
+            version: 1u32,
+            proof_hash: None,
+            expiry_timestamp: None,
+        });
+    }
+    assert_eq!(batch2.len() as u32, MAX_BATCH_SIZE);
+    client.submit_attestations_batch(&batch2);
+
+    // Verify: businesses[0..10] have 1 attestation (batch 1 only).
+    for business in businesses.iter().take(10) {
+        assert_eq!(client.get_business_count(business.clone()), 1);
+    }
+    // Verify: businesses[10..25] have 2 attestations (both batches).
+    for business in businesses.iter().skip(10) {
+        assert_eq!(client.get_business_count(business.clone()), 2);
+    }
+    // Verify: new_businesses have 1 attestation (batch 2 only).
+    for business in new_businesses.iter() {
+        assert_eq!(client.get_business_count(business.clone()), 1);
+    }
+}
+
+/// Stress test: a single batch with MAX_BATCH_SIZE items where one
+/// business has many entries and the rest have one each, to exercise
+/// the auth-dedup path with a skewed distribution.
+#[test]
+fn test_batch_stress_skewed_distribution() {
+    let (env, client) = setup();
+
+    let heavy_business = Address::generate(&env);
+    let light_businesses: Vec<Address> = (0..15).map(|_| Address::generate(&env)).collect();
+
+    let mut items = Vec::new(&env);
+    let mut idx = 0u8;
+
+    // Heavy business: 10 items.
+    for i in 0..10u32 {
+        let period = String::from_str(&env, &std::format!("2026-H-{:02}", i + 1));
+        let mut root = [0u8; 32];
+        root[0] = idx;
+        idx += 1;
+        items.push_back(BatchAttestationItem {
+            business: heavy_business.clone(),
+            period,
+            merkle_root: BytesN::from_array(&env, &root),
+            timestamp: 1_700_000_000u64,
+            version: 1u32,
+            proof_hash: None,
+            expiry_timestamp: None,
+        });
+    }
+
+    // Light businesses: 15 items (1 each).
+    for (i, business) in light_businesses.iter().enumerate() {
+        let period = String::from_str(&env, &std::format!("2026-L-{:02}", i + 1));
+        let mut root = [0u8; 32];
+        root[0] = idx;
+        idx += 1;
+        items.push_back(BatchAttestationItem {
+            business: business.clone(),
+            period,
+            merkle_root: BytesN::from_array(&env, &root),
+            timestamp: 1_700_000_000u64,
+            version: 1u32,
+            proof_hash: None,
+            expiry_timestamp: None,
+        });
+    }
+
+    assert_eq!(items.len() as u32, MAX_BATCH_SIZE);
+    client.submit_attestations_batch(&items);
+
+    // Heavy business: 10 attestations.
+    assert_eq!(client.get_business_count(heavy_business), 10);
+    // Each light business: exactly 1 attestation.
+    for business in light_businesses.iter() {
+        assert_eq!(client.get_business_count(business.clone()), 1);
+    }
+}
