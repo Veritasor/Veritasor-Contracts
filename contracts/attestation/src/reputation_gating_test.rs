@@ -1,10 +1,25 @@
 #![cfg(test)]
 
+use std::format;
+
 use super::*;
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{token, Address, BytesN, Env, String};
+use soroban_sdk::{token, Address, BytesN, Env, String, Symbol, Vec};
 use veritasor_attestor_staking::AttestorStakingContract;
 use veritasor_attestor_staking::AttestorStakingContractClient as StakingClient;
+
+/// Register a business with ROLE_BUSINESS granted and approve it so
+/// submissions against it are accepted.
+fn register_business(att: &AttestationContractClient<'_>, admin: &Address, business: &Address) {
+    att.grant_role(admin, business, &ROLE_BUSINESS);
+    att.register_business(
+        business,
+        &BytesN::from_array(&att.env, &[1u8; 32]),
+        &Symbol::new(&att.env, "US"),
+        &Vec::new(&att.env),
+    );
+    att.approve_business(admin, business);
+}
 
 fn create_token_contract(env: &Env, admin: &Address) -> Address {
     let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
@@ -46,7 +61,12 @@ fn setup_attestation_with_staking(
     let att_client = AttestationContractClient::new(env, &attestation_id);
     let admin = Address::generate(env);
     att_client.initialize(&admin, &0u64);
-    att_client.set_attestor_staking_contract(&admin, &staking_addr);
+    // The legacy setter is disabled; configure the staking contract through
+    // the time-locked propose/commit flow.
+    att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    att_client.commit_staking_contract(&admin, &2u64);
 
     (att_client, admin, staking_addr, token, staking_admin)
 }
@@ -77,7 +97,13 @@ fn reputation_gating_disabled_by_default_passthrough() {
 
     // Business can still submit when reputation gating is disabled
     let business = Address::generate(&env);
-    att_client.register_business(&admin, &business);
+    att_client.grant_role(&admin, &business, &ROLE_BUSINESS);
+    att_client.register_business(
+        &business,
+        &BytesN::from_array(&env, &[0u8; 32]),
+        &Symbol::new(&env, "US"),
+        &Vec::new(&env),
+    );
     att_client.approve_business(&admin, &business);
 
     let period = String::from_str(&env, "2026-02");
@@ -160,7 +186,13 @@ fn reputation_score_zero_below_floor() {
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
 
     let business = Address::generate(&env);
-    att_client.register_business(&admin, &business);
+    att_client.grant_role(&admin, &business, &ROLE_BUSINESS);
+    att_client.register_business(
+        &business,
+        &BytesN::from_array(&env, &[0u8; 32]),
+        &Symbol::new(&env, "US"),
+        &Vec::new(&env),
+    );
     att_client.approve_business(&admin, &business);
 
     let period = String::from_str(&env, "2026-02");
@@ -204,7 +236,13 @@ fn reputation_score_below_floor_rejected() {
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
 
     let business = Address::generate(&env);
-    att_client.register_business(&admin, &business);
+    att_client.grant_role(&admin, &business, &ROLE_BUSINESS);
+    att_client.register_business(
+        &business,
+        &BytesN::from_array(&env, &[0u8; 32]),
+        &Symbol::new(&env, "US"),
+        &Vec::new(&env),
+    );
     att_client.approve_business(&admin, &business);
 
     let period = String::from_str(&env, "2026-02");
@@ -248,7 +286,13 @@ fn reputation_score_at_threshold_accepted() {
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
 
     let business = Address::generate(&env);
-    att_client.register_business(&admin, &business);
+    att_client.grant_role(&admin, &business, &ROLE_BUSINESS);
+    att_client.register_business(
+        &business,
+        &BytesN::from_array(&env, &[0u8; 32]),
+        &Symbol::new(&env, "US"),
+        &Vec::new(&env),
+    );
     att_client.approve_business(&admin, &business);
 
     let period = String::from_str(&env, "2026-02");
@@ -294,7 +338,13 @@ fn reputation_score_above_floor_accepted() {
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
 
     let business = Address::generate(&env);
-    att_client.register_business(&admin, &business);
+    att_client.grant_role(&admin, &business, &ROLE_BUSINESS);
+    att_client.register_business(
+        &business,
+        &BytesN::from_array(&env, &[0u8; 32]),
+        &Symbol::new(&env, "US"),
+        &Vec::new(&env),
+    );
     att_client.approve_business(&admin, &business);
 
     let period = String::from_str(&env, "2026-02");
@@ -328,7 +378,7 @@ fn clear_reputation_contract_enables_passthrough() {
 
     // Setup attestor with minimal stake
     let attestor = Address::generate(&env);
-    let token_client = token::Client::new(&env, &token);
+    let token_client = token::StellarAssetClient::new(&env, &token);
     token_client.mint(&attestor, &1_000i128);
 
     let staking = StakingClient::new(&env, &staking_addr);
@@ -337,7 +387,13 @@ fn clear_reputation_contract_enables_passthrough() {
     att_client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
 
     let business = Address::generate(&env);
-    att_client.register_business(&admin, &business);
+    att_client.grant_role(&admin, &business, &ROLE_BUSINESS);
+    att_client.register_business(
+        &business,
+        &BytesN::from_array(&env, &[0u8; 32]),
+        &Symbol::new(&env, "US"),
+        &Vec::new(&env),
+    );
     att_client.approve_business(&admin, &business);
 
     let period = String::from_str(&env, "2026-02");
@@ -386,7 +442,7 @@ fn batch_submission_with_reputation_gating() {
 
     // Setup attestor with sufficient reputation
     let attestor = Address::generate(&env);
-    let token_client = token::Client::new(&env, &token);
+    let token_client = token::StellarAssetClient::new(&env, &token);
     token_client.mint(&attestor, &2_000i128);
 
     let staking = StakingClient::new(&env, &staking_addr);
@@ -397,9 +453,21 @@ fn batch_submission_with_reputation_gating() {
     // Register and approve multiple businesses
     let business1 = Address::generate(&env);
     let business2 = Address::generate(&env);
-    att_client.register_business(&admin, &business1);
+    att_client.grant_role(&admin, &business1, &ROLE_BUSINESS);
+    att_client.register_business(
+        &business1,
+        &BytesN::from_array(&env, &[0u8; 32]),
+        &Symbol::new(&env, "US"),
+        &Vec::new(&env),
+    );
     att_client.approve_business(&admin, &business1);
-    att_client.register_business(&admin, &business2);
+    att_client.grant_role(&admin, &business2, &ROLE_BUSINESS);
+    att_client.register_business(
+        &business2,
+        &BytesN::from_array(&env, &[0u8; 32]),
+        &Symbol::new(&env, "US"),
+        &Vec::new(&env),
+    );
     att_client.approve_business(&admin, &business2);
 
     // Batch submit

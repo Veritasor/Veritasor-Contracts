@@ -6,8 +6,8 @@
 
 use super::*;
 use crate::multisig::*;
-use soroban_sdk::testutils::{Address as _, Ledger};
-use soroban_sdk::{Address, Env, Vec};
+use soroban_sdk::testutils::{Address as _, Events, Ledger};
+use soroban_sdk::{Address, Env, Symbol, TryFromVal, Vec};
 
 /// Helper: register the contract and return a client with multisig setup.
 fn setup_with_multisig() -> (
@@ -215,7 +215,7 @@ fn test_preview_expired_proposal_reports_error() {
     let proposal_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
     client.approve_proposal(&owner2, &proposal_id, &0u64);
 
-    env.ledger().set_sequence(100_000 + 1_000_000);
+    env.ledger().set_sequence_number(100_000 + 1_000_000);
     let preview = client.preview_proposal(&proposal_id);
 
     assert!(!preview.would_execute);
@@ -304,8 +304,8 @@ fn test_execute_add_owner_proposal() {
         )
     );
     assert_eq!(
-        topics.get(1).unwrap(),
-        soroban_sdk::IntoVal::into_val(&new_owner, &env)
+        Address::try_from_val(&env, &topics.get(1).unwrap()).unwrap(),
+        new_owner
     );
     let event_data: crate::events::OwnerRecoveryPhraseAcknowledgedEvent =
         soroban_sdk::FromVal::from_val(&env, &data);
@@ -325,6 +325,52 @@ fn test_execute_remove_owner_proposal() {
 
     assert!(!client.is_multisig_owner(&owner3));
     assert_eq!(client.get_multisig_owners().len(), 2);
+}
+
+#[test]
+fn test_execute_update_fee_config_proposal() {
+    let (env, client, admin, owners) = setup_with_multisig();
+    let owner2 = owners.get(1).unwrap();
+    let token = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    client.configure_fees(&token, &collector, &100i128, &true);
+
+    let new_collector = Address::generate(&env);
+    let action =
+        ProposalAction::UpdateFeeConfig(token.clone(), new_collector.clone(), 250i128, true);
+    let proposal_id = client.create_proposal(&admin, &action, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &1u64);
+
+    let cfg = client.get_fee_config().unwrap();
+    assert_eq!(cfg.token, token);
+    assert_eq!(cfg.collector, new_collector);
+    assert_eq!(cfg.base_fee, 250);
+    assert!(cfg.enabled);
+
+    let proposal = client.get_proposal(&proposal_id).unwrap();
+    assert_eq!(proposal.status, ProposalStatus::Executed);
+}
+
+#[test]
+fn test_execute_emergency_rotate_admin_proposal() {
+    let (env, client, admin, owners) = setup_with_multisig();
+    let owner2 = owners.get(1).unwrap();
+    let old_admin = client.get_admin();
+    let new_admin = Address::generate(&env);
+
+    let action = ProposalAction::EmergencyRotateAdmin(new_admin.clone());
+    let proposal_id = client.create_proposal(&admin, &action, &0u64);
+    client.approve_proposal(&owner2, &proposal_id, &0u64);
+    client.execute_proposal(&admin, &proposal_id, &1u64);
+
+    assert_eq!(client.get_admin(), new_admin);
+    assert!(client.has_role(&new_admin, &ROLE_ADMIN));
+    assert!(!client.has_role(&old_admin, &ROLE_ADMIN));
+
+    let proposal = client.get_proposal(&proposal_id).unwrap();
+    assert_eq!(proposal.status, ProposalStatus::Executed);
 }
 
 #[test]
@@ -622,13 +668,13 @@ fn test_quorum_change_cooldown_enforced() {
 
     // 1. Propose threshold change
     let action1 = ProposalAction::ChangeThreshold(1);
-    let proposal_id1 = client.create_proposal(&admin, &action1, &0u64, &0u64);
-    client.approve_proposal(&owner2, &proposal_id1, &0u64, &0u64);
-    client.execute_proposal(&admin, &proposal_id1, &1u64, &0u64);
+    let proposal_id1 = client.create_proposal(&admin, &action1, &0u64);
+    client.approve_proposal(&owner2, &proposal_id1, &0u64);
+    client.execute_proposal(&admin, &proposal_id1, &1u64);
 
     // 2. Immediately propose another threshold change - should panic
     let action2 = ProposalAction::ChangeThreshold(2);
-    client.create_proposal(&admin, &action2, &2u64, &0u64);
+    client.create_proposal(&admin, &action2, &2u64);
 }
 
 #[test]
@@ -638,9 +684,9 @@ fn test_quorum_change_passes_after_cooldown() {
 
     // 1. Propose threshold change
     let action1 = ProposalAction::ChangeThreshold(1);
-    let proposal_id1 = client.create_proposal(&admin, &action1, &0u64, &0u64);
-    client.approve_proposal(&owner2, &proposal_id1, &0u64, &0u64);
-    client.execute_proposal(&admin, &proposal_id1, &1u64, &0u64);
+    let proposal_id1 = client.create_proposal(&admin, &action1, &0u64);
+    client.approve_proposal(&owner2, &proposal_id1, &0u64);
+    client.execute_proposal(&admin, &proposal_id1, &1u64);
 
     // 2. Advance ledger to pass cooldown
     env.ledger()
@@ -648,9 +694,9 @@ fn test_quorum_change_passes_after_cooldown() {
 
     // 3. Propose another threshold change - should succeed
     let action2 = ProposalAction::ChangeThreshold(2);
-    let proposal_id2 = client.create_proposal(&admin, &action2, &2u64, &0u64);
-    client.approve_proposal(&owner2, &proposal_id2, &0u64, &0u64);
-    client.execute_proposal(&admin, &proposal_id2, &3u64, &0u64);
+    let proposal_id2 = client.create_proposal(&admin, &action2, &2u64);
+    client.approve_proposal(&owner2, &proposal_id2, &0u64);
+    client.execute_proposal(&admin, &proposal_id2, &3u64);
 
     assert_eq!(client.get_multisig_threshold(), 2);
 }

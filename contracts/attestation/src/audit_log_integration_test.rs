@@ -74,7 +74,12 @@ fn test_slash_triggered_audit_log() {
 
     // Setup contract relationships
     attestation_client.set_audit_log_contract(&admin, &mock_audit_id);
-    attestation_client.set_attestor_staking_contract(&admin, &mock_staking_id);
+    // The staking contract is wired through the timelock flow (direct
+    // set_attestor_staking_contract is disabled).
+    attestation_client.propose_staking_contract(&admin, &mock_staking_id, &1u64);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+    attestation_client.commit_staking_contract(&admin, &2u64);
 
     // Trigger slash
     let attestor = Address::generate(&env);

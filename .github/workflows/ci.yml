@@ -50,6 +50,22 @@ jobs:
       - name: Check compilation
         run: cargo check --locked --all-targets
 
+  event-schema-guard:
+    name: Event Schema Guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify EVENT_SCHEMA_VERSION vs schema snapshot
+        run: |
+          chmod +x scripts/check_event_schema.sh
+          ./scripts/check_event_schema.sh --quiet
+
+      - name: Run guard self-tests
+        run: |
+          chmod +x scripts/test_event_schema.sh
+          ./scripts/test_event_schema.sh
+
   test:
     name: Test
     runs-on: ubuntu-latest

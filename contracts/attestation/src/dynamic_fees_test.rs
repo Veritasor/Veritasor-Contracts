@@ -9,7 +9,7 @@ extern crate std;
 
 use super::*;
 
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
 use soroban_sdk::{vec, Address, BytesN, Env, String};
 
@@ -980,13 +980,24 @@ fn test_single_bracket_threshold_zero_matches_any_volume() {
 #[test]
 fn discount_stacking_no_underflow() {
     let e = soroban_sdk::Env::default();
-    let contract = AttestationContract::new(&e);
 
-    contract.set_fee_on(&true);
-    contract.set_base_fee(&1000i128);
+    // Configure a 100% tier discount and a 100% volume discount.
+    let business = soroban_sdk::Address::generate(&e);
+    dynamic_fees::set_business_tier(&e, &business, 0u32);
+    dynamic_fees::set_tier_discount(&e, 0u32, 10_000u32);
+    let thresholds = soroban_sdk::vec![&e, 1u64];
+    let discounts = soroban_sdk::vec![&e, 10_000u32];
+    dynamic_fees::set_volume_brackets(&e, &thresholds, &discounts);
 
-    contract.set_business_tier(&soroban_sdk::Address::generate(&e), &0u32);
-    contract.set_tier_discount(&0u32, &10_000u32);
+    let fee = compute_fee(1000i128, 10_000u32, 10_000u32);
+    assert!(
+        fee >= 0,
+        "Fee must not underflow with max stacked discounts"
+    );
+    assert_eq!(
+        fee, 0i128,
+        "With 100% tier + 100% volume discount, fee should be 0"
+    );
 
     contract.set_volume_thresholds(&vec![&e, 1u64]);
     contract.set_volume_discounts(&vec![&e, 10_000u32]);
@@ -1018,4 +1029,8 @@ fn discount_stacking_no_underflow() {
         fee3
     );
     assert_eq!(fee3, 1i128);
+
+    // The fee never exceeds the base fee.
+    assert_eq!(compute_fee(10_000i128, 0, 0), 10_000i128);
+    assert!(compute_fee(10_000i128, 5_000, 5_000) <= 10_000i128);
 }

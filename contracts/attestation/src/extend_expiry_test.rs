@@ -2,7 +2,7 @@ use std::format;
 
 use crate::{AttestationContract, AttestationContractClient};
 use soroban_sdk::{
-    testutils::{Address as _, Events, Ledger},
+    testutils::{Address as _, Events as _, Ledger as _},
     Address, BytesN, Env, String, Symbol, TryIntoVal,
 };
 
@@ -175,6 +175,8 @@ fn extend_expiry_rejected_if_less_than_timestamp() {
     let merkle_root = BytesN::from_array(&env, &[7u8; 32]);
 
     env.ledger().set_timestamp(1000);
+    // No initial expiry, so the current-expiry guard (new_expiry > 0) passes
+    // and only the timestamp guard rejects the call.
     client.submit_attestation(
         &business,
         &period,
@@ -183,7 +185,7 @@ fn extend_expiry_rejected_if_less_than_timestamp() {
         &1u32,
         &0i128,
         &None,
-        &Some(3000u64),
+        &None,
     );
 
     // Try to extend with expiry less than timestamp - should fail
@@ -297,20 +299,75 @@ fn extend_expiry_with_large_timestamp() {
 use crate::events::AttestationExpiryExtendedEvent;
 use proptest::prelude::*;
 
+/// Collect every `AttestationExpiryExtendedEvent` emitted for the given
+/// business/period, in emission order.
+///
+/// The property tests use this to assert both *that* an event was emitted and
+/// that its payload exactly matches the observed storage transition.
+fn collect_expiry_extended_events(
+    env: &Env,
+    business: &Address,
+    period: &String,
+) -> std::vec::Vec<AttestationExpiryExtendedEvent> {
+    let mut out = std::vec::Vec::new();
+    for event in env.events().all().iter() {
+        let topic0 = event.1.get(0).unwrap();
+        let topic_sym: Symbol = topic0.clone().try_into_val(env).unwrap();
+        if topic_sym == crate::events::TOPIC_ATTESTATION_EXPIRY_EXTENDED {
+            let payload: AttestationExpiryExtendedEvent =
+                event.2.clone().try_into_val(env).unwrap();
+            if payload.business == *business && payload.period == *period {
+                out.push(payload);
+            }
+        }
+    }
+    out
+}
+
+/// Strategy for `(timestamp, old_expiry, new_expiry)` triples that
+/// deliberately mixes fully-arbitrary values with the boundary cases the
+/// property suite must guarantee:
+///
+/// - `new_expiry == old_expiry` (equal to current expiry)
+/// - `new_expiry == timestamp` (equal to attestation timestamp)
+/// - `new_expiry == old_expiry == timestamp` (both bounds at once)
+/// - `new_expiry == u64::MAX` (saturating boundary)
+///
+/// Uniform sampling over `0..=u64::MAX` would effectively never generate any
+/// of these, so they are injected explicitly.
+fn expiry_triple_strategy() -> impl Strategy<Value = (u64, u64, u64)> {
+    prop_oneof![
+        // Fully arbitrary triples (covers lesser/exceeding and random mixes).
+        6 => (any::<u64>(), any::<u64>(), any::<u64>()),
+        // new_expiry == old_expiry.
+        1 => (any::<u64>(), any::<u64>()).prop_map(|(ts, oe)| (ts, oe, oe)),
+        // new_expiry == timestamp.
+        1 => (any::<u64>(), any::<u64>()).prop_map(|(ts, oe)| (ts, oe, ts)),
+        // new_expiry == old_expiry == timestamp.
+        1 => any::<u64>().prop_map(|v| (v, v, v)),
+        // new_expiry saturates at u64::MAX.
+        1 => (any::<u64>(), any::<u64>()).prop_map(|(ts, oe)| (ts, oe, u64::MAX)),
+    ]
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(100))]
 
-    /// Property: Monotonicity enforcement for single extension
-    /// Asserts that non-monotonic extensions panic (<= current_expiry or <= timestamp)
-    /// Asserts that valid extensions update storage correctly and emit the exact event payload.
-    /// Explicitly covers equal values and u64::MAX through property generation.
+    /// Property: Monotonicity enforcement for a single extension.
+    ///
+    /// Fuzzes `(timestamp, old_expiry, new_expiry)` triples covering equal,
+    /// lesser, and exceeding cases (see `expiry_triple_strategy`).
+    /// Non-monotonic extensions (`new_expiry <= current_expiry` or
+    /// `new_expiry <= timestamp`) must panic without mutating storage or
+    /// emitting an event; strictly greater values must succeed, update
+    /// storage, and emit an `AttestationExpiryExtendedEvent` whose payload
+    /// matches the stored transition.
     #[test]
     fn prop_extend_expiry_boundaries(
-        timestamp in 0..=u64::MAX,
-        old_expiry in 0..=u64::MAX,
-        new_expiry in 0..=u64::MAX,
+        (timestamp, old_expiry, new_expiry) in expiry_triple_strategy(),
     ) {
         let env = Env::default();
+        env.mock_all_auths();
         let client = AttestationContractClient::new(&env, &env.register(crate::AttestationContract, ()));
         client.initialize(&Address::generate(&env), &0u64);
 
@@ -319,9 +376,6 @@ proptest! {
         let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
 
         env.ledger().set_timestamp(0);
-
-        // Mock the caller auth
-        env.mock_all_auths();
 
         // Inject attestation directly into storage to bypass submission validations
         env.as_contract(&client.address, || {
@@ -341,32 +395,30 @@ proptest! {
         let result = client.try_extend_expiry(&business, &period, &new_expiry);
 
         if new_expiry <= old_expiry || new_expiry <= timestamp {
-            // Non-monotonic cases must panic
+            // Non-monotonic cases must panic without mutating storage or
+            // emitting an event.
             prop_assert!(result.is_err(), "Expected panic for non-monotonic extension: timestamp={}, old_expiry={}, new_expiry={}", timestamp, old_expiry, new_expiry);
+
+            let (_, _, _, _, _, stored_expiry) = client.get_attestation(&business, &period).unwrap();
+            prop_assert_eq!(stored_expiry, Some(old_expiry), "Storage mutated by rejected extension");
+            let events_after = collect_expiry_extended_events(&env, &business, &period).len();
+            prop_assert_eq!(events_after, 0, "Event emitted for rejected extension");
         } else {
             // Valid monotonic cases must succeed
             prop_assert!(result.is_ok(), "Expected success for valid extension: timestamp={}, old_expiry={}, new_expiry={}", timestamp, old_expiry, new_expiry);
 
+            // Assert exactly one event whose payload matches the transition.
+            // Capture it immediately after the call, before the storage read
+            // below (each client invocation replaces the visible event log).
+            let events_after = collect_expiry_extended_events(&env, &business, &period);
+            prop_assert_eq!(events_after.len(), 1, "Expected exactly one AttestationExpiryExtendedEvent");
+            let last = events_after.last().unwrap();
+            prop_assert_eq!(last.old_expiry, Some(old_expiry));
+            prop_assert_eq!(last.new_expiry, new_expiry);
+
             // Assert correct storage update
             let (_, _, _, _, _, stored_expiry) = client.get_attestation(&business, &period).unwrap();
             prop_assert_eq!(stored_expiry, Some(new_expiry), "Storage did not reflect new_expiry");
-
-            // Assert event emission
-            let events = env.events().all();
-            let mut event_found = false;
-            for event in events.iter() {
-                let topic0 = event.1.get(0).unwrap();
-                let topic_sym: Symbol = topic0.clone().try_into_val(&env).unwrap();
-                if topic_sym == crate::events::TOPIC_ATTESTATION_EXPIRY_EXTENDED {
-                    let payload: AttestationExpiryExtendedEvent = event.2.clone().try_into_val(&env).unwrap();
-                    if payload.business == business && payload.period == period {
-                        prop_assert_eq!(payload.old_expiry, Some(old_expiry));
-                        prop_assert_eq!(payload.new_expiry, new_expiry);
-                        event_found = true;
-                    }
-                }
-            }
-            prop_assert!(event_found, "AttestationExpiryExtendedEvent not emitted");
         }
     }
 }
@@ -385,6 +437,7 @@ proptest! {
         delta in i64::MIN..=i64::MAX,
     ) {
         let env = Env::default();
+        env.mock_all_auths();
         let client = AttestationContractClient::new(&env, &env.register(crate::AttestationContract, ()));
         client.initialize(&Address::generate(&env), &0u64);
 
@@ -393,7 +446,6 @@ proptest! {
         let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
 
         env.ledger().set_timestamp(0);
-        env.mock_all_auths();
 
         // Inject attestation directly into storage to bypass submission validations
         env.as_contract(&client.address, || {
@@ -425,6 +477,10 @@ proptest! {
         // Try extending the expiry
         let result = client.try_extend_expiry(&business, &period, &new_expiry);
 
+        // Capture events immediately after the call (each client invocation
+        // replaces the visible event log).
+        let events_after = collect_expiry_extended_events(&env, &business, &period);
+
         // Capture state after the call
         let state_after = env.as_contract(&client.address, || {
             let key = crate::dynamic_fees::DataKey::Attestation(business.clone(), period.clone());
@@ -437,32 +493,222 @@ proptest! {
             // Valid extension must succeed
             prop_assert!(result.is_ok(), "Expected success for valid extension: timestamp={}, old_expiry={}, delta={}, new_expiry={}", timestamp, old_expiry, delta, new_expiry);
 
+            // Assert exactly one event whose payload matches the transition
+            prop_assert_eq!(events_after.len(), 1, "Expected exactly one AttestationExpiryExtendedEvent");
+            let last = events_after.last().unwrap();
+            prop_assert_eq!(last.old_expiry, Some(old_expiry));
+            prop_assert_eq!(last.new_expiry, new_expiry);
+
             // Assert correct storage update
             let (_, _, _, _, _, stored_expiry) = client.get_attestation(&business, &period).unwrap();
             prop_assert_eq!(stored_expiry, Some(new_expiry), "Storage did not reflect new_expiry");
-
-            // Assert event emission
-            let events = env.events().all();
-            let mut event_found = false;
-            for event in events.iter() {
-                let topic0 = event.1.get(0).unwrap();
-                let topic_sym: Symbol = topic0.clone().try_into_val(&env).unwrap();
-                if topic_sym == crate::events::TOPIC_ATTESTATION_EXPIRY_EXTENDED {
-                    let payload: AttestationExpiryExtendedEvent = event.2.clone().try_into_val(&env).unwrap();
-                    if payload.business == business && payload.period == period {
-                        prop_assert_eq!(payload.old_expiry, Some(old_expiry));
-                        prop_assert_eq!(payload.new_expiry, new_expiry);
-                        event_found = true;
-                    }
-                }
-            }
-            prop_assert!(event_found, "AttestationExpiryExtendedEvent not emitted");
         } else {
             // Invalid extension must fail
             prop_assert!(result.is_err(), "Expected error for invalid extension: timestamp={}, old_expiry={}, delta={}, new_expiry={}", timestamp, old_expiry, delta, new_expiry);
 
             // Assert state unchanged (no mutation on failure)
             prop_assert_eq!(state_before, state_after, "State mutated on failed extension");
+
+            // No event may be emitted for a failed extension
+            prop_assert_eq!(events_after.len(), 0, "Event emitted for rejected extension");
         }
     }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(50))]
+
+    /// Property: Monotonicity over arbitrary *sequences* of extensions.
+    ///
+    /// Starting from an arbitrary `(timestamp, initial_expiry)` pair (the
+    /// expiry may be `None`), apply a random sequence of extension values.
+    /// Each step must either:
+    ///
+    /// - succeed, storing the new (strictly greater) expiry and emitting an
+    ///   `AttestationExpiryExtendedEvent` whose payload matches the old → new
+    ///   transition; or
+    /// - panic, leaving storage and the event log untouched.
+    ///
+    /// Because success requires a strict increase, the stored expiry after
+    /// every step — and at the end — must equal the maximum expiry value ever
+    /// applied.
+    #[test]
+    fn prop_extend_expiry_sequence_monotonic(
+        timestamp in 0..=u64::MAX,
+        initial_expiry in proptest::option::weighted(0.9, any::<u64>()),
+        extensions in proptest::collection::vec(any::<u64>(), 0..=32),
+    ) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let client = AttestationContractClient::new(&env, &env.register(crate::AttestationContract, ()));
+        client.initialize(&Address::generate(&env), &0u64);
+
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "prop-seq-period");
+        let merkle_root = BytesN::from_array(&env, &[42u8; 32]);
+
+        env.ledger().set_timestamp(0);
+
+        // Inject the starting attestation directly into storage.
+        env.as_contract(&client.address, || {
+            let key = crate::dynamic_fees::DataKey::Attestation(business.clone(), period.clone());
+            let data: crate::AttestationData = (
+                merkle_root.clone(),
+                timestamp,
+                1u32,
+                0i128,
+                None,
+                initial_expiry,
+            );
+            env.storage().instance().set(&key, &data);
+        });
+
+        // The maximum expiry value applied so far — mirrors the contract's
+        // `old_expiry.unwrap_or(0)` treatment of a missing expiry.
+        let mut max_applied: Option<u64> = initial_expiry;
+
+        for new_expiry in extensions {
+            let result = client.try_extend_expiry(&business, &period, &new_expiry);
+
+            // Capture the event log immediately after the call (each client
+            // invocation replaces the visible event log).
+            let events_after = collect_expiry_extended_events(&env, &business, &period);
+
+            let is_monotonic = new_expiry > max_applied.unwrap_or(0) && new_expiry > timestamp;
+
+            if is_monotonic {
+                prop_assert!(
+                    result.is_ok(),
+                    "valid extension rejected: timestamp={}, stored={:?}, new_expiry={}",
+                    timestamp,
+                    max_applied,
+                    new_expiry
+                );
+
+                // Exactly one event whose payload mirrors the transition.
+                prop_assert_eq!(events_after.len(), 1);
+                let last = events_after.last().unwrap();
+                prop_assert_eq!(last.old_expiry, max_applied);
+                prop_assert_eq!(last.new_expiry, new_expiry);
+
+                // Storage reflects the new maximum applied value.
+                let (_, _, _, _, _, stored_expiry) =
+                    client.get_attestation(&business, &period).unwrap();
+                prop_assert_eq!(stored_expiry, Some(new_expiry));
+
+                max_applied = Some(new_expiry);
+            } else {
+                prop_assert!(
+                    result.is_err(),
+                    "non-monotonic extension accepted: timestamp={}, stored={:?}, new_expiry={}",
+                    timestamp,
+                    max_applied,
+                    new_expiry
+                );
+
+                // Failed extension must not mutate storage or emit events.
+                prop_assert_eq!(events_after.len(), 0, "Event emitted for rejected extension");
+                let (_, _, _, _, _, stored_expiry) =
+                    client.get_attestation(&business, &period).unwrap();
+                prop_assert_eq!(stored_expiry, max_applied);
+            }
+        }
+
+        // Invariant: after all successful extensions, the stored expiry equals
+        // the maximum value ever applied.
+        let (_, _, _, _, _, stored_expiry) = client.get_attestation(&business, &period).unwrap();
+        prop_assert_eq!(stored_expiry, max_applied);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Deterministic Edge-Case Tests
+//  (new_expiry == timestamp, u64::MAX saturation)
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+#[should_panic(expected = "new_expiry must be greater than attestation timestamp")]
+fn extend_expiry_rejected_when_equal_to_timestamp() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2028-Q3");
+    let merkle_root = BytesN::from_array(&env, &[11u8; 32]);
+
+    env.ledger().set_timestamp(1000);
+    // No initial expiry: the current-expiry guard (new_expiry > 0) passes,
+    // so the timestamp guard is the one that must reject the call.
+    client.submit_attestation(
+        &business,
+        &period,
+        &merkle_root,
+        &2000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    // new_expiry == timestamp is not strictly greater -> must fail
+    client.extend_expiry(&business, &period, &2000u64);
+}
+
+#[test]
+fn extend_expiry_to_u64_max_succeeds() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2028-Q4");
+    let merkle_root = BytesN::from_array(&env, &[12u8; 32]);
+
+    env.ledger().set_timestamp(1000);
+    client.submit_attestation(
+        &business,
+        &period,
+        &merkle_root,
+        &1000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &Some(2000u64),
+    );
+
+    // Extend to exactly u64::MAX
+    client.extend_expiry(&business, &period, &u64::MAX);
+
+    // Capture the expiry event immediately, before any further client call
+    // (each client invocation replaces the visible event log).
+    let events = collect_expiry_extended_events(&env, &business, &period);
+    assert_eq!(events.len(), 1);
+    let event = events.get(0).unwrap();
+    assert_eq!(event.old_expiry, Some(2000u64));
+    assert_eq!(event.new_expiry, u64::MAX);
+
+    let (_, _, _, _, _, stored_expiry) = client.get_attestation(&business, &period).unwrap();
+    assert_eq!(stored_expiry, Some(u64::MAX));
+}
+
+#[test]
+#[should_panic(expected = "new_expiry must be greater than current expiry")]
+fn extend_expiry_rejected_after_reaching_u64_max() {
+    let (env, client, _admin) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2029-Q1");
+    let merkle_root = BytesN::from_array(&env, &[13u8; 32]);
+
+    env.ledger().set_timestamp(1000);
+    client.submit_attestation(
+        &business,
+        &period,
+        &merkle_root,
+        &1000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &Some(2000u64),
+    );
+
+    client.extend_expiry(&business, &period, &u64::MAX);
+
+    // Nothing is strictly greater than u64::MAX: the expiry is saturated, so
+    // any further extension (even equal to u64::MAX) must be rejected.
+    client.extend_expiry(&business, &period, &u64::MAX);
 }

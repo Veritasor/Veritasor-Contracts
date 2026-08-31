@@ -127,7 +127,7 @@ impl TestEnv {
     }
 }
 use crate::{DisputeOutcome, DisputeStatus, DisputeType, OptionalResolution};
-use soroban_sdk::testutils::{Address as _, Events};
+use soroban_sdk::testutils::{Address as _, Events, Ledger};
 use soroban_sdk::{vec, Address, BytesN, IntoVal, String};
 
 #[test]

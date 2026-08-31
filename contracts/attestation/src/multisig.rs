@@ -456,13 +456,13 @@ pub fn preview_proposal(env: &Env, id: u64) -> ProposalEffect {
             ProposalAction::Pause => symbol_short!("pause"),
             ProposalAction::Unpause => symbol_short!("unpause"),
             ProposalAction::AddOwner(_) => symbol_short!("add_owner"),
-            ProposalAction::RemoveOwner(_) => symbol_short!("remove_owner"),
+            ProposalAction::RemoveOwner(_) => symbol_short!("rmv_owner"),
             ProposalAction::ChangeThreshold(_) => symbol_short!("threshold"),
-            ProposalAction::GrantRole(_, _) => symbol_short!("grant_role"),
-            ProposalAction::RevokeRole(_, _) => symbol_short!("revoke_role"),
-            ProposalAction::UpdateFeeConfig(_, _, _, _) => symbol_short!("fee_config"),
-            ProposalAction::EmergencyRotateAdmin(_) => symbol_short!("rotate_admin"),
-            ProposalAction::EmergencyPause => symbol_short!("emergency_pause"),
+            ProposalAction::GrantRole(_, _) => symbol_short!("grant_rol"),
+            ProposalAction::RevokeRole(_, _) => symbol_short!("revoke_ro"),
+            ProposalAction::UpdateFeeConfig(_, _, _, _) => symbol_short!("fee_cfg"),
+            ProposalAction::EmergencyRotateAdmin(_) => symbol_short!("rot_admin"),
+            ProposalAction::EmergencyPause => symbol_short!("emrg_paus"),
         },
         detail,
     });
@@ -698,10 +698,10 @@ pub fn remove_owner(env: &Env, owner: &Address) {
 /// - If signatures come from the same key
 /// - If either key is not in owner set
 /// - If contract is already paused
-pub fn emergency_pause(env: &Env, sig1: &Signature, sig2: &Signature) {
-    // Verify both signatures are valid and from owners
-    let addr1 = env.verify(sig1);
-    let addr2 = env.verify(sig2);
+pub fn emergency_pause(env: &Env, signer1: &Address, signer2: &Address) {
+    // Authenticate both signers (dual-key requirement)
+    signer1.require_auth();
+    signer2.require_auth();
 
     // Ensure distinct signers (different hardware keys)
     assert!(
@@ -711,8 +711,8 @@ pub fn emergency_pause(env: &Env, sig1: &Signature, sig2: &Signature) {
 
     // Validate both addresses are in owner set
     let owners = get_owners(env);
-    assert!(owners.contains(&addr1), "first signature not from owner");
-    assert!(owners.contains(&addr2), "second signature not from owner");
+    assert!(owners.contains(signer1), "first signature not from owner");
+    assert!(owners.contains(signer2), "second signature not from owner");
 
     // Verify contract is not already paused before proceeding
     if is_paused(env) {
@@ -720,7 +720,7 @@ pub fn emergency_pause(env: &Env, sig1: &Signature, sig2: &Signature) {
     }
 
     // Execute pause using access control module
-    access_control::emergency_pause_execute(env, &addr1, &addr2);
+    emergency_pause_execute(env, signer1, signer2);
 }
 
 pub fn get_next_proposal_id(env: &Env) -> u64 {
@@ -754,7 +754,8 @@ pub fn cleanup_expired_proposals(env: &Env, limit: u32) -> u32 {
         next_id as u32
     };
     for id in 0..max {
-        let expiry_key = MultisigKey::ProposalExpiry(id);
+        let id_u64 = id as u64;
+        let expiry_key = MultisigKey::ProposalExpiry(id_u64);
         if let Some(expiry) = env.storage().instance().get::<_, u32>(&expiry_key) {
             if current_seq > expiry + grace {
                 if let Some(proposal) = env
@@ -764,8 +765,12 @@ pub fn cleanup_expired_proposals(env: &Env, limit: u32) -> u32 {
                 {
                     let action = proposal.action.clone();
                     let cleaned_at = env.ledger().sequence();
-                    env.storage().instance().remove(&MultisigKey::Proposal(id));
-                    env.storage().instance().remove(&MultisigKey::Approvals(id));
+                    env.storage()
+                        .instance()
+                        .remove(&MultisigKey::Proposal(id_u64));
+                    env.storage()
+                        .instance()
+                        .remove(&MultisigKey::Approvals(id_u64));
                     env.storage().instance().remove(&expiry_key);
                     // SECURITY (issue #512): also remove the immutable
                     // vote-weight snapshot so a future proposal cannot
@@ -774,7 +779,7 @@ pub fn cleanup_expired_proposals(env: &Env, limit: u32) -> u32 {
                     // proposal's intended lifetime.
                     env.storage()
                         .instance()
-                        .remove(&MultisigKey::VoteWeightSnapshot(id as u64));
+                        .remove(&MultisigKey::VoteWeightSnapshot(id));
                     events::emit_proposal_cleaned(env, id, &action, cleaned_at);
                     cleaned += 1;
                 }
@@ -795,7 +800,7 @@ pub fn revoke_approval(env: &Env, approver: &Address, id: u64) {
         "cannot revoke approval: proposal already executed or rejected"
     );
     let mut approvals = get_approvals(env, id);
-    let pos = approvals.iter().position(|a| a == approver);
+    let pos = approvals.iter().position(|a| a == *approver);
     if let Some(idx) = pos {
         let last = approvals.len() - 1;
         if idx != last {

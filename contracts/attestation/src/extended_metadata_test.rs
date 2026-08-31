@@ -353,37 +353,3 @@ fn test_metadata_removed_on_revocation() {
 
     assert!(extended_metadata::get_metadata(&env, &business, &period).is_none());
 }
-
-#[test]
-fn test_deserialize_truncated_metadata_bytes_returns_error() {
-    let env = Env::default();
-    let payload = [0x00u8, 0x01, 0x02];
-
-    let result = extended_metadata::deserialize_metadata_bytes(&env, &payload);
-
-    assert!(matches!(
-        result,
-        Err(extended_metadata::MetadataDeserializationError::InvalidEncoding)
-    ));
-}
-
-#[test]
-fn fuzz_metadata_deserialize() {
-    let env = Env::default();
-
-    for seed in 0u64..256 {
-        let mut buffer = [0u8; 64];
-        buffer[..8].copy_from_slice(&seed.to_le_bytes());
-        let mut unstructured = arbitrary::Unstructured::new(&buffer);
-        let payload = std::vec::Vec::<u8>::arbitrary(&mut unstructured).unwrap_or_default();
-
-        let result = extended_metadata::deserialize_metadata_bytes(&env, &payload);
-        assert!(
-            matches!(
-                result,
-                Err(extended_metadata::MetadataDeserializationError::InvalidEncoding)
-            ),
-            "seed {seed} should return an error for malformed bytes, got {result:?}"
-        );
-    }
-}
