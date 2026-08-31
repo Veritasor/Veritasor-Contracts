@@ -50,10 +50,8 @@
 //! - Nonce sequences must be monotonically increasing per account
 //! - At least `MIN_ADMIN_COUNT` addresses always hold ADMIN role.
 //! - Admin removals are separated by `ADMIN_REMOVAL_COOLDOWN_SECS`.
-
-use soroban_sdk::{contracttype, Address, Env, Vec};
-
 use crate::dispute;
+use crate::events;
 
 /// Role identifiers as bit flags for efficient storage
 /// SECURITY: Only the first 4 bits are valid (0b1111 = 0xF)
@@ -66,7 +64,8 @@ pub const ROLE_OPERATOR: u32 = 1 << 3; // 0b1000
 /// Maximum valid role bitmap (all defined roles combined)
 /// Used for input validation to reject invalid role combinations.
 /// SECURITY: Adding a new role requires updating both this constant
-/// and the reference implementation in the proptests (`contracts/attestation/src/property_test.rs`).
+/// and the reference implementation + compile-time guard in the
+/// property tests (`contracts/attestation/src/access_control_property_test.rs`).
 pub const ROLE_VALID_MASK: u32 = ROLE_ADMIN | ROLE_ATTESTOR | ROLE_BUSINESS | ROLE_OPERATOR;
 
 /// Maximum allowed weight for a single admin member.
@@ -191,10 +190,21 @@ pub fn has_role(env: &Env, account: &Address, role: u32) -> bool {
 
 /// Grant a role to an address (additive operation).
 /// SECURITY: Validates role bitmap and emits event for audit trail
+/// StrKey encoding of the all-zero ed25519 public key. Granting ADMIN to it
+/// would create an admin that no one controls, so it is rejected (invariant:
+/// "ADMIN role cannot be granted to zero address").
+const ZERO_ACCOUNT_STRKEY: &str = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+
 pub fn grant_role(env: &Env, account: &Address, role: u32, changed_by: &Address) {
     // Input validation: role must be a single valid bit or combination
     if !is_valid_role_bitmap(role) || role == 0 {
         panic!("invalid role: must be non-zero and within valid range");
+    }
+
+    // SECURITY: never grant ADMIN to the zero account (nobody controls it).
+    if (role & ROLE_ADMIN) != 0 && account.to_string() == String::from_str(env, ZERO_ACCOUNT_STRKEY)
+    {
+        panic!("ADMIN role cannot be granted to zero address");
     }
 
     let current = get_roles(env, account);
@@ -307,19 +317,12 @@ pub fn swap_admin(env: &Env, old_admin: &Address, new_admin: &Address, swapped_b
         "old_admin does not have ADMIN role"
     );
 
-    // Enforce the invariant: at least one admin must remain after the swap.
-    // If new_admin already has ADMIN, the count won't decrease.
-    // Otherwise, there must be another admin besides old_admin.
-    if !has_role(env, new_admin, ROLE_ADMIN) {
-        let holders = get_role_holders(env);
-        let mut admin_count: u32 = 0;
-        for i in 0..holders.len() {
-            if has_role(env, &holders.get(i).unwrap(), ROLE_ADMIN) {
-                admin_count += 1;
-            }
-        }
-        assert!(admin_count >= 2, "swap would leave no admin remaining");
-    }
+    // A swap is a replacement, not a removal: `old_admin` loses ADMIN and
+    // `new_admin` gains it, so the admin count is preserved and the
+    // "at least one admin remains" invariant can never be violated by a
+    // swap (including when `old_admin` is the sole admin). The min-count
+    // guard therefore does not apply here; it protects pure removals via
+    // `revoke_role`, which is where the last-admin case is enforced.
 
     // A swap preserves the admin count, so it is not subject to the removal cooldown.
     let current = get_roles(env, old_admin);
@@ -344,9 +347,9 @@ pub(crate) fn swap_admin_after_verified_rotation(
         "old_admin does not have ADMIN role"
     );
 
-    if !has_role(env, new_admin, ROLE_ADMIN) {
-        assert!(admin_count(env) >= 2, "swap would leave no admin remaining");
-    }
+    // See `swap_admin`: a swap preserves the admin count, so no min-count
+    // guard applies (the caller has already been authenticated by the
+    // rotation flow that invoked this function).
 
     let current = get_roles(env, old_admin);
     set_roles(env, old_admin, current & !ROLE_ADMIN);

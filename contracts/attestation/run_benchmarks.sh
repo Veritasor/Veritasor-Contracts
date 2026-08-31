@@ -49,18 +49,26 @@ show_help() {
     echo "Usage: $0 [options]"
     echo ""
     echo "Options:"
-    echo "  --all         Run all benchmark tests"
-    echo "  --core        Run only core operation benchmarks"
-    echo "  --batch       Run only batch operation benchmarks"
-    echo "  --fee         Run only fee calculation benchmarks"
-    echo "  --profiling   Run batch vs single gas profiling"
-    echo "  --summary     Show summary report only"
-    echo "  --help        Show this help message"
+    echo "  --all              Run all benchmark tests"
+    echo "  --core             Run only core operation benchmarks"
+    echo "  --batch            Run only batch operation benchmarks"
+    echo "  --fee              Run only fee calculation benchmarks"
+    echo "  --profiling        Run batch vs single gas profiling harness (Issue #783)"
+    echo "  --profiling-full   Run full batch-vs-single suite including regression guards"
+    echo "  --regression       Run all hard regression gate tests"
+    echo "  --summary          Show summary report only"
+    echo "  --help             Show this help message"
     echo ""
     echo "Examples:"
     echo "  $0 --all                    # Run all benchmarks"
     echo "  $0 --core                   # Run core operation benchmarks"
+    echo "  $0 --profiling              # Batch vs single comparison (JSON output)"
+    echo "  $0 --profiling-full         # Full profiling suite + regression guards"
+    echo "  $0 --regression             # CI regression gates only"
     echo "  $0 --summary                # Show summary only"
+    echo ""
+    echo "JSON output from --profiling can be parsed with:"
+    echo "  $0 --profiling 2>&1 | grep '^{\"op\":\"batch_vs_single\"'"
     echo ""
 }
 
@@ -93,7 +101,20 @@ case "${1:-}" in
         ;;
     --profiling)
         print_header
-        run_benchmarks "gas_benchmark_test::bench_batch_vs_single_profiling" "batch vs single profiling"
+        run_benchmarks "gas_benchmark_test::bench_batch_vs_single_profiling" "batch vs single profiling (Issue #783 — structured JSON report)"
+        ;;
+    --profiling-full)
+        print_header
+        run_benchmarks "gas_benchmark_test::bench_batch_vs_single_profiling" "batch vs single profiling harness"
+        run_benchmarks "gas_benchmark_test::bench_batch_size_one_vs_single_within_tolerance" "batch size-1 vs single tolerance"
+        run_benchmarks "gas_benchmark_test::bench_batch_max_size_within_regression_threshold" "batch MAX_BATCH_SIZE regression check"
+        run_benchmarks "gas_benchmark_test::bench_batch_profiling_sequential_batches_independent" "sequential batches independence"
+        run_benchmarks "gas_benchmark_test::bench_batch_profiling_backward_compatibility_single_then_batch" "backward compatibility: single then batch"
+        run_benchmarks "gas_benchmark_test::regression_batch_vs_single_per_item_cpu" "regression gate: batch vs single per-item CPU"
+        ;;
+    --regression)
+        print_header
+        run_benchmarks "gas_benchmark_test::regression_" "all regression gate tests"
         ;;
     --summary)
         print_header

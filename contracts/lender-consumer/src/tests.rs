@@ -10,7 +10,7 @@ fn setup_env() -> (
     Env,
     Address,
     AttestationContractClient<'static>,
-    LenderAccessListClient<'static>,
+    LenderAccessListContractClient<'static>,
     LenderConsumerContractClient<'static>,
 ) {
     let env = Env::default();
@@ -25,7 +25,7 @@ fn setup_env() -> (
 
     // Deploy lender access list contract
     let access_list_id = env.register_contract(None, LenderAccessListContract);
-    let access_list_client = LenderAccessListClient::new(&env, &access_list_id);
+    let access_list_client = LenderAccessListContractClient::new(&env, &access_list_id);
     access_list_client.initialize(&admin);
 
     // Deploy lender consumer contract
@@ -45,7 +45,7 @@ fn test_lender_consumer_observes_revocation_state() {
     let period = String::from_str(&env, "2023-Q3");
 
     // Add lender to access list (Tier 1)
-    access_list_client.add_lender(&lender, &1);
+    setup_lender(&access_list_client, &_admin, &lender, 1);
 
     // 1. Submit an attestation
     let revenue: i128 = 100_000;
@@ -95,7 +95,7 @@ fn test_lender_consumer_observes_revocation_state_multi_period() {
     let period2 = String::from_str(&env, "2023-Q2");
 
     // Add lender to access list (Tier 1)
-    access_list_client.add_lender(&lender, &1);
+    setup_lender(&access_list_client, &_admin, &lender, 1);
 
     // 1. Submit attestations
     let revenue1: i128 = 100_000;

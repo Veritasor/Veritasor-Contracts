@@ -58,6 +58,8 @@
 
 extern crate std;
 
+use std::format;
+
 use super::*;
 use crate::multisig::{
     get_approvals, get_next_proposal_id, get_proposal, get_vote_weight_snapshot, ProposalAction,
@@ -111,7 +113,20 @@ fn fresh_env() -> (
     owners.push_back(owner3);
     client.initialize_multisig(&owners, &2u32, &1u64);
 
+    // Move past the quorum-change cooldown so `ChangeThreshold` proposals
+    // can be created in every test without advancing the ledger each time.
+    env.ledger()
+        .set_sequence_number(2 * crate::multisig::PROPOSAL_COOLDOWN_LEDGERS);
+
     (env, client, admin, owners)
+}
+
+/// Read a multisig storage helper from inside the contract context.
+///
+/// SDK 22 requires storage access to run within `env.as_contract` when
+/// called directly from a test (outside a contract invocation).
+fn with_contract<R>(env: &Env, contract: &Address, f: impl FnOnce(&Env) -> R) -> R {
+    env.as_contract(contract, || f(env))
 }
 
 /// Call `client.create_proposal` inside `catch_unwind`.
@@ -224,7 +239,7 @@ fn test_create_proposal_all_variants_valid_owner() {
         let expected_id = nonce as u64;
 
         // Record NextProposalId before call via internal helper
-        let id_before = get_next_proposal_id(&env);
+        let id_before = with_contract(&env, &client.address, |e| get_next_proposal_id(e));
         assert_eq!(id_before, expected_id);
 
         // C1: must not panic
@@ -306,7 +321,7 @@ fn test_non_owner_rejected_no_storage_written() {
     let (env, client, _admin, _owners) = fresh_env();
     let non_owner = Address::generate(&env);
 
-    let id_before = get_next_proposal_id(&env);
+    let id_before = with_contract(&env, &client.address, |e| get_next_proposal_id(e));
     let result = try_create(&client, &non_owner, &ProposalAction::Pause, 0);
 
     assert!(result.is_err(), "C7: non-owner must panic");
@@ -342,7 +357,7 @@ fn test_non_owner_add_self_no_storage() {
     let (env, client, _admin, _owners) = fresh_env();
     let attacker = Address::generate(&env);
 
-    let id_before = get_next_proposal_id(&env);
+    let id_before = with_contract(&env, &client.address, |e| get_next_proposal_id(e));
     let result = try_create(
         &client,
         &attacker,
@@ -368,7 +383,7 @@ fn test_non_owner_emergency_rotate_no_storage() {
     let (env, client, _admin, _owners) = fresh_env();
     let attacker = Address::generate(&env);
 
-    let id_before = get_next_proposal_id(&env);
+    let id_before = with_contract(&env, &client.address, |e| get_next_proposal_id(e));
     let result = try_create(
         &client,
         &attacker,
@@ -408,7 +423,7 @@ fn test_snapshot_immutable_after_add_owner() {
 
     // Create the target proposal
     let target_id = client.create_proposal(&admin, &ProposalAction::Pause, &0u64);
-    let snap_before = get_vote_weight_snapshot(&env, target_id).unwrap();
+    let snap_before = client.get_proposal_snapshot(&target_id).unwrap();
     assert_eq!(snap_before.owners.len(), count_at_creation);
     assert_eq!(snap_before.threshold, threshold_at_creation);
 
@@ -422,7 +437,7 @@ fn test_snapshot_immutable_after_add_owner() {
     assert_eq!(client.get_multisig_owners().len(), count_at_creation + 1);
 
     // The target proposal's snapshot must be unchanged
-    let snap_after = get_vote_weight_snapshot(&env, target_id).unwrap();
+    let snap_after = client.get_proposal_snapshot(&target_id).unwrap();
     assert_eq!(
         snap_after.owners.len(),
         count_at_creation,
@@ -658,11 +673,10 @@ proptest! {
     #[test]
     fn fuzz_create_change_threshold_never_panics(
         threshold in arb_threshold(),
-        nonce in any::<u64>(),
     ) {
         let (env, client, admin, _owners) = fresh_env();
         let action = ProposalAction::ChangeThreshold(threshold);
-        let result = try_create(&client, &admin, &action, nonce);
+        let result = try_create(&client, &admin, &action, 0u64);
         prop_assert!(
             result.is_ok(),
             "C1/C9: ChangeThreshold({threshold}) must not panic for a valid owner; got: {result:?}"
@@ -670,7 +684,7 @@ proptest! {
         let id = result.unwrap();
         prop_assert_eq!(client.get_proposal(&id).unwrap().status, ProposalStatus::Pending);
         prop_assert!(
-            get_vote_weight_snapshot(&env, id).is_some(),
+            client.get_proposal_snapshot(&id).is_some(),
             "C4: VoteWeightSnapshot must always be written"
         );
     }
@@ -682,13 +696,12 @@ proptest! {
     fn fuzz_create_update_fee_config_never_panics(
         fee in arb_fee(),
         enabled in any::<bool>(),
-        nonce in any::<u64>(),
     ) {
         let (env, client, admin, _owners) = fresh_env();
         let token = Address::generate(&env);
         let collector = Address::generate(&env);
         let action = ProposalAction::UpdateFeeConfig(token, collector, fee, enabled);
-        let result = try_create(&client, &admin, &action, nonce);
+        let result = try_create(&client, &admin, &action, 0u64);
         prop_assert!(
             result.is_ok(),
             "C1/C10: UpdateFeeConfig(fee={fee}, enabled={enabled}) must not panic; got: {result:?}"
@@ -703,11 +716,10 @@ proptest! {
     #[test]
     fn fuzz_create_grant_role_never_panics(
         role in arb_role(),
-        nonce in any::<u64>(),
     ) {
         let (env, client, admin, _owners) = fresh_env();
         let target = Address::generate(&env);
-        let result = try_create(&client, &admin, &ProposalAction::GrantRole(target, role), nonce);
+        let result = try_create(&client, &admin, &ProposalAction::GrantRole(target, role), 0u64);
         prop_assert!(
             result.is_ok(),
             "C1: GrantRole(role={role:#010x}) must not panic; got: {result:?}"
@@ -720,11 +732,10 @@ proptest! {
     #[test]
     fn fuzz_create_revoke_role_never_panics(
         role in arb_role(),
-        nonce in any::<u64>(),
     ) {
         let (env, client, admin, _owners) = fresh_env();
         let target = Address::generate(&env);
-        let result = try_create(&client, &admin, &ProposalAction::RevokeRole(target, role), nonce);
+        let result = try_create(&client, &admin, &ProposalAction::RevokeRole(target, role), 0u64);
         prop_assert!(
             result.is_ok(),
             "C1: RevokeRole(role={role:#010x}) must not panic; got: {result:?}"
@@ -742,7 +753,6 @@ proptest! {
         fee   in arb_fee(),
         enabled in any::<bool>(),
         threshold in arb_threshold(),
-        nonce in any::<u64>(),
     ) {
         let (env, client, _admin, _owners) = fresh_env();
         let non_owner = Address::generate(&env);
@@ -762,8 +772,8 @@ proptest! {
             _ => ProposalAction::EmergencyRotateAdmin(target),
         };
 
-        let id_before = get_next_proposal_id(&env);
-        let result = try_create(&client, &non_owner, &action, nonce);
+        let id_before = with_contract(&env, &client.address, |e| get_next_proposal_id(e));
+        let result = try_create(&client, &non_owner, &action, 0u64);
 
         prop_assert!(result.is_err(), "C7: non-owner must always panic");
         let msg = result.unwrap_err();
@@ -772,15 +782,16 @@ proptest! {
             "C7: unexpected panic message: {msg}"
         );
         prop_assert_eq!(
-            get_next_proposal_id(&env), id_before,
+            with_contract(&env, &client.address, |e| get_next_proposal_id(e)),
+            id_before,
             "C7: NextProposalId must not change on rejection"
         );
         prop_assert!(
-            get_proposal(&env, id_before).is_none(),
+            client.get_proposal(&id_before).is_none(),
             "C7: no Proposal must be written on rejection"
         );
         prop_assert!(
-            get_vote_weight_snapshot(&env, id_before).is_none(),
+            client.get_proposal_snapshot(&id_before).is_none(),
             "C7: no VoteWeightSnapshot must be written on rejection"
         );
     }
@@ -803,7 +814,7 @@ proptest! {
 
             prop_assert_eq!(id, i as u64, "C2: ID must be sequential");
 
-            let snap = get_vote_weight_snapshot(&env, id);
+            let snap = client.get_proposal_snapshot(&id);
             prop_assert!(snap.is_some(), "C4: snapshot must be written for id={id}");
             let s = snap.unwrap();
             prop_assert_eq!(s.total_weight, s.owners.len(), "C4: total_weight == owners.len()");
@@ -822,7 +833,6 @@ proptest! {
         fee   in arb_fee(),
         enabled in any::<bool>(),
         threshold in arb_threshold(),
-        nonce in any::<u64>(),
     ) {
         let (env, client, admin, owners) = fresh_env();
         let extra = Address::generate(&env);
@@ -841,7 +851,7 @@ proptest! {
             _ => ProposalAction::EmergencyRotateAdmin(extra),
         };
 
-        let id = client.create_proposal(&admin, &action, &nonce);
+        let id = client.create_proposal(&admin, &action, &0u64);
 
         prop_assert_eq!(
             client.get_approval_count(&id), 1u32,

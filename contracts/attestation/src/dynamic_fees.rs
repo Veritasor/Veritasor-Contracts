@@ -105,6 +105,8 @@ pub enum DataKey {
     /// `commit_staking_contract` or removed by
     /// `cancel_pending_staking_contract`.
     PendingStakingContract,
+    /// Monotonic counter used to mint stable ids for condition-based slashes.
+    ConditionSlashCounter,
 
     // ── Fee system ──────────────────────────────────────────────
     /// Contract administrator address.
@@ -136,6 +138,10 @@ pub enum DataKey {
     /// Per-business submission timestamps within the current window.
     /// Stores a `Vec<u64>` of ledger timestamps.
     SubmissionTimestamps(Address),
+    /// High-water timestamp used for the token-bucket style rate limiter.
+    /// Keyed by business address; stores the ledger timestamp of the last
+    /// bucket refill (or the last submission when the bucket was empty).
+    RateLimitHighWaterTimestamp(Address),
     IsPaused,
 
     // ── Relayer gas metering ───────────────────────────────────
@@ -173,6 +179,10 @@ pub enum DataKey {
     // ── Archive Tier ─────────────────────────────────────────────
     /// Global archive index.
     ArchiveIndex,
+    /// Snapshot of an attestation stored under the archival tier; used by
+    /// the lazy-rehydration read path to serve archived attestations and
+    /// restore them into active storage on first access.
+    AttestationSnapshot(Address, soroban_sdk::String),
     /// Full attestation record stored in the archive.
     ArchivedAttestation(Address, soroban_sdk::String),
     /// Lightweight archive pointer.
@@ -634,6 +644,101 @@ fn advance_epoch(env: &Env) -> u64 {
 }
 
 // ════════════════════════════════════════════════════════════════════
+//  Per-epoch submission / fee accumulation (checkpoint support)
+// ════════════════════════════════════════════════════════════════════
+
+/// Increment the per-period submission count for the current epoch by `delta`
+/// and return the new running count.
+///
+/// Used by the single and batch submission paths so indexers can reproduce
+/// per-epoch state deterministically from `EpochCheckpoint` events.
+pub fn increment_epoch_submissions(env: &Env, period: &soroban_sdk::String, delta: u64) -> u64 {
+    let key = DataKey::EpochSubmissions(period.clone());
+    let next = env
+        .storage()
+        .instance()
+        .get::<_, u64>(&key)
+        .unwrap_or(0)
+        .saturating_add(delta);
+    env.storage().instance().set(&key, &next);
+    next
+}
+
+/// Accumulate `fee` into the per-period fee accumulator for the current epoch
+/// and return the new accumulated total.
+///
+/// Used by the single and batch submission paths so indexers can reproduce
+/// per-epoch fee totals deterministically from `EpochCheckpoint` events.
+pub fn accumulate_epoch_fees(env: &Env, period: &soroban_sdk::String, fee: i128) -> i128 {
+    let key = DataKey::EpochFees(period.clone());
+    let next = env
+        .storage()
+        .instance()
+        .get::<_, i128>(&key)
+        .unwrap_or(0)
+        .saturating_add(fee);
+    env.storage().instance().set(&key, &next);
+    next
+}
+
+/// Increment the global backfill submission counter and return the new value.
+///
+/// Used to emit `BackfillCheckpoint` events at a fixed interval so indexers
+/// can resume from intermediate points without a full replay.
+pub fn increment_backfill_count(env: &Env) -> u64 {
+    let next = env
+        .storage()
+        .instance()
+        .get::<_, u64>(&DataKey::BackfillSubmissionCount)
+        .unwrap_or(0)
+        .saturating_add(1);
+    env.storage()
+        .instance()
+        .set(&DataKey::BackfillSubmissionCount, &next);
+    next
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Pending staking contract rebinding (timelocked)
+// ════════════════════════════════════════════════════════════════════
+
+/// Pending attestor-staking contract rebinding proposal.
+///
+/// Written by `propose_staking_contract`; consumed by `commit_staking_contract`
+/// after the timelock elapses, or removed by `cancel_pending_staking_contract`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingStakingContract {
+    /// The staking contract address to activate once the timelock elapses.
+    pub new_contract: Address,
+    /// Ledger timestamp before which the proposal cannot be committed.
+    pub effective_at: u64,
+    /// Address of the admin that proposed the rebinding.
+    pub proposed_by: Address,
+}
+
+/// Read the pending staking contract proposal, if any.
+pub fn get_pending_staking_contract(env: &Env) -> Option<PendingStakingContract> {
+    env.storage()
+        .instance()
+        .get(&DataKey::PendingStakingContract)
+}
+
+/// Store a pending staking contract proposal.
+pub fn set_pending_staking_contract(env: &Env, pending: &PendingStakingContract) {
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingStakingContract, pending);
+}
+
+/// Remove any pending staking contract proposal.
+pub fn clear_pending_staking_contract(env: &Env) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::PendingStakingContract);
+}
+
+// ════════════════════════════════════════════════════════════════════
 //  Per-epoch cleanup metrics
 // ════════════════════════════════════════════════════════════════════
 
@@ -707,6 +812,101 @@ pub fn handle_epoch_rollover(env: &Env) {
     env.storage()
         .instance()
         .set(&DataKey::LastFeeBucket, &current_bucket);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Per-epoch checkpoint accumulators & backfill counter
+// ════════════════════════════════════════════════════════════════════
+
+/// Increment the running submission count for `period` within the current
+/// epoch and return the new count.
+///
+/// Backed by [`DataKey::EpochSubmissions`]; used to emit `EpochCheckpoint`
+/// events after each submission (single and batch paths).
+pub fn increment_epoch_submissions(env: &Env, period: &soroban_sdk::String, amount: u64) -> u64 {
+    let current = env
+        .storage()
+        .instance()
+        .get::<_, u64>(&DataKey::EpochSubmissions(period.clone()))
+        .unwrap_or(0u64);
+    let next = current.saturating_add(amount);
+    env.storage()
+        .instance()
+        .set(&DataKey::EpochSubmissions(period.clone()), &next);
+    next
+}
+
+/// Accumulate `amount` into the epoch fee total for `period` and return the
+/// new accumulated total.
+///
+/// Backed by [`DataKey::EpochFees`]; used to emit `EpochCheckpoint` events.
+pub fn accumulate_epoch_fees(env: &Env, period: &soroban_sdk::String, amount: i128) -> i128 {
+    let current = env
+        .storage()
+        .instance()
+        .get::<_, i128>(&DataKey::EpochFees(period.clone()))
+        .unwrap_or(0i128);
+    let next = current.saturating_add(amount);
+    env.storage()
+        .instance()
+        .set(&DataKey::EpochFees(period.clone()), &next);
+    next
+}
+
+/// Increment the global backfill submission counter and return the new value.
+///
+/// Backed by [`DataKey::BackfillSubmissionCount`]; the counter drives
+/// `BackfillCheckpoint` emission every `BACKFILL_CHECKPOINT_INTERVAL`
+/// submissions.
+pub fn increment_backfill_count(env: &Env) -> u64 {
+    let current = env
+        .storage()
+        .instance()
+        .get::<_, u64>(&DataKey::BackfillSubmissionCount)
+        .unwrap_or(0u64);
+    let next = current.saturating_add(1);
+    env.storage()
+        .instance()
+        .set(&DataKey::BackfillSubmissionCount, &next);
+    next
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Time-locked staking contract rebinding
+// ════════════════════════════════════════════════════════════════════
+
+/// Pending attestor staking contract rebinding, enforced with a 24 h
+/// timelock between proposal and commit (see `docs/timelock-staking-binding.md`).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PendingStakingContract {
+    /// Proposed staking contract address.
+    pub new_contract: Address,
+    /// Ledger timestamp at which the proposal becomes effective.
+    pub effective_at: u64,
+    /// Admin that proposed the rebinding.
+    pub proposed_by: Address,
+}
+
+/// Read the pending staking contract rebinding proposal, if any.
+pub fn get_pending_staking_contract(env: &Env) -> Option<PendingStakingContract> {
+    env.storage()
+        .instance()
+        .get(&DataKey::PendingStakingContract)
+}
+
+/// Store a pending staking contract rebinding proposal.
+pub fn set_pending_staking_contract(env: &Env, pending: &PendingStakingContract) {
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingStakingContract, pending);
+}
+
+/// Remove any pending staking contract rebinding proposal.
+pub fn clear_pending_staking_contract(env: &Env) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::PendingStakingContract);
 }
 
 //  Archive tier types and helpers

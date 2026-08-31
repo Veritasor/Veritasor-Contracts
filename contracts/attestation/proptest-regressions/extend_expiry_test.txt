@@ -7,3 +7,4 @@
 cc 4c1a92d68d77656e36b93d0c8fc81f0b80de2eeb86fcf80212ed22f9b990a9c7 # shrinks to base_timestamp = 0, base_expiry = 1, deltas = [1]
 cc c330b186d3870ee36f7485ad8b6eb7fe8c55c3e53ca6f3253ab645f2a3a85999 # shrinks to timestamp = 0, new_expiry = 1
 cc db642971ba7d27d56bd032a5404593a95b1dcdecb3f3057c94eb2c293f022ffa # shrinks to timestamp = 0, old_expiry = 0, new_expiry = 1
+cc b46da8284bde91ac55eab512b3b34e69adcc119dcc41b60fa2082efb1a97653f # shrinks to (timestamp, old_expiry, new_expiry) = (0, 0, 18446744073709551615)
