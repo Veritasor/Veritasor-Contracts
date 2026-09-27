@@ -27,7 +27,7 @@ fn setup() -> Setup<'static> {
 
     let snap_id = env.register(AttestationSnapshotContract, ());
     let snap_client = AttestationSnapshotContractClient::new(&env, &snap_id);
-    snap_client.initialize(&admin, &None);
+    snap_client.initialize(&admin, &None::<Address>);
 
     let agg_id = env.register(AggregatedAttestationsContract, ());
     let agg_client = AggregatedAttestationsContractClient::new(&env, &agg_id);
