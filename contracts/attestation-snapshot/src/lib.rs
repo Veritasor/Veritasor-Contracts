@@ -1259,3 +1259,6 @@ impl AttestationSnapshotContract {
 
 #[cfg(test)]
 mod snapshot_ttl_test;
+
+#[cfg(test)]
+mod get_epoch_finalization_test;
