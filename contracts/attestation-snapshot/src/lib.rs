@@ -1647,3 +1647,6 @@ mod finalize_epoch_test;
 
 #[cfg(test)]
 mod restore_commit_adversarial_test;
+
+#[cfg(test)]
+mod get_all_epochs_adversarial_test;
