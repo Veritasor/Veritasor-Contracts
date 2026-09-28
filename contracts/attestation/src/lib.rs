@@ -3870,6 +3870,9 @@ mod compact_archival_test;
 mod dao_override_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod dispute_test;
+/// Adversarial coverage for `dispute::generate_dispute_id` (issue #911).
+#[cfg(test)]
+mod dispute_id_adversarial_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod dynamic_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
