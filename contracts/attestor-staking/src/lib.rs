@@ -519,7 +519,7 @@ impl AttestorStakingContract {
                 if available_stake <= 0 {
                     0u64
                 } else {
-                    available_stake.min(i128::MAX as i128) as u64
+                    available_stake.min(u64::MAX as i128) as u64
                 }
             }
             None => 0u64,

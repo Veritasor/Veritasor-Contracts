@@ -40,9 +40,8 @@ use crate::events::{
     TOPIC_PAUSED, TOPIC_PROOF_HASH_UPDATED, TOPIC_RATE_LIMIT, TOPIC_ROLE_GRANTED,
     TOPIC_ROLE_REVOKED, TOPIC_UNPAUSED,
 };
-use soroban_sdk::testutils::{Address as _, Events as _};
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
-use soroban_sdk::{symbol_short, Address, BytesN, Env, String, Symbol, TryFromVal};
+use soroban_sdk::{symbol_short, Address, BytesN, Env, String, Symbol, TryFromVal, Val};
 
 // ════════════════════════════════════════════════════════════════════
 //  Test helpers

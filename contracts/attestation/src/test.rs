@@ -662,7 +662,8 @@ fn test_verify_merkle_proof_revoked_attestation() {
     );
 
     // Revoke the attestation
-    client.revoke_attestation(&admin, &business, &period);
+    let reason = String::from_str(&env, "test revocation");
+    client.revoke_attestation(&admin, &business, &period, &reason, &0u64);
 
     // Should return false for revoked attestation
     let mut proof = soroban_sdk::Vec::new(&env);
