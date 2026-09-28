@@ -917,3 +917,69 @@ pub fn check_and_rollback_disputes(env: &Env, dispute_ids: &Vec<u64>, limit: u32
 
     rolled_back_count
 }
+
+#[cfg(test)]
+mod lock_attestor_tests {
+    use super::*;
+    use soroban_sdk::testutils::{Address as _, Events};
+
+    fn setup() -> (Env, Address) {
+        let env = Env::default();
+        let contract_id = env.register(crate::AttestationContract, ());
+        (env, contract_id)
+    }
+
+    #[test]
+    fn lock_attestor_accepts_boundary_dispute_ids_and_emits_once() {
+        let (env, contract_id) = setup();
+        let attestor = Address::generate(&env);
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "");
+
+        env.as_contract(&contract_id, || {
+            lock_attestor(&env, &attestor, &business, &period, 0);
+            assert_eq!(
+                env.storage()
+                    .instance()
+                    .get::<_, u64>(&DisputeKey::AttestorLockCount(attestor.clone())),
+                Some(1)
+            );
+
+            lock_attestor(&env, &attestor, &business, &period, u64::MAX);
+            assert_eq!(
+                env.storage()
+                    .instance()
+                    .get::<_, u64>(&DisputeKey::AttestorLockCount(attestor.clone())),
+                Some(2)
+            );
+            assert!(is_attestor_locked(&env, &attestor));
+            assert_eq!(env.events().all().len(), 1);
+        });
+    }
+
+    #[test]
+    fn lock_attestor_overflow_preserves_existing_count() {
+        let (env, contract_id) = setup();
+        let attestor = Address::generate(&env);
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "boundary");
+        let key = DisputeKey::AttestorLockCount(attestor.clone());
+
+        env.as_contract(&contract_id, || {
+            env.storage().instance().set(&key, &u64::MAX);
+        });
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            env.as_contract(&contract_id, || {
+                lock_attestor(&env, &attestor, &business, &period, 1);
+            });
+        }));
+        assert!(result.is_err(), "incrementing u64::MAX must fail");
+
+        env.as_contract(&contract_id, || {
+            assert_eq!(env.storage().instance().get::<_, u64>(&key), Some(u64::MAX));
+            assert!(is_attestor_locked(&env, &attestor));
+            assert!(env.events().all().is_empty());
+        });
+    }
+}
