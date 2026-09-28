@@ -220,7 +220,9 @@ fn contract_instances_do_not_share_the_epoch_index() {
     a.initialize(&admin_a, &None::<Address>);
     b.initialize(&admin_b, &None::<Address>);
 
-    for period in EPOCHS {
+    // A gets the first three epochs only, so its count pins the same fixture
+    // the assertions below compare against.
+    for period in &EPOCHS[..3] {
         record_epoch(&env, &a, &admin_a, period);
     }
 
@@ -386,7 +388,7 @@ fn page_size_at_or_above_total_returns_every_epoch() {
     let total = EPOCHS.len() as u32;
 
     assert_eq!(client.get_all_epochs(&0u32, &total), expected);
-    assert_eq!(client.get_all_epochs(&0u32, &total + 1), expected);
+    assert_eq!(client.get_all_epochs(&0u32, &(total + 1)), expected);
     assert_eq!(client.get_all_epochs(&0u32, &u32::MAX), expected);
     // A second page of an oversized request is empty, not a repeat.
     assert!(client.get_all_epochs(&1u32, &u32::MAX).is_empty());
@@ -697,11 +699,19 @@ fn rejected_operations_leave_the_epoch_index_unchanged() {
     );
 
     // 2. The admin tries to mint an epoch one byte over the limit.
+    let over_limit_raw = "e".repeat(MAX_PERIOD_BYTES as usize + 1);
     let over_limit = epoch_of_len(&env, MAX_PERIOD_BYTES as usize + 1);
     let rejected_overlong = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        record(&env, &client, &admin, &Address::generate(&env), &over_limit);
+        record(
+            &env,
+            &client,
+            &admin,
+            &Address::generate(&env),
+            &over_limit_raw,
+        );
     }));
     assert!(rejected_overlong.is_err(), "over-long epoch was accepted");
+    assert_eq!(over_limit.len(), MAX_PERIOD_BYTES + 1);
 
     // 3. The admin tries to write into an already finalized epoch.
     let rejected_finalized = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
