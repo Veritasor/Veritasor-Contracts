@@ -697,10 +697,6 @@ pub fn remove_owner(env: &Env, owner: &Address) {
 /// - If either key is not in owner set
 /// - If contract is already paused
 pub fn emergency_pause(env: &Env, signer1: &Address, signer2: &Address) {
-    // Authenticate both signers (dual-key requirement)
-    signer1.require_auth();
-    signer2.require_auth();
-
     // Ensure distinct signers (different hardware keys)
     assert!(
         signer1 != signer2,
@@ -710,12 +706,16 @@ pub fn emergency_pause(env: &Env, signer1: &Address, signer2: &Address) {
     // Validate both addresses are in owner set
     let owners = get_owners(env);
     assert!(owners.contains(signer1), "first signature not from owner");
-    assert!(owners.contains(signer2), "second signature not from owner");
+    assert!(owners.contains(signer2), "first signature not from owner");
 
     // Verify contract is not already paused before proceeding
     if is_paused(env) {
         panic!("contract already paused");
     }
+
+    // Authenticate both signers (dual-key requirement)
+    signer1.require_auth();
+    signer2.require_auth();
 
     // Execute pause using access control module
     emergency_pause_execute(env, signer1, signer2);

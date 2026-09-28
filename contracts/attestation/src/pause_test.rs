@@ -84,6 +84,8 @@ fn submit_attestation_succeeds_after_unpause() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
+    register_business(&client, &admin, &business);
+
     client.pause(&admin, &1u64);
     client.unpause(&admin, &2u64);
 
@@ -165,6 +167,8 @@ fn get_attestation_while_paused() {
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
+
+    register_business(&client, &admin, &business);
 
     client.submit_attestation(
         &business,
