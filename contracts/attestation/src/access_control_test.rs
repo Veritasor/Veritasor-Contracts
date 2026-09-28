@@ -764,3 +764,90 @@ fn test_admin_removal_succeeds_at_cooldown_boundary() {
 
     assert!(!client.has_role(&second, &ROLE_ADMIN));
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  require_admin_or_attestor Tests
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_require_admin_or_attestor_success_admin() {
+    let (env, client, admin) = setup();
+    
+    in_contract(&env, &client.address, |e| {
+        access_control::require_admin_or_attestor(e, &admin);
+    });
+}
+
+#[test]
+fn test_require_admin_or_attestor_success_attestor() {
+    let (env, client, admin) = setup();
+    let attestor = Address::generate(&env);
+    
+    client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
+    
+    in_contract(&env, &client.address, |e| {
+        access_control::require_admin_or_attestor(e, &attestor);
+    });
+}
+
+#[test]
+fn test_require_admin_or_attestor_success_both() {
+    let (env, client, admin) = setup();
+    let both = Address::generate(&env);
+    
+    client.grant_role(&admin, &both, &ROLE_ADMIN);
+    client.grant_role(&admin, &both, &ROLE_ATTESTOR);
+    
+    in_contract(&env, &client.address, |e| {
+        access_control::require_admin_or_attestor(e, &both);
+    });
+}
+
+#[test]
+#[should_panic(expected = "caller must have ADMIN or ATTESTOR role")]
+fn test_require_admin_or_attestor_fails_for_business() {
+    let (env, client, admin) = setup();
+    let business = Address::generate(&env);
+    
+    client.grant_role(&admin, &business, &ROLE_BUSINESS);
+    
+    in_contract(&env, &client.address, |e| {
+        access_control::require_admin_or_attestor(e, &business);
+    });
+}
+
+#[test]
+#[should_panic(expected = "caller must have ADMIN or ATTESTOR role")]
+fn test_require_admin_or_attestor_fails_for_none() {
+    let (env, client, _admin) = setup();
+    let nobody = Address::generate(&env);
+    
+    in_contract(&env, &client.address, |e| {
+        access_control::require_admin_or_attestor(e, &nobody);
+    });
+}
+
+#[test]
+fn test_require_admin_or_attestor_state_unchanged_on_failure() {
+    let (env, client, admin) = setup();
+    let business = Address::generate(&env);
+    
+    client.grant_role(&admin, &business, &ROLE_BUSINESS);
+    
+    let roles_before = in_contract(&env, &client.address, |e| {
+        access_control::get_roles(e, &business)
+    });
+    
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        in_contract(&env, &client.address, |e| {
+            access_control::require_admin_or_attestor(e, &business);
+        });
+    }));
+    assert!(res.is_err());
+    
+    let roles_after = in_contract(&env, &client.address, |e| {
+        access_control::get_roles(e, &business)
+    });
+    
+    assert_eq!(roles_before, roles_after);
+}
