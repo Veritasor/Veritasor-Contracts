@@ -543,7 +543,7 @@ impl AttestationContract {
         fees::get_pending_collector_rotation(&env)
     }
 
-    pub fn set_attestor_staking_contract(env: Env, caller: Address, staking_contract: Address) {
+    pub fn set_attestor_staking_contract(env: Env, caller: Address, _staking_contract: Address) {
         // This function is superseded by the time-locked rebinding flow.
         // Use `propose_staking_contract` followed by `commit_staking_contract`
         // (after at least 86 400 s / 24 h) instead.
