@@ -231,6 +231,8 @@ mod attestation_import {
 
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod total_epoch_count_adversarial_test;
 
 // ════════════════════════════════════════════════════════════════════
 //  Storage types
@@ -914,6 +916,14 @@ impl AttestationSnapshotContract {
             );
             Self::index_period_for_business(&env, &entry.business, &entry.period);
             Self::index_business_for_epoch(&env, &entry.period, &entry.business);
+            // Register the epoch in the global ordered index. Without this the
+            // restored rows are readable through `get_snapshot` /
+            // `get_snapshots_for_business` but invisible to
+            // `get_total_epoch_count`, `get_all_epochs` and — because the
+            // commitment walks the global epoch index — to
+            // `export_commitment_with_count`, silently excluding restored data
+            // from the contract's own audit export.
+            Self::index_epoch_globally(&env, &entry.period);
         }
 
         // Soroban invocations are atomic: this marker and all restored records
