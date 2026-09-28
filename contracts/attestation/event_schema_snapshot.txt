@@ -6,14 +6,24 @@
 #
 # Divergence from this snapshot fails CI unless EVENT_SCHEMA_VERSION
 # is bumped for breaking changes. See docs/attestation-events-indexer.md.
-EVENT_SCHEMA_VERSION: 1
-EVENT_SCHEMA_FINGERPRINT: sha256:cc3d11775dd2428f574b5b1d48061cde2f5e4154808817150bcabe6a56b17f6d
+EVENT_SCHEMA_VERSION: 2
+EVENT_SCHEMA_FINGERPRINT: sha256:3d611424163a3755d635b63ea8d3b193bc5589af4306631eecaf7215dc616bf5
 
 # ---- canonical event schema (sorted by type) ----
 struct AdminSwappedEvent {
   old_admin:Address
   new_admin:Address
   swapped_by:Address
+}
+struct AdminWeightChangedEvent {
+  account:Address
+  old_weight:u32
+  weight:u32
+  changed_by:Address
+}
+struct AnalyticsRotationCompletedEvent {
+  old_analytics:Address
+  new_analytics:Address
 }
 struct ApprovalRevokedEvent {
   proposal_id:u64
@@ -62,6 +72,12 @@ struct AttestationSubmittedEvent {
   proof_hash:Option<BytesN<32>>
   expiry_timestamp:Option<u64>
 }
+struct AttestorLockedForDisputeEvent {
+  attestor:Address
+  business:Address
+  period:String
+  dispute_id:u64
+}
 struct BackfillCheckpointEvent {
   submission_count:u64
   state_commitment:BytesN<32>
@@ -86,6 +102,26 @@ struct CleanupSummaryEvent {
   epoch:u64
   removed_count:u64
   at_ts:u64
+}
+struct CollectorRotationAcceptedEvent {
+  old_collector:Address
+  new_collector:Address
+  token:Address
+  escrowed_amount:i128
+}
+struct CollectorRotationProposedEvent {
+  old_collector:Address
+  new_collector:Address
+  token:Address
+  escrowed_amount:i128
+}
+struct DaoRotationAcceptedEvent {
+  old_dao:Address
+  new_dao:Address
+}
+struct DaoRotationProposedEvent {
+  old_dao:Address
+  new_dao:Address
 }
 struct DisputeRolledBackEvent {
   dispute_id:u64
@@ -166,6 +202,9 @@ struct MultiPeriodIssuedEvent {
   end_period:u32
   merkle_root:BytesN<32>
 }
+struct OwnerRecoveryPhraseAcknowledgedEvent {
+  new_owner:Address
+}
 struct PauseChangedEvent {
   changed_by:Address
 }
@@ -210,6 +249,12 @@ struct RelayerGasReportedEvent {
   total_cpu_instructions:u64
   total_memory_bytes:u64
 }
+struct ReputationGateCheckEvent {
+  attestor:Address
+  score:u64
+  min_reputation:u64
+  allowed:bool
+}
 struct RevocationCancelledEvent {
   business:Address
   period:String
@@ -222,6 +267,10 @@ struct RevocationCommittedEvent {
   committed_by:Address
   committed_at:u64
   reason:String
+}
+struct RevocationIndexCleanedEvent {
+  business:Address
+  cleaned_count:u32
 }
 struct RevocationProposedEvent {
   business:Address
@@ -247,4 +296,31 @@ struct SlashTriggeredEvent {
   attestor:Address
   amount:i128
   dispute_id:u64
+  condition:SlashingCondition
+}
+enum SlashingCondition {
+  DoubleSubmission
+  RevokedResubmit
+  ExpiredReuse
+  DisputeUpheld
+}
+struct StakingContractCancelledEvent {
+  cancelled_contract:Address
+  cancelled_by:Address
+}
+struct StakingContractCommittedEvent {
+  new_contract:Address
+  committed_by:Address
+}
+struct StakingContractProposedEvent {
+  new_contract:Address
+  proposed_by:Address
+  effective_at:u64
+}
+struct VoteWeightSnapshotCreatedEvent {
+  proposal_id:u64
+  owners_count:u32
+  threshold:u32
+  created_at:u32
+  action_tag:u32
 }

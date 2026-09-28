@@ -98,7 +98,7 @@ use soroban_sdk::{contracttype, symbol_short, Address, BytesN, Env, String, Symb
 /// every `#[contracttype]` type below and compares it against the committed
 /// baseline in `contracts/attestation/event_schema_snapshot.txt`. Run
 /// `./scripts/check_event_schema.sh --update` after an intentional change.
-pub const EVENT_SCHEMA_VERSION: u32 = 1;
+pub const EVENT_SCHEMA_VERSION: u32 = 2;
 
 // ════════════════════════════════════════════════════════════════════
 //  Event Topics  (short symbols ≤ 9 chars for gas efficiency)
@@ -864,20 +864,25 @@ pub struct DisputeRolledBackEvent {
 pub enum SlashingCondition {
     /// The attestor submitted a duplicate attestation for a business+period
     /// that already has an active (non-revoked) attestation.
-    DoubleSubmission = 1,
+    DoubleSubmission,
     /// The attestor resubmitted an attestation for a period that was revoked.
-    RevokedResubmit = 2,
+    RevokedResubmit,
     /// The attestor attempted to reuse an expired attestation as if it were
     /// still valid (expiry-reuse).
-    ExpiredReuse = 3,
+    ExpiredReuse,
     /// A dispute against an attestor's attestation was resolved as Upheld.
-    DisputeUpheld = 4,
+    DisputeUpheld,
 }
 
 impl SlashingCondition {
     /// Stable numeric code for indexers and dashboards.
     pub fn code(&self) -> u32 {
-        *self as u32
+        match self {
+            SlashingCondition::DoubleSubmission => 1,
+            SlashingCondition::RevokedResubmit => 2,
+            SlashingCondition::ExpiredReuse => 3,
+            SlashingCondition::DisputeUpheld => 4,
+        }
     }
 }
 

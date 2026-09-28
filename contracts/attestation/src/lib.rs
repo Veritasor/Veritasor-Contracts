@@ -4227,7 +4227,7 @@ mod relayer_gas_attribution_test {
             &None,
         );
 
-        let gas_after_second = dynamic_fees::get_relayer_gas(&env, &attestor);
+        let gas_after_second = relayer_gas_of(&env, &client.address, &attestor);
         assert!(
             gas_after_second > gas_after_first,
             "Gas should accumulate across multiple submissions"
@@ -4240,8 +4240,8 @@ mod relayer_gas_attribution_test {
 
         let attestor = Address::generate(&env);
 
-        // Check relayer gas for attestor with zero prior activity
-        let relayer_gas = dynamic_fees::get_relayer_gas(&env, &attestor);
+        // Read contract instance storage through the contract frame.
+        let relayer_gas = relayer_gas_of(&env, &client.address, &attestor);
         assert_eq!(
             relayer_gas, 0,
             "New relayer should have zero gas accumulation"
