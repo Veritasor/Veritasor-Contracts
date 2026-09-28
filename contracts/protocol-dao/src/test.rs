@@ -915,8 +915,8 @@ fn test_dao_pause_attestation() {
 
     let proposal_id = dao.create_pause_proposal(&proposer);
 
-    dao.vote_for(&proposal_id, &voter1);
-    dao.vote_for(&proposal_id, &voter2);
+    dao.vote_for(&voter1, &proposal_id);
+    dao.vote_for(&voter2, &proposal_id);
 
     assert!(dao.is_proposal_approved(&proposal_id));
 }
