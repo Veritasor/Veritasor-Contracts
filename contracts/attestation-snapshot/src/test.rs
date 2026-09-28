@@ -719,3 +719,95 @@ fn test_restore_version_mismatch_event_emitted() {
     assert_eq!(evt.expected_version, SNAPSHOT_SCHEMA_VERSION);
     assert_eq!(evt.detected_at, 5_000_000);
 }
+
+// ── get_admin adversarial coverage (issue #872) ──────────────────────
+
+/// `get_admin` must panic with "contract not initialized" when called
+/// before `initialize`.  Without auth mocking the env is bare.
+#[test]
+#[should_panic(expected = "contract not initialized")]
+fn test_get_admin_before_initialize_panics() {
+    let env = Env::default();
+    let contract_id = env.register(AttestationSnapshotContract, ());
+    let client = AttestationSnapshotContractClient::new(&env, &contract_id);
+    // No initialize call → storage has no Admin key → expect panic.
+    let _ = client.get_admin();
+}
+
+/// `get_admin` must return exactly the address supplied to `initialize`.
+#[test]
+fn test_get_admin_returns_initialized_admin() {
+    let (_env, client, admin) = setup_snapshot_only();
+    assert_eq!(client.get_admin(), admin);
+}
+
+/// `get_admin` must return the same value regardless of which address
+/// calls the function (it is a pure read with no auth gate).
+#[test]
+fn test_get_admin_is_publicly_readable() {
+    let (env, client, admin) = setup_snapshot_only();
+    // A completely unrelated address can still read get_admin.
+    let _bystander = Address::generate(&env);
+    // The call itself carries no auth, so this must succeed.
+    let returned = client.get_admin();
+    assert_eq!(returned, admin, "get_admin must always return the stored admin");
+}
+
+/// Admin identity must be stable after a rejected admin-gated operation.
+/// Calling `set_attestation_contract` with a non-admin caller panics, but
+/// the stored admin key must remain unchanged afterwards.
+#[test]
+fn test_get_admin_unchanged_after_rejected_admin_call() {
+    let (env, client, admin) = setup_snapshot_only();
+
+    // Attempt a privileged call by a non-admin; expect it to be rejected.
+    let impostor = Address::generate(&env);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.set_attestation_contract(&impostor, &None::<Address>);
+    }));
+    assert!(result.is_err(), "non-admin set_attestation_contract must panic");
+
+    // State must be untouched.
+    assert_eq!(
+        client.get_admin(),
+        admin,
+        "admin must remain unchanged after a rejected call"
+    );
+}
+
+/// `get_admin` must still return the original admin when the optional
+/// attestation contract address was provided at initialization time.
+#[test]
+fn test_get_admin_with_attestation_contract_set() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let snap_id = env.register(AttestationSnapshotContract, ());
+    let client = AttestationSnapshotContractClient::new(&env, &snap_id);
+    let admin = Address::generate(&env);
+    let att_addr = Address::generate(&env);
+    client.initialize(&admin, &Some(att_addr.clone()));
+
+    // Both the admin and the attestation contract must be independently
+    // readable and must not bleed into each other.
+    assert_eq!(client.get_admin(), admin);
+    assert_eq!(client.get_attestation_contract(), Some(att_addr));
+}
+
+/// Calling `initialize` a second time must not overwrite the admin.
+/// `get_admin` must continue to return the original admin.
+#[test]
+fn test_get_admin_stable_after_double_init_attempt() {
+    let (env, client, original_admin) = setup_snapshot_only();
+
+    let intruder = Address::generate(&env);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.initialize(&intruder, &None::<Address>);
+    }));
+    assert!(result.is_err(), "second initialize must panic");
+
+    assert_eq!(
+        client.get_admin(),
+        original_admin,
+        "admin must not be replaced by a second initialize attempt"
+    );
+}

@@ -54,7 +54,7 @@
 //! - Only the admin who called `restore_dry_run` can call `restore_commit`.
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short,
+    contract, contracterror, contractimpl, contracttype, symbol_short,
     xdr::ToXdr, Address, Bytes, BytesN, Env, String, Symbol, Vec,
 };
 
@@ -206,27 +206,27 @@ pub struct RestoreAbortedEvent {
 }
 
 /// Attestation contract client: WASM import for wasm32 (avoids duplicate symbols), crate for tests.
-#[cfg(target_arch = "wasm32")]
 mod attestation_import {
-    use soroban_sdk::{Address, BytesN, String, Vec};
+    use soroban_sdk::{contractclient, Address, BytesN, Env, String};
+
     #[allow(dead_code)]
     pub type AttestationData = (BytesN<32>, u64, u32, i128, Option<BytesN<32>>, Option<u64>);
     #[allow(dead_code)]
     pub type RevocationData = (Address, u64, String);
-    #[allow(dead_code)]
-    pub type AttestationWithRevocation = (AttestationData, Option<RevocationData>);
-    #[allow(dead_code)]
-    pub type AttestationStatusResult =
-        Vec<(String, Option<AttestationData>, Option<RevocationData>)>;
 
-    soroban_sdk::contractimport!(
-        file = "../../target/wasm32-unknown-unknown/release/veritasor_attestation.wasm"
-    );
-    pub use Client as AttestationContractClient;
-}
-#[cfg(not(target_arch = "wasm32"))]
-mod attestation_import {
-    pub use veritasor_attestation::AttestationContractClient;
+    #[contractclient(name = "AttestationContractClient")]
+    pub trait AttestationContractTrait {
+        fn get_attestation(
+            env: Env,
+            business: Address,
+            period: String,
+        ) -> Option<AttestationData>;
+        fn get_revocation_info(
+            env: Env,
+            business: Address,
+            period: String,
+        ) -> Option<RevocationData>;
+    }
 }
 
 #[cfg(test)]
