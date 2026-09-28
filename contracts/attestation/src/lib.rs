@@ -3845,6 +3845,9 @@ impl AttestationContract {
 // (some modules need updates on this branch before they compile).
 #[cfg(all(test, feature = "full-tests"))]
 mod access_control_test;
+/// Adversarial coverage for `access_control::set_admin_weight` (issue #892).
+#[cfg(test)]
+mod admin_weight_adversarial_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod anomaly_test;
 #[cfg(test)]
