@@ -1259,3 +1259,7 @@ impl AttestationSnapshotContract {
 
 #[cfg(test)]
 mod snapshot_ttl_test;
+
+/// Focused adversarial tests for `get_max_epoch_businesses`.
+#[cfg(test)]
+mod test_max_epoch_businesses;
