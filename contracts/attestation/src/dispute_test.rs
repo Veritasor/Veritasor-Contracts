@@ -1174,3 +1174,326 @@ fn test_submit_dispute_witness_dispute_not_open_rejected() {
     let res = client.try_submit_dispute_witness(&dispute_id, &leaf, &proof);
     assert!(res.is_err());
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  get_attestation_revocation — adversarial coverage
+//
+//  `get_attestation_revocation` is the read half of the `DataKey::Revoked`
+//  record; `store_attestation_revocation` is the write half.  These tests
+//  cover the absent/fresh path, exact tuple round-trip (including a non-ASCII
+//  reason), key isolation across `(business, period)`, overwrite precedence,
+//  agreement with `is_attestation_revoked`, the public `get_revocation_info`
+//  wrapper, and that rejected revocations leave the stored record untouched.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Read `dispute::get_attestation_revocation` inside the contract's storage
+/// context.  Direct instance-storage access requires `env.as_contract`.
+fn read_attestation_revocation(
+    env: &Env,
+    client: &AttestationContractClient<'_>,
+    business: &Address,
+    period: &String,
+) -> Option<RevocationData> {
+    env.as_contract(&client.address, || {
+        dispute::get_attestation_revocation(env, business, period)
+    })
+}
+
+/// Write a revocation record directly through
+/// `dispute::store_attestation_revocation` (bypasses auth/state guards).
+fn write_attestation_revocation(
+    env: &Env,
+    client: &AttestationContractClient<'_>,
+    business: &Address,
+    period: &String,
+    revocation: &RevocationData,
+) {
+    env.as_contract(&client.address, || {
+        dispute::store_attestation_revocation(env, business, period, revocation);
+    });
+}
+
+/// `dispute::is_attestation_revoked` reads the same `DataKey::Revoked` key.
+fn is_revoked_in_contract(
+    env: &Env,
+    client: &AttestationContractClient<'_>,
+    business: &Address,
+    period: &String,
+) -> bool {
+    env.as_contract(&client.address, || {
+        dispute::is_attestation_revoked(env, business, period)
+    })
+}
+
+/// A fresh contract has no revocation record, and reading the missing key
+/// must not materialise it (reads are side-effect free).
+#[test]
+fn test_get_attestation_revocation_none_on_fresh_contract() {
+    let (env, client) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-01");
+
+    assert!(!is_revoked_in_contract(&env, &client, &business, &period));
+
+    assert_eq!(
+        read_attestation_revocation(&env, &client, &business, &period),
+        None
+    );
+
+    // A second read still yields `None` and the key is still absent: the
+    // getter must not create state, even accidentally via a default write.
+    assert_eq!(
+        read_attestation_revocation(&env, &client, &business, &period),
+        None
+    );
+    assert!(
+        !is_revoked_in_contract(&env, &client, &business, &period),
+        "reading a missing Revoked key must not create it"
+    );
+}
+
+/// After a store, the getter returns the exact `(caller, timestamp, reason)`
+/// tuple, including a non-ASCII reason string, and the public wrapper agrees.
+#[test]
+fn test_get_attestation_revocation_round_trips_exact_tuple() {
+    let (env, client) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-01");
+    let caller = Address::generate(&env);
+    // Non-ASCII reason (accents + CJK + a symbol) proves byte-exact storage.
+    let reason = String::from_str(&env, "audit café ✓ 監査報告");
+
+    env.ledger().set_timestamp(1_700_000_123);
+    let revocation: RevocationData = (caller.clone(), 1_700_000_123u64, reason.clone());
+    write_attestation_revocation(&env, &client, &business, &period, &revocation);
+
+    let got = read_attestation_revocation(&env, &client, &business, &period);
+    assert_eq!(got, Some(revocation.clone()));
+    let got = got.unwrap();
+    assert_eq!(got.0, caller, "caller address must round-trip");
+    assert_eq!(got.1, 1_700_000_123u64, "timestamp must round-trip");
+    assert_eq!(got.2, reason, "non-ASCII reason must round-trip");
+
+    // The public contract method is a thin wrapper over the same key.
+    assert_eq!(
+        client.get_revocation_info(&business, &period),
+        Some(revocation)
+    );
+}
+
+/// Revocation records are keyed by `(business, period)`; a record for one key
+/// must never leak into a neighbouring key on either read path.
+#[test]
+fn test_get_attestation_revocation_is_key_isolated() {
+    let (env, client) = setup();
+    let biz_a = Address::generate(&env);
+    let biz_b = Address::generate(&env);
+    let jan = String::from_str(&env, "2026-01");
+    let feb = String::from_str(&env, "2026-02");
+
+    let revocation: RevocationData = (
+        Address::generate(&env),
+        1_700_000_000u64,
+        String::from_str(&env, "january only"),
+    );
+    write_attestation_revocation(&env, &client, &biz_a, &jan, &revocation);
+
+    // Exact key present.
+    assert_eq!(
+        read_attestation_revocation(&env, &client, &biz_a, &jan),
+        Some(revocation.clone())
+    );
+    // Different period, same business: absent.
+    assert_eq!(
+        read_attestation_revocation(&env, &client, &biz_a, &feb),
+        None
+    );
+    assert!(!is_revoked_in_contract(&env, &client, &biz_a, &feb));
+    // Same period, different business: absent.
+    assert_eq!(
+        read_attestation_revocation(&env, &client, &biz_b, &jan),
+        None
+    );
+    assert!(!is_revoked_in_contract(&env, &client, &biz_b, &jan));
+
+    // Public wrapper reports the same isolation.
+    assert_eq!(client.get_revocation_info(&biz_a, &jan), Some(revocation));
+    assert_eq!(client.get_revocation_info(&biz_a, &feb), None);
+    assert_eq!(client.get_revocation_info(&biz_b, &jan), None);
+    assert!(!client.is_revoked(&biz_b, &jan));
+}
+
+/// Storing again for the same key overwrites deterministically: the getter
+/// returns the newest tuple, never a stale or merged value.
+#[test]
+fn test_get_attestation_revocation_overwrite_returns_newest() {
+    let (env, client) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-01");
+
+    let first: RevocationData = (
+        Address::generate(&env),
+        1_000u64,
+        String::from_str(&env, "first reason"),
+    );
+    write_attestation_revocation(&env, &client, &business, &period, &first);
+    assert_eq!(
+        read_attestation_revocation(&env, &client, &business, &period),
+        Some(first.clone())
+    );
+
+    let second: RevocationData = (
+        Address::generate(&env),
+        2_000u64,
+        String::from_str(&env, "second reason"),
+    );
+    write_attestation_revocation(&env, &client, &business, &period, &second);
+
+    let got = read_attestation_revocation(&env, &client, &business, &period).unwrap();
+    assert_eq!(got, second, "getter must return the newest stored tuple");
+    assert_ne!(got.0, first.0, "caller must come from the newest write");
+    assert_ne!(got.1, first.1, "timestamp must come from the newest write");
+    assert_ne!(got.2, first.2, "reason must come from the newest write");
+    assert_eq!(client.get_revocation_info(&business, &period), Some(second));
+}
+
+/// The getter and `is_attestation_revoked` must agree, because both read the
+/// same `DataKey::Revoked` key: `Some(_)` iff `has(key)`.
+#[test]
+fn test_get_attestation_revocation_agrees_with_is_attestation_revoked() {
+    let (env, client) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-01");
+    let neighbour = String::from_str(&env, "2026-02");
+
+    // Absent: both paths say "no".
+    assert_eq!(
+        read_attestation_revocation(&env, &client, &business, &period).is_some(),
+        is_revoked_in_contract(&env, &client, &business, &period)
+    );
+    assert!(!client.is_revoked(&business, &period));
+
+    let revocation: RevocationData = (
+        Address::generate(&env),
+        1_700_000_000u64,
+        String::from_str(&env, "consistency"),
+    );
+    write_attestation_revocation(&env, &client, &business, &period, &revocation);
+
+    // Present: both paths say "yes".
+    assert!(read_attestation_revocation(&env, &client, &business, &period).is_some());
+    assert!(is_revoked_in_contract(&env, &client, &business, &period));
+    assert!(client.is_revoked(&business, &period));
+
+    // A neighbouring key stays absent on both paths.
+    assert!(!is_revoked_in_contract(
+        &env, &client, &business, &neighbour
+    ));
+    assert_eq!(
+        read_attestation_revocation(&env, &client, &business, &neighbour),
+        None
+    );
+}
+
+/// End-to-end: the tuple written by a real `revoke_attestation` call survives
+/// through the public `get_revocation_info` wrapper and the internal getter.
+#[test]
+fn test_get_attestation_revocation_survives_revoke_attestation_flow() {
+    let (env, client) = setup();
+    let admin = client.get_admin();
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-01");
+    let root = BytesN::from_array(&env, &[9u8; 32]);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    env.ledger().set_timestamp(1_700_000_777);
+    let reason = String::from_str(&env, "revoked by admin — 監査");
+    client.revoke_attestation(&admin, &business, &period, &reason, &0u64);
+
+    let public = client
+        .get_revocation_info(&business, &period)
+        .expect("revocation info must exist after revoke_attestation");
+    assert_eq!(public.0, admin, "caller must be the revoking admin");
+    assert_eq!(public.1, 1_700_000_777u64, "timestamp must be ledger time");
+    assert_eq!(public.2, reason, "reason must round-trip through the flow");
+
+    // The internal getter sees exactly the same tuple.
+    assert_eq!(
+        read_attestation_revocation(&env, &client, &business, &period),
+        Some(public)
+    );
+    assert!(client.is_revoked(&business, &period));
+}
+
+/// Rejected revocations must not mutate the stored revocation record: a
+/// missing attestation creates no phantom record, and a double revocation does
+/// not overwrite the original tuple.
+#[test]
+fn test_get_attestation_revocation_unchanged_after_rejected_revocations() {
+    let (env, client) = setup();
+    let admin = client.get_admin();
+
+    // Rejected: revocation of a non-existent attestation.
+    let missing_business = Address::generate(&env);
+    let missing_period = String::from_str(&env, "2026-09");
+    let reason = String::from_str(&env, "should be rejected");
+    let rejected =
+        client.try_revoke_attestation(&admin, &missing_business, &missing_period, &reason, &0u64);
+    assert!(
+        rejected.is_err(),
+        "revoking a missing attestation must fail"
+    );
+    assert_eq!(
+        read_attestation_revocation(&env, &client, &missing_business, &missing_period),
+        None,
+        "a rejected revocation must not create a phantom record"
+    );
+    assert!(!is_revoked_in_contract(
+        &env,
+        &client,
+        &missing_business,
+        &missing_period
+    ));
+
+    // Rejected: double revocation must preserve the original tuple.
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-01");
+    let root = BytesN::from_array(&env, &[4u8; 32]);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1_700_000_000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    env.ledger().set_timestamp(1_700_000_500);
+    let first_reason = String::from_str(&env, "first");
+    client.revoke_attestation(&admin, &business, &period, &first_reason, &0u64);
+    let stored = read_attestation_revocation(&env, &client, &business, &period)
+        .expect("first revocation must be stored");
+
+    let duplicate_reason = String::from_str(&env, "second attempt");
+    let duplicate =
+        client.try_revoke_attestation(&admin, &business, &period, &duplicate_reason, &0u64);
+    assert!(duplicate.is_err(), "double revocation must be rejected");
+    assert_eq!(
+        read_attestation_revocation(&env, &client, &business, &period),
+        Some(stored.clone()),
+        "a rejected double revocation must not overwrite the stored tuple"
+    );
+    assert_eq!(stored.2, first_reason);
+}
