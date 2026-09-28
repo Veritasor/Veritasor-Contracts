@@ -3927,6 +3927,8 @@ mod revocation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod revoke_reason_test;
 #[cfg(test)]
+mod revoke_proposal_test;
+#[cfg(test)]
 mod schema_export_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod test;
