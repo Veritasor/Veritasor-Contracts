@@ -1072,21 +1072,19 @@ impl AttestationSnapshotContract {
 
             for j in 0..businesses.len() {
                 let business = businesses.get(j).unwrap();
-                let periods_key = DataKey::BusinessPeriods(business.clone());
-                let periods: Vec<String> = env
-                    .storage()
-                    .instance()
-                    .get(&periods_key)
-                    .unwrap_or_else(|| Vec::new(&env));
-
-                for k in 0..periods.len() {
-                    let period = periods.get(k).unwrap();
-                    let snap_key = DataKey::Snapshot(business.clone(), period.clone());
-                    if let Some(record) =
-                        env.storage().instance().get::<_, SnapshotRecord>(&snap_key)
-                    {
-                        entries.push_back(Self::canonicalize_snapshot_record(&env, &record));
-                    }
+                // `record_snapshot` indexes the snapshot under the epoch that is
+                // the record's own `period` (see `index_business_for_epoch` /
+                // `index_epoch_globally`), so the live record for this
+                // (business, epoch) pair is looked up directly. Walking the
+                // business's whole period index here instead would visit each of
+                // its records once per epoch the business appears in, appending
+                // duplicates of the same canonical entry and reporting an
+                // inflated count.
+                let snap_key = DataKey::Snapshot(business.clone(), epoch.clone());
+                if let Some(record) =
+                    env.storage().instance().get::<_, SnapshotRecord>(&snap_key)
+                {
+                    entries.push_back(Self::canonicalize_snapshot_record(&env, &record));
                 }
             }
         }
@@ -1259,3 +1257,6 @@ impl AttestationSnapshotContract {
 
 #[cfg(test)]
 mod snapshot_ttl_test;
+
+#[cfg(test)]
+mod snapshot_commitment_test;
