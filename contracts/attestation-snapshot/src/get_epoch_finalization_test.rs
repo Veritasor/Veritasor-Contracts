@@ -25,9 +25,7 @@
 
 extern crate std;
 
-use crate::{
-    AttestationSnapshotContract, AttestationSnapshotContractClient, EpochFinalization,
-};
+use crate::{AttestationSnapshotContract, AttestationSnapshotContractClient, EpochFinalization};
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{Address, Env, String};
 
@@ -153,7 +151,13 @@ fn snapshot_count_matches_distinct_businesses() {
 
     client.finalize_epoch(&admin, &epoch);
 
-    assert_eq!(client.get_epoch_finalization(&epoch).unwrap().snapshot_count, 2);
+    assert_eq!(
+        client
+            .get_epoch_finalization(&epoch)
+            .unwrap()
+            .snapshot_count,
+        2
+    );
 }
 
 #[test]
