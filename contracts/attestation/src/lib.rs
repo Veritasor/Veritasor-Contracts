@@ -4322,3 +4322,7 @@ mod relayer_gas_attribution_test {
         );
     }
 }
+
+/// Adversarial tests for `dispute::is_attestor_locked` (issue #943).
+#[cfg(test)]
+mod is_attestor_locked_test;
