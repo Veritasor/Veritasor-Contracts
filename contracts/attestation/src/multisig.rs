@@ -36,11 +36,9 @@
 //! See `docs/attestation-vote-weight-snapshot.md` for the full threat model,
 //! security notes, and migration considerations.
 
-use soroban_sdk::{
-    contracttype, signature, symbol_short, Address, Env, Signature, String, Symbol, Vec,
-};
+use soroban_sdk::{contracttype, symbol_short, Address, Env, String, Symbol, Vec};
 
-use crate::access_control::{is_paused, set_paused};
+use crate::access_control::{emergency_pause_execute, is_paused};
 use crate::events;
 
 /// Default proposal expiry, expressed in ledger sequences after creation.
@@ -705,7 +703,7 @@ pub fn emergency_pause(env: &Env, signer1: &Address, signer2: &Address) {
 
     // Ensure distinct signers (different hardware keys)
     assert!(
-        addr1 != addr2,
+        signer1 != signer2,
         "both signatures must come from distinct keys"
     );
 
@@ -761,7 +759,7 @@ pub fn cleanup_expired_proposals(env: &Env, limit: u32) -> u32 {
                 if let Some(proposal) = env
                     .storage()
                     .instance()
-                    .get::<_, Proposal>(&MultisigKey::Proposal(id))
+                    .get::<_, Proposal>(&MultisigKey::Proposal(id_u64))
                 {
                     let action = proposal.action.clone();
                     let cleaned_at = env.ledger().sequence();
@@ -779,8 +777,8 @@ pub fn cleanup_expired_proposals(env: &Env, limit: u32) -> u32 {
                     // proposal's intended lifetime.
                     env.storage()
                         .instance()
-                        .remove(&MultisigKey::VoteWeightSnapshot(id));
-                    events::emit_proposal_cleaned(env, id, &action, cleaned_at);
+                        .remove(&MultisigKey::VoteWeightSnapshot(id_u64));
+                    events::emit_proposal_cleaned(env, id_u64, &action, cleaned_at);
                     cleaned += 1;
                 }
             }
@@ -803,9 +801,9 @@ pub fn revoke_approval(env: &Env, approver: &Address, id: u64) {
     let pos = approvals.iter().position(|a| a == *approver);
     if let Some(idx) = pos {
         let last = approvals.len() - 1;
-        if idx != last {
+        if (idx as u32) != last {
             let last_addr = approvals.get(last).unwrap();
-            approvals.set(idx, last_addr);
+            approvals.set(idx as u32, last_addr);
         }
         approvals.pop_back();
         env.storage()

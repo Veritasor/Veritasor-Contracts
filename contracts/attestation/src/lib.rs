@@ -8,8 +8,8 @@ extern crate std;
 
 use core::cmp::Ordering;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, signature, token, Address, BytesN, Env, Signature,
-    String, Symbol, TryIntoVal, Vec,
+    contract, contractimpl, contracttype, token, Address, BytesN, Env, IntoVal, String, Symbol,
+    TryIntoVal, Vec,
 };
 
 use veritasor_common::merkle;
@@ -93,7 +93,10 @@ pub use access_control::{ROLE_ADMIN, ROLE_ATTESTOR, ROLE_BUSINESS, ROLE_OPERATOR
 pub use dispute::{
     Dispute, DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType, OptionalResolution,
 };
-pub use dynamic_fees::{add_relayer_gas, compute_fee, get_relayer_gas, DataKey, FeeConfig};
+pub use dynamic_fees::{
+    add_relayer_gas, compute_fee, get_relayer_gas, DataKey, FeeConfig, PendingFeeConfig,
+    FEE_TIMELOCK_SECONDS,
+};
 pub use dynamic_fees::{ArchivePointerRecord, CompactionRetentionPolicy};
 pub use dynamic_fees::{RevokeProposal, DEFAULT_REVOKE_GRACE_SECONDS};
 pub use events::{
@@ -871,6 +874,69 @@ impl AttestationContract {
         );
     }
 
+    /// Submit an attestation on behalf of a business by an authorized attestor.
+    ///
+    /// This function allows a staked attestor to submit an attestation for a business.
+    /// The attestor must meet both staking requirements and reputation requirements (if configured).
+    ///
+    /// # Validation Flow
+    ///
+    /// 1. **Attestor Lock Check**: Verifies attestor is not currently locked
+    /// 2. **Staking Eligibility**: If an attestor-staking contract is registered,
+    ///    calls it to verify minimum stake. If none is registered, submission
+    ///    proceeds (backward-compatible passthrough for pre-staking deployments).
+    /// 3. **Reputation Gating** (if enabled): Calls configured reputation contract and:
+    ///    - Fetches attestor's reputation score (read-only cross-contract call)
+    ///    - Compares against configured minimum threshold
+    ///    - Emits `ReputationGateCheckEvent` with score, threshold, and pass/fail status
+    ///    - Rejects with panic if score is below threshold (fail-closed behavior)
+    /// 4. **Standard Submission Validation**: Duplicate check, expiry, proof hash validation
+    ///
+    /// # Reputation Gating Behavior
+    ///
+    /// Reputation gating is optional and admin-configurable:
+    /// - **Disabled (default)**: If `reputation_contract` is None, submission proceeds directly
+    ///   without reputation checks (passthrough mode)
+    /// - **Enabled**: If `reputation_contract` is set, the check is performed before submission
+    /// - **Fail-Closed**: Any error in the reputation contract call (invalid address, call failure,
+    ///   malformed response) results in submission rejection
+    /// - **Score >= Threshold**: Submission proceeds if attestor score >= min_reputation
+    /// - **Score < Threshold**: Submission is rejected with "attestor reputation below minimum threshold"
+    ///
+    /// # Cross-Contract Call
+    ///
+    /// When reputation gating is enabled, this function performs a read-only cross-contract call
+    /// to the configured reputation contract:
+    /// ```ignore
+    /// reputation_contract.get_reputation(attestor: Address) -> u64
+    /// ```
+    /// The query is read-only and does not require authentication beyond the implicit contract-to-contract
+    /// invocation. The reputation contract address must expose this function publicly.
+    ///
+    /// # Events
+    ///
+    /// Emits:
+    /// - `ReputationGateCheckEvent` if reputation gating is enabled (always, regardless of pass/fail)
+    /// - `AttestationSubmittedEvent` on successful submission
+    ///
+    /// # Panics
+    ///
+    /// - `"attestor is locked"` – Attestor has active lock on this contract
+    /// - `"attestor is not eligible"` – Attestor stake below minimum (when staking is configured)
+    /// - `"attestor reputation below minimum threshold"` – Reputation score below floor (when gating enabled)
+    /// - `"business is suspended"` – Business is in suspended status
+    /// - `"attestation already exists for this business and period"` – Duplicate attestation
+    /// - Standard submission validation panics (expiry, proof hash, rate limit, etc.)
+    ///
+    /// # Arguments
+    ///
+    /// * `attestor` – The staked attestor address (must have ROLE_ATTESTOR and meet stake requirements)
+    /// * `business` – The business whose attestation is being submitted
+    /// * `period` – Period identifier (e.g., "2026-02")
+    /// * `merkle_root` – Root hash of the attestation dataset
+    /// * `timestamp` – Submission timestamp
+    /// * `version` – Schema version
+    /// * `expiry_timestamp` – Optional expiration time (if None, attestation never expires)
     pub fn submit_attestation_as_attestor(
         env: Env,
         attestor: Address,
@@ -881,69 +947,6 @@ impl AttestationContract {
         version: u32,
         expiry_timestamp: Option<u64>,
     ) {
-        /// Submit an attestation on behalf of a business by an authorized attestor.
-        ///
-        /// This function allows a staked attestor to submit an attestation for a business.
-        /// The attestor must meet both staking requirements and reputation requirements (if configured).
-        ///
-        /// # Validation Flow
-        ///
-        /// 1. **Attestor Lock Check**: Verifies attestor is not currently locked
-        /// 2. **Staking Eligibility**: If an attestor-staking contract is registered,
-        ///    calls it to verify minimum stake. If none is registered, submission
-        ///    proceeds (backward-compatible passthrough for pre-staking deployments).
-        /// 3. **Reputation Gating** (if enabled): Calls configured reputation contract and:
-        ///    - Fetches attestor's reputation score (read-only cross-contract call)
-        ///    - Compares against configured minimum threshold
-        ///    - Emits `ReputationGateCheckEvent` with score, threshold, and pass/fail status
-        ///    - Rejects with panic if score is below threshold (fail-closed behavior)
-        /// 4. **Standard Submission Validation**: Duplicate check, expiry, proof hash validation
-        ///
-        /// # Reputation Gating Behavior
-        ///
-        /// Reputation gating is optional and admin-configurable:
-        /// - **Disabled (default)**: If `reputation_contract` is None, submission proceeds directly
-        ///   without reputation checks (passthrough mode)
-        /// - **Enabled**: If `reputation_contract` is set, the check is performed before submission
-        /// - **Fail-Closed**: Any error in the reputation contract call (invalid address, call failure,
-        ///   malformed response) results in submission rejection
-        /// - **Score >= Threshold**: Submission proceeds if attestor score >= min_reputation
-        /// - **Score < Threshold**: Submission is rejected with "attestor reputation below minimum threshold"
-        ///
-        /// # Cross-Contract Call
-        ///
-        /// When reputation gating is enabled, this function performs a read-only cross-contract call
-        /// to the configured reputation contract:
-        /// ```ignore
-        /// reputation_contract.get_reputation(attestor: Address) -> u64
-        /// ```
-        /// The query is read-only and does not require authentication beyond the implicit contract-to-contract
-        /// invocation. The reputation contract address must expose this function publicly.
-        ///
-        /// # Events
-        ///
-        /// Emits:
-        /// - `ReputationGateCheckEvent` if reputation gating is enabled (always, regardless of pass/fail)
-        /// - `AttestationSubmittedEvent` on successful submission
-        ///
-        /// # Panics
-        ///
-        /// - `"attestor is locked"` – Attestor has active lock on this contract
-        /// - `"attestor is not eligible"` – Attestor stake below minimum (when staking is configured)
-        /// - `"attestor reputation below minimum threshold"` – Reputation score below floor (when gating enabled)
-        /// - `"business is suspended"` – Business is in suspended status
-        /// - `"attestation already exists for this business and period"` – Duplicate attestation
-        /// - Standard submission validation panics (expiry, proof hash, rate limit, etc.)
-        ///
-        /// # Arguments
-        ///
-        /// * `attestor` – The staked attestor address (must have ROLE_ATTESTOR and meet stake requirements)
-        /// * `business` – The business whose attestation is being submitted
-        /// * `period` – Period identifier (e.g., "2026-02")
-        /// * `merkle_root` – Root hash of the attestation dataset
-        /// * `timestamp` – Submission timestamp
-        /// * `version` – Schema version
-        /// * `expiry_timestamp` – Optional expiration time (if None, attestation never expires)
         access_control::require_attestor_not_locked(&env, &attestor);
 
         // Staking eligibility is an admin-configured gate. When no staking
@@ -1375,11 +1378,15 @@ impl AttestationContract {
         }
     }
     pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
-        if let Some(att_data) = env
-            .storage()
-            .persistent()
-            .get::<_, AttestationData>(&DataKey::Attestation(business.clone(), period.clone()))
-        {
+        let key = DataKey::Attestation(business.clone(), period.clone());
+        if let Some(att_data) = env.storage().instance().get::<_, AttestationData>(&key) {
+            env.storage()
+                .instance()
+                .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+            return Some(att_data);
+        }
+
+        if let Some(att_data) = env.storage().persistent().get::<_, AttestationData>(&key) {
             env.storage()
                 .instance()
                 .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
@@ -1807,11 +1814,8 @@ impl AttestationContract {
     }
 
     /// Cleanup orphaned revocation index entries for a business.
-    pub fn cleanup_revocation_index(
-        env: Env,
-        business: Address,
-    ) -> Result<u32, soroban_sdk::Error> {
-        let mut periods = dispute::get_revoked_periods(&env, &business);
+    pub fn cleanup_revocation_index(env: Env, business: Address) -> u32 {
+        let periods = dispute::get_revoked_periods(&env, &business);
         if periods.is_empty() {
             return 0;
         }
@@ -1862,45 +1866,39 @@ impl AttestationContract {
     ) -> AttestationStatusResult {
         let mut result = Vec::new(&env);
         for period in periods.iter() {
+            let mut found = false;
             // Active tier lives in instance storage (see `execute_submission`).
             let active_key = DataKey::Attestation(business.clone(), period.clone());
             if let Some(att_data) = env
                 .storage()
                 .instance()
-                .get::<_, AttestationData>(&DataKey::Attestation(business.clone(), period.clone()))
+                .get::<_, AttestationData>(&active_key)
             {
-                let current_config = network_config::get_config(&env);
-                env.storage().persistent().extend_ttl(
-                    &DataKey::Attestation(business.clone(), period.clone()),
-                    current_config.min_persistent_entry_ttl,
-                    current_config.max_entry_ttl,
-                );
+                env.storage()
+                    .instance()
+                    .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
                 result.push_back((
                     period.clone(),
-                    att_data.clone(),
+                    Some(att_data.clone()),
                     Self::get_revocation_info(env.clone(), business.clone(), period.clone()),
                 ));
                 found = true;
             }
 
             if !found {
-                let archive_key = DataKey::AttestationSnapshot(business.clone(), period.clone());
+                let archive_key = DataKey::ArchivedAttestation(business.clone(), period.clone());
                 if let Some(archived_att_data) = env
                     .storage()
-                    .persistent()
+                    .instance()
                     .get::<_, AttestationData>(&archive_key)
                 {
-                    let current_config = network_config::get_config(&env);
-
                     let active_key = DataKey::Attestation(business.clone(), period.clone());
                     env.storage()
-                        .persistent()
+                        .instance()
                         .set(&active_key, &archived_att_data);
-                    env.storage().persistent().extend_ttl(
-                        &active_key,
-                        current_config.min_persistent_entry_ttl,
-                        current_config.max_entry_ttl,
-                    );
+                    env.storage()
+                        .instance()
+                        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
 
                     events::emit_rehydrated_from_archive(
                         &env,
@@ -1908,11 +1906,11 @@ impl AttestationContract {
                         &period,
                         archived_att_data.3,
                     );
-                    env.storage().persistent().remove(&archive_key);
+                    env.storage().instance().remove(&archive_key);
 
                     result.push_back((
                         period.clone(),
-                        archived_att_data,
+                        Some(archived_att_data),
                         Self::get_revocation_info(env.clone(), business.clone(), period.clone()),
                     ));
                 }
@@ -2147,12 +2145,12 @@ impl AttestationContract {
     pub fn emergency_pause(
         env: Env,
         caller: Address,
-        sig1: Signature,
-        sig2: Signature,
+        signer1: Address,
+        signer2: Address,
         nonce: u64,
     ) {
-        let admin = access_control::require_admin(&env, &caller);
-        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
+        access_control::require_admin(&env, &caller);
+        replay_protection::verify_and_increment_nonce(&env, &caller, NONCE_CHANNEL_ADMIN, nonce);
         multisig::emergency_pause(&env, &signer1, &signer2);
     }
 

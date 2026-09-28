@@ -903,30 +903,20 @@ fn tied_votes_are_not_approved_even_when_quorum_is_met() {
 
 #[test]
 fn test_dao_pause_attestation() {
-    let e = soroban_sdk::Env::default();
+    let (env, dao, _admin, token_addr) = setup_with_token(2, 100);
 
-    let contract_id = e.register_contract(None, ProtocolDaoContract);
-    let dao = ProtocolDaoContractClient::new(&e, &contract_id);
+    let proposer = Address::generate(&env);
+    let voter1 = Address::generate(&env);
+    let voter2 = Address::generate(&env);
 
-    let token =
-        soroban_sdk::testutils::create_token_contract(&e, &soroban_sdk::Address::generate(&e));
+    mint(&env, &token_addr, &proposer, 1000);
+    mint(&env, &token_addr, &voter1, 1000);
+    mint(&env, &token_addr, &voter2, 1000);
 
-    let gov_token_admin = soroban_sdk::Address::generate(&e);
-    let proposer = soroban_sdk::Address::generate(&e);
-    let voter1 = soroban_sdk::Address::generate(&e);
-    let voter2 = soroban_sdk::Address::generate(&e);
-    let executor = soroban_sdk::Address::generate(&e);
+    let proposal_id = dao.create_pause_proposal(&proposer);
 
-    token.mint(&proposer, &1000i128);
-    token.mint(&voter1, &1000i128);
-    token.mint(&voter2, &1000i128);
+    dao.vote_for(&proposal_id, &voter1);
+    dao.vote_for(&proposal_id, &voter2);
 
-    dao.initialize(&gov_token_admin, &token.address, &2u32, &100u32);
-
-    e.mock_all_auths();
-
-    let proposal_id = dao.create_pause_proposal();
-
-    dao.vote_for(&proposal_id);
-    dao.vote_for(&proposal_id);
+    assert!(dao.is_proposal_approved(&proposal_id));
 }

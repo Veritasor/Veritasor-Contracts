@@ -3,7 +3,7 @@
 use std::format;
 
 use super::*;
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{token, Address, BytesN, Env, String, Symbol, Vec};
 use veritasor_attestor_staking::AttestorStakingContract;
 use veritasor_attestor_staking::AttestorStakingContractClient as StakingClient;
@@ -65,7 +65,7 @@ fn setup_attestation_with_staking(
     // the time-locked propose/commit flow.
     att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
     env.ledger()
-        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+        .with_mut(|l| l.timestamp += crate::dynamic_fees::FEE_TIMELOCK_SECONDS + 1);
     att_client.commit_staking_contract(&admin, &2u64);
 
     (att_client, admin, staking_addr, token, staking_admin)
@@ -85,7 +85,7 @@ fn reputation_gating_disabled_by_default_passthrough() {
     // Setup attestor with stake
     let staking = StakingClient::new(&env, &staking_addr);
     let attestor = Address::generate(&env);
-    let token_client = token::Client::new(&env, &token);
+    let token_client = token::StellarAssetClient::new(&env, &token);
 
     // Mint tokens to attestor
     token_client.mint(&attestor, &1_000i128);
@@ -224,7 +224,7 @@ fn reputation_score_below_floor_rejected() {
 
     // Setup attestor with some stake (less than min_reputation)
     let attestor = Address::generate(&env);
-    let token_client = token::Client::new(&env, &token);
+    let token_client = token::StellarAssetClient::new(&env, &token);
 
     // Mint tokens to attestor
     token_client.mint(&attestor, &1_000i128);
@@ -274,7 +274,7 @@ fn reputation_score_at_threshold_accepted() {
 
     // Setup attestor with exactly 500 stake
     let attestor = Address::generate(&env);
-    let token_client = token::Client::new(&env, &token);
+    let token_client = token::StellarAssetClient::new(&env, &token);
 
     // Mint tokens to attestor
     token_client.mint(&attestor, &1_000i128);
@@ -326,7 +326,7 @@ fn reputation_score_above_floor_accepted() {
 
     // Setup attestor with 1000 stake (well above floor)
     let attestor = Address::generate(&env);
-    let token_client = token::Client::new(&env, &token);
+    let token_client = token::StellarAssetClient::new(&env, &token);
 
     // Mint tokens to attestor
     token_client.mint(&attestor, &2_000i128);

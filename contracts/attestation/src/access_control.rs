@@ -50,6 +50,8 @@
 //! - Nonce sequences must be monotonically increasing per account
 //! - At least `MIN_ADMIN_COUNT` addresses always hold ADMIN role.
 //! - Admin removals are separated by `ADMIN_REMOVAL_COOLDOWN_SECS`.
+use soroban_sdk::{contracttype, Address, Env, String, Vec};
+
 use crate::dispute;
 use crate::events;
 

@@ -493,13 +493,6 @@ fn test_business_role_limits() {
 #[test]
 fn test_fuzz_grant_revoke_role_random_bitmaps() {
     let e = soroban_sdk::Env::default();
-    let user1 = soroban_sdk::Address::generate(&e);
-    // A second admin keeps `admin_count > MIN_ADMIN_COUNT` so the
-    // admin-removal safeguard in `revoke_role` does not trip while the
-    // bitmap arithmetic below is exercised.
-    let user2 = soroban_sdk::Address::generate(&e);
-    e.as_contract(&contract_id, || {
-        crate::access_control::set_roles(&e, &user2, ROLE_ADMIN);
 
     // Seed enough admins that revoking ROLE_ADMIN from user1 keeps the
     // admin count above MIN_ADMIN_COUNT (and the cooldown guard idle).
