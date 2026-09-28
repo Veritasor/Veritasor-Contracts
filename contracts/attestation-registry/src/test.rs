@@ -774,3 +774,125 @@ fn query_functions_do_not_require_auth() {
     assert_eq!(client.get_previous_version(), None);
     assert_eq!(client.get_version_info(), None);
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  transfer_admin adversarial coverage
+//
+//  The happy-path tests above only show that the stored admin changes.
+//  These tests pin the adversarial edges: the uninitialized guard, the
+//  self-transfer no-op, chained handovers, the fact that an admin transfer
+//  must not perturb upgrade bookkeeping, and that the recipient genuinely
+//  inherits upgrade *and* rollback control.
+//
+//  Authorization note: `transfer_admin` has no caller argument — it requires
+//  the stored admin's signature via `require_admin()`. Under the Soroban
+//  test host's `mock_all_auths()` that signature is always satisfied, so the
+//  missing-auth branch is not reachable from this suite; the guard itself is
+//  covered by the existing `require_admin` tests for `upgrade` / `rollback`.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+#[should_panic(expected = "registry not initialized")]
+fn transfer_admin_before_initialization_panics() {
+    let (env, client) = setup_uninitialized();
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&new_admin);
+}
+
+#[test]
+fn transfer_admin_to_the_same_admin_is_idempotent() {
+    let (_env, client, admin, _initial_impl) = setup();
+
+    client.transfer_admin(&admin);
+    assert_eq!(client.get_admin(), Some(admin.clone()));
+
+    // Re-transferring to the current admin must not error or clear state.
+    client.transfer_admin(&admin);
+    assert_eq!(client.get_admin(), Some(admin));
+}
+
+#[test]
+fn chained_transfers_keep_only_the_latest_admin() {
+    let (env, client, first, _initial_impl) = setup();
+    let second = Address::generate(&env);
+    let third = Address::generate(&env);
+
+    client.transfer_admin(&second);
+    assert_eq!(client.get_admin(), Some(second.clone()));
+
+    client.transfer_admin(&third);
+    assert_eq!(client.get_admin(), Some(third.clone()));
+    assert_ne!(client.get_admin(), Some(first));
+    assert_ne!(client.get_admin(), Some(second));
+}
+
+#[test]
+fn transfer_admin_preserves_upgrade_history() {
+    let (env, client, _admin, initial_impl) = setup();
+    let impl_v2 = Address::generate(&env);
+    client.upgrade(&impl_v2, &2u32, &None);
+
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&new_admin);
+
+    // The admin handover must not perturb the upgrade bookkeeping.
+    assert_eq!(client.get_admin(), Some(new_admin));
+    assert_eq!(client.get_current_implementation(), Some(impl_v2));
+    assert_eq!(client.get_current_version(), Some(2u32));
+    assert_eq!(client.get_previous_implementation(), Some(initial_impl));
+    assert_eq!(client.get_previous_version(), Some(1u32));
+}
+
+#[test]
+fn transfer_admin_does_not_change_implementation_validation() {
+    let (env, client, _admin, initial_impl) = setup();
+    let candidate = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+
+    let before = client.validate_implementation(&candidate);
+    client.transfer_admin(&new_admin);
+    let after = client.validate_implementation(&candidate);
+
+    assert_eq!(before, after);
+    assert!(after);
+    // The new admin is still rejected as an implementation (circular-wiring guard),
+    // and the active implementation is still rejected as a redundant upgrade.
+    assert!(!client.validate_implementation(&new_admin));
+    assert!(!client.validate_implementation(&initial_impl));
+}
+
+#[test]
+fn new_admin_gains_full_upgrade_and_rollback_control() {
+    let (env, client, _admin, initial_impl) = setup();
+    let impl_v2 = Address::generate(&env);
+    client.upgrade(&impl_v2, &2u32, &None);
+
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&new_admin);
+    assert_eq!(client.get_admin(), Some(new_admin));
+
+    // The recipient can roll the registry back...
+    client.rollback();
+    assert_eq!(client.get_current_implementation(), Some(initial_impl));
+    assert_eq!(client.get_current_version(), Some(1u32));
+    assert_eq!(client.get_previous_implementation(), Some(impl_v2));
+
+    // ...and upgrade again.
+    let impl_v3 = Address::generate(&env);
+    client.upgrade(&impl_v3, &3u32, &None);
+    assert_eq!(client.get_current_implementation(), Some(impl_v3));
+    assert_eq!(client.get_current_version(), Some(3u32));
+}
+
+#[test]
+fn transfer_admin_is_a_noop_on_version_info() {
+    let (env, client, _admin, _initial_impl) = setup();
+    let before = client.get_version_info().unwrap().version;
+
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&new_admin);
+
+    let after = client.get_version_info().unwrap().version;
+    assert_eq!(after, before);
+    assert_eq!(client.get_admin(), Some(new_admin));
+}
