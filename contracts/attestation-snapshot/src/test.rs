@@ -719,3 +719,209 @@ fn test_restore_version_mismatch_event_emitted() {
     assert_eq!(evt.expected_version, SNAPSHOT_SCHEMA_VERSION);
     assert_eq!(evt.detected_at, 5_000_000);
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  Adversarial coverage: is_epoch_finalized
+//
+//  `is_epoch_finalized` is a raw storage probe over
+//  `DataKey::EpochFinalization(epoch)`.  These tests pin down its exact
+//  matching semantics (byte-exact epoch string, no normalization), its
+//  behaviour before initialization, epoch-length boundaries, and the fact
+//  that it is a pure read that neither mutates state nor is affected by
+//  unrelated epochs.
+// ════════════════════════════════════════════════════════════════════
+
+/// A contract that was never initialized must still answer the finalization
+/// probe without panicking (the read path does not require an admin).
+#[test]
+fn is_epoch_finalized_false_on_uninitialized_contract() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(AttestationSnapshotContract, ());
+    let client = AttestationSnapshotContractClient::new(&env, &contract_id);
+
+    assert!(!client.is_epoch_finalized(&String::from_str(&env, "2026-01")));
+    assert!(!client.is_epoch_finalized(&String::from_str(&env, "")));
+    assert!(client.get_epoch_finalization(&String::from_str(&env, "2026-01")).is_none());
+}
+
+#[test]
+fn is_epoch_finalized_false_for_arbitrary_epochs_on_fresh_contract() {
+    let (env, client, _admin) = setup_snapshot_only();
+
+    for label in [
+        "",
+        "2026-01",
+        "2026-01 ",
+        " 2026-01",
+        "2026-01\n",
+        "2026–01", // en-dash, different bytes from '-'
+    ] {
+        assert!(
+            !client.is_epoch_finalized(&String::from_str(&env, label)),
+            "epoch {label:?} must not be reported as finalized"
+        );
+    }
+}
+
+#[test]
+fn is_epoch_finalized_false_when_snapshots_exist_but_epoch_is_not_finalized() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-01");
+
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &0u32, &1u64);
+
+    // Recording indexes the epoch globally but does not finalize it.
+    assert!(!client.is_epoch_finalized(&epoch));
+    assert!(client.get_epoch_finalization(&epoch).is_none());
+    assert_eq!(client.get_total_epoch_count(), 1u32);
+    assert_eq!(client.get_epoch_businesses(&epoch).len(), 1);
+}
+
+#[test]
+fn is_epoch_finalized_is_byte_exact_after_finalization() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-01");
+
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &0u32, &1u64);
+    client.finalize_epoch(&admin, &epoch);
+    assert!(client.is_epoch_finalized(&epoch));
+
+    // Near-miss epochs that differ only by a byte must NOT be finalized, and
+    // recording into them must still be permitted.
+    for decoy in ["2026-0", "2026-01 ", " 2026-01", "2026-01x", "2026-02"] {
+        let decoy_epoch = String::from_str(&env, decoy);
+        assert!(
+            !client.is_epoch_finalized(&decoy_epoch),
+            "epoch {decoy:?} must not share finalization with {epoch:?}"
+        );
+        client.record_snapshot(&admin, &business, &decoy_epoch, &1i128, &0u32, &1u64);
+    }
+}
+
+#[test]
+fn is_epoch_finalized_is_global_per_epoch_not_per_business() {
+    let (env, client, admin) = setup_snapshot_only();
+    let biz_a = Address::generate(&env);
+    let biz_b = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-01");
+
+    client.record_snapshot(&admin, &biz_a, &epoch, &100_000i128, &0u32, &1u64);
+    client.finalize_epoch(&admin, &epoch);
+
+    assert!(client.is_epoch_finalized(&epoch));
+    assert_eq!(client.get_epoch_finalization(&epoch).unwrap().snapshot_count, 1);
+
+    // Finalization is keyed on the epoch string alone: a second business cannot
+    // sneak a snapshot into an already-finalized epoch.
+    let blocked = client.try_record_snapshot(&admin, &biz_b, &epoch, &200_000i128, &0u32, &2u64);
+    assert!(blocked.is_err(), "finalized epochs must reject new writers");
+    assert!(client.get_snapshot(&biz_b, &epoch).is_none());
+    assert!(client.is_epoch_finalized(&epoch));
+}
+
+#[test]
+fn is_epoch_finalized_survives_unrelated_epoch_activity() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let first = String::from_str(&env, "2026-01");
+    let second = String::from_str(&env, "2026-02");
+
+    client.record_snapshot(&admin, &business, &first, &100_000i128, &0u32, &1u64);
+    client.finalize_epoch(&admin, &first);
+
+    // Activity on another epoch (write + finalize + re-read) must not disturb
+    // the earlier finalization.
+    client.record_snapshot(&admin, &business, &second, &200_000i128, &0u32, &2u64);
+    assert!(!client.is_epoch_finalized(&second));
+    client.finalize_epoch(&admin, &second);
+
+    assert!(client.is_epoch_finalized(&first));
+    assert!(client.is_epoch_finalized(&second));
+    assert_eq!(client.get_epoch_finalization(&first).unwrap().epoch, first);
+    assert_eq!(client.get_epoch_finalization(&second).unwrap().epoch, second);
+}
+
+#[test]
+fn is_epoch_finalized_is_a_pure_read() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-01");
+
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &0u32, &1u64);
+    client.finalize_epoch(&admin, &epoch);
+
+    let (commitment_before, count_before) = client.export_commitment_with_count();
+    let finalization_before = client.get_epoch_finalization(&epoch).unwrap();
+    let epochs_before = client.get_total_epoch_count();
+
+    // Repeated probing must be idempotent and side-effect free.
+    for _ in 0..3 {
+        assert!(client.is_epoch_finalized(&epoch));
+        assert!(!client.is_epoch_finalized(&String::from_str(&env, "1999-12")));
+    }
+
+    let (commitment_after, count_after) = client.export_commitment_with_count();
+    assert_eq!(commitment_before, commitment_after);
+    assert_eq!(count_before, count_after);
+    assert_eq!(client.get_epoch_finalization(&epoch).unwrap(), finalization_before);
+    assert_eq!(client.get_total_epoch_count(), epochs_before);
+}
+
+#[test]
+fn is_epoch_finalized_stays_true_when_finalization_is_replayed() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-01");
+
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &0u32, &1u64);
+    client.finalize_epoch(&admin, &epoch);
+    let recorded = client.get_epoch_finalization(&epoch).unwrap();
+
+    // A second finalize attempt must be rejected...
+    let replay = client.try_finalize_epoch(&admin, &epoch);
+    assert!(replay.is_err(), "epochs are irreversible; double-finalize must fail");
+
+    // ...and must leave the original immutable metadata in place.
+    assert!(client.is_epoch_finalized(&epoch));
+    assert_eq!(client.get_epoch_finalization(&epoch).unwrap(), recorded);
+}
+
+#[test]
+fn is_epoch_finalized_false_for_empty_epoch_that_was_never_recorded() {
+    let (env, client, admin) = setup_snapshot_only();
+    let empty = String::from_str(&env, "");
+
+    // An empty epoch has no snapshots, so finalizing it is rejected...
+    let finalize_empty = client.try_finalize_epoch(&admin, &empty);
+    assert!(finalize_empty.is_err(), "empty epoch must not be finalizable");
+
+    // ...and the probe must stay negative.
+    assert!(!client.is_epoch_finalized(&empty));
+    assert!(client.get_epoch_finalization(&empty).is_none());
+    assert_eq!(client.get_total_epoch_count(), 0u32);
+}
+
+#[test]
+fn is_epoch_finalized_handles_max_length_epoch() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let at_limit: std::string::String = "e".repeat(MAX_PERIOD_BYTES as usize);
+    let epoch = String::from_str(&env, &at_limit);
+
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &0u32, &1u64);
+    assert!(!client.is_epoch_finalized(&epoch));
+
+    client.finalize_epoch(&admin, &epoch);
+    assert!(client.is_epoch_finalized(&epoch));
+
+    // One byte over the limit can never be recorded, so it can never be
+    // finalized either.
+    let over_limit: std::string::String = "e".repeat(MAX_PERIOD_BYTES as usize + 1);
+    let too_long = String::from_str(&env, &over_limit);
+    let rejected = client.try_record_snapshot(&admin, &business, &too_long, &1i128, &0u32, &1u64);
+    assert!(rejected.is_err(), "periods longer than MAX_PERIOD_BYTES must be rejected");
+    assert!(!client.is_epoch_finalized(&too_long));
+}
