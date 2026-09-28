@@ -718,3 +718,35 @@ fn emit_role_granted(env: &Env, account: &Address, role: u32) {
 fn emit_role_revoked(env: &Env, account: &Address, role: u32) {
     soroban_sdk::log!(env, "role_revoked: account={:?}, role={}", account, role);
 }
+
+#[cfg(test)]
+mod clear_pending_pause_test {
+    use crate::access_control::{clear_pending_pause, get_pending_pause_effective_at, set_pending_pause_effective_at};
+    use soroban_sdk::Env;
+
+    #[test]
+    fn test_valid_clear_pending_pause() {
+        let env = Env::default();
+        
+        assert_eq!(get_pending_pause_effective_at(&env), None);
+        
+        let effective_at = 123456789;
+        set_pending_pause_effective_at(&env, effective_at);
+        assert_eq!(get_pending_pause_effective_at(&env), Some(effective_at));
+        
+        clear_pending_pause(&env);
+        
+        assert_eq!(get_pending_pause_effective_at(&env), None);
+    }
+
+    #[test]
+    fn test_clear_when_no_pending_pause_exists() {
+        let env = Env::default();
+        
+        assert_eq!(get_pending_pause_effective_at(&env), None);
+        
+        clear_pending_pause(&env);
+        
+        assert_eq!(get_pending_pause_effective_at(&env), None);
+    }
+}
