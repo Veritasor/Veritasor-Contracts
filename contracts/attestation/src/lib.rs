@@ -3845,6 +3845,9 @@ impl AttestationContract {
 // (some modules need updates on this branch before they compile).
 #[cfg(all(test, feature = "full-tests"))]
 mod access_control_test;
+/// Adversarial tests for `require_business_or_attestor` (closes #900).
+#[cfg(test)]
+mod business_or_attestor_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod anomaly_test;
 #[cfg(test)]

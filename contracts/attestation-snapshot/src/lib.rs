@@ -1259,3 +1259,6 @@ impl AttestationSnapshotContract {
 
 #[cfg(test)]
 mod snapshot_ttl_test;
+/// Adversarial tests for `export_commitment_with_count` (closes #880).
+#[cfg(test)]
+mod export_commitment_with_count_test;
