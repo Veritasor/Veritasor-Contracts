@@ -4322,3 +4322,6 @@ mod relayer_gas_attribution_test {
         );
     }
 }
+
+#[cfg(test)]
+mod dispute_store_resolution_test;
