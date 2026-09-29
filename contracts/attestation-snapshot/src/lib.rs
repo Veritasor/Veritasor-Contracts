@@ -54,8 +54,8 @@
 //! - Only the admin who called `restore_dry_run` can call `restore_commit`.
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short,
-    xdr::ToXdr, Address, Bytes, BytesN, Env, String, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, xdr::ToXdr, Address, Bytes,
+    BytesN, Env, String, Symbol, Vec,
 };
 
 /// Maximum UTF-8 byte length for period/epoch identifiers.
@@ -216,11 +216,7 @@ mod attestation_import {
 
     #[contractclient(name = "AttestationContractClient")]
     pub trait AttestationContractTrait {
-        fn get_attestation(
-            env: Env,
-            business: Address,
-            period: String,
-        ) -> Option<AttestationData>;
+        fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData>;
         fn get_revocation_info(
             env: Env,
             business: Address,

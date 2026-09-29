@@ -957,7 +957,10 @@ fn test_get_admin_is_publicly_readable() {
     let _bystander = Address::generate(&env);
     // The call itself carries no auth, so this must succeed.
     let returned = client.get_admin();
-    assert_eq!(returned, admin, "get_admin must always return the stored admin");
+    assert_eq!(
+        returned, admin,
+        "get_admin must always return the stored admin"
+    );
 }
 
 /// Admin identity must be stable after a rejected admin-gated operation.
@@ -972,7 +975,10 @@ fn test_get_admin_unchanged_after_rejected_admin_call() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.set_attestation_contract(&impostor, &None::<Address>);
     }));
-    assert!(result.is_err(), "non-admin set_attestation_contract must panic");
+    assert!(
+        result.is_err(),
+        "non-admin set_attestation_contract must panic"
+    );
 
     // State must be untouched.
     assert_eq!(
