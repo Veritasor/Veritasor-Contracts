@@ -1023,6 +1023,7 @@ fn test_get_admin_stable_after_double_init_attempt() {
         original_admin,
         "admin must not be replaced by a second initialize attempt"
     );
+}   
 // ── get_max_business_periods (#875) ──────────────────────────────────
 
 /// The getter reports the compiled-in cap exactly and is stable across reads.
