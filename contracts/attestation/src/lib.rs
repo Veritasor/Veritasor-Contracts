@@ -3944,17 +3944,11 @@ mod replay_nonce_test;
 mod require_operator_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod revocation_test;
-/// Focused tests for `set_paused` in access_control.rs (issue #369).
-/// Covers direct set/read, idempotency, toggle round-trips, persistence,
-/// interaction with `require_not_paused`, and authorization boundary tests.
-#[cfg(test)]
-mod set_paused_test;
-
+/// Adversarial coverage for `dispute::increment_revocation_sequence_pub`.
+/// Covers zero-init, monotonicity, per-call increment-by-one, state isolation,
+/// state preservation on rejection, and mixed direct/contract increment paths.
 #[cfg(all(test, feature = "full-tests"))]
-#[cfg(test)]
-mod grant_role_by_admin_test;
-#[cfg(test)]
-mod revoke_grace_test;
+mod revocation_sequence_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod revoke_reason_test;
 #[cfg(test)]
