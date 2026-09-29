@@ -924,6 +924,20 @@ mod test {
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{Address, Env, String};
 
+    fn setup_attestation_contract() -> (
+        Env,
+        crate::AttestationContractClient<'static>,
+        Address,
+    ) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(crate::AttestationContract, ());
+        let client = crate::AttestationContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin, &0);
+        (env, client, admin)
+    }
+
     #[test]
     fn test_validate_dispute_closure_valid() {
         let env = Env::default();
@@ -1122,15 +1136,60 @@ mod test {
     }
 
     #[test]
-    fn test_get_anomaly_escalation_after_clear() {
+    fn test_clear_anomaly_escalation_is_scoped_to_business() {
         let env = Env::default();
         let business = Address::generate(&env);
+        let other_business = Address::generate(&env);
 
-        update_anomaly_escalation(&env, &business, 80); // level 2
-        assert_eq!(get_anomaly_escalation(&env, &business), Some(2));
+        update_anomaly_escalation(&env, &business, 95);
+        update_anomaly_escalation(&env, &other_business, 60);
+        assert_eq!(get_anomaly_escalation(&env, &business), Some(3));
+        assert_eq!(get_anomaly_escalation(&env, &other_business), Some(1));
 
         clear_anomaly_escalation(&env, &business);
         assert_eq!(get_anomaly_escalation(&env, &business), None);
+        assert_eq!(get_anomaly_escalation(&env, &other_business), Some(1));
+    }
+
+    #[test]
+    fn test_clear_anomaly_escalation_is_idempotent_for_missing_state() {
+        let env = Env::default();
+        let business = Address::generate(&env);
+
+        assert_eq!(get_anomaly_escalation(&env, &business), None);
+        clear_anomaly_escalation(&env, &business);
+        clear_anomaly_escalation(&env, &business);
+        assert_eq!(get_anomaly_escalation(&env, &business), None);
+    }
+
+    #[test]
+    fn test_clear_anomaly_escalation_rejects_non_admin_without_mutation() {
+        let (env, client, admin) = setup_attestation_contract();
+        let business = Address::generate(&env);
+        let outsider = Address::generate(&env);
+
+        env.as_contract(&client.address, || {
+            update_anomaly_escalation(&env, &business, 90);
+        });
+        assert_eq!(
+            env.as_contract(&client.address, || get_anomaly_escalation(&env, &business)),
+            Some(3)
+        );
+
+        assert!(client
+            .try_clear_anomaly_escalation(&outsider, &business)
+            .is_err());
+        assert_eq!(
+            env.as_contract(&client.address, || get_anomaly_escalation(&env, &business)),
+            Some(3),
+            "rejected non-admin call must not clear escalation state"
+        );
+
+        client.clear_anomaly_escalation(&admin, &business);
+        assert_eq!(
+            env.as_contract(&client.address, || get_anomaly_escalation(&env, &business)),
+            None
+        );
     }
 
     #[test]
