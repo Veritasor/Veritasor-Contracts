@@ -3924,6 +3924,11 @@ mod registry_test;
 mod replay_nonce_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod revocation_test;
+/// Adversarial coverage for `dispute::increment_revocation_sequence_pub`.
+/// Covers zero-init, monotonicity, per-call increment-by-one, state isolation,
+/// state preservation on rejection, and mixed direct/contract increment paths.
+#[cfg(all(test, feature = "full-tests"))]
+mod revocation_sequence_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod revoke_reason_test;
 #[cfg(test)]
