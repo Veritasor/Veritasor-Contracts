@@ -83,7 +83,11 @@ fn test_require_valid_nonce_rejections_leave_storage_unchanged() {
                 access_control::require_valid_nonce(e, &account, rejected_nonce, Some(4));
             });
         }));
-        assert!(result.is_err(), "nonce {rejected_nonce} must be rejected");
+        assert!(
+            result.is_err(),
+            "nonce {} must be rejected",
+            rejected_nonce
+        );
 
         in_contract(&env, &client.address, |e| {
             let value = e.storage().instance().get::<_, u64>(
@@ -93,17 +97,26 @@ fn test_require_valid_nonce_rejections_leave_storage_unchanged() {
         });
     }
 
+    in_contract(&env, &client.address, |e| {
+        access_control::require_valid_nonce(e, &account, 1, None);
+        access_control::require_valid_nonce(e, &account, 2, Some(0));
+        let value = e.storage().instance().get::<_, u64>(
+            &access_control::AccessControlKey::LastNonce((account.clone(), 0)),
+        );
+        assert_eq!(value, Some(2), "None and Some(0) must share the default channel");
+    });
+
     let default_channel_replay = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         in_contract(&env, &client.address, |e| {
-            access_control::require_valid_nonce(e, &account, 2, Some(0));
+            access_control::require_valid_nonce(e, &account, 2, None);
         });
     }));
-    assert!(default_channel_replay.is_err());
+    assert!(default_channel_replay.is_err(), "default-channel replay must be rejected");
     in_contract(&env, &client.address, |e| {
         let value = e.storage().instance().get::<_, u64>(
             &access_control::AccessControlKey::LastNonce((account.clone(), 0)),
         );
-        assert_eq!(value, Some(2), "Some(0) must share the default channel");
+        assert_eq!(value, Some(2), "replay rejection must preserve stored default-channel nonce");
     });
 }
 
