@@ -5,6 +5,7 @@ extern crate std;
 use super::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, Env, String, Vec};
+use std::vec;
 
 fn setup() -> (Env, AggregatedAttestationsContractClient<'static>, Address) {
     let env = Env::default();
