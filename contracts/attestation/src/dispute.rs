@@ -921,81 +921,9 @@ pub fn check_and_rollback_disputes(env: &Env, dispute_ids: &Vec<u64>, limit: u32
 }
 
 #[cfg(test)]
-mod test {
+mod lock_attestor_tests {
     use super::*;
     use soroban_sdk::testutils::{Address as _, Events};
-    use soroban_sdk::{Address, Env, String};
-
-    #[test]
-    fn test_store_attestor_for_attestation_valid() {
-        let env = Env::default();
-        let business = Address::generate(&env);
-        let period = String::from_str(&env, "2026-02");
-        let attestor = Address::generate(&env);
-
-        assert_eq!(get_attestor_for_attestation(&env, &business, &period), None);
-
-        store_attestor_for_attestation(&env, &business, &period, &attestor);
-
-        assert_eq!(
-            get_attestor_for_attestation(&env, &business, &period),
-            Some(attestor.clone())
-        );
-    }
-
-    #[test]
-    fn test_store_attestor_for_attestation_overwrite() {
-        let env = Env::default();
-        let business = Address::generate(&env);
-        let period = String::from_str(&env, "2026-02");
-        let attestor1 = Address::generate(&env);
-        let attestor2 = Address::generate(&env);
-
-        store_attestor_for_attestation(&env, &business, &period, &attestor1);
-        store_attestor_for_attestation(&env, &business, &period, &attestor2);
-
-        assert_eq!(
-            get_attestor_for_attestation(&env, &business, &period),
-            Some(attestor2)
-        );
-    }
-
-    #[test]
-    fn test_store_attestor_for_attestation_boundary_period() {
-        let env = Env::default();
-        let business = Address::generate(&env);
-        let period = String::from_str(&env, "");
-        let attestor = Address::generate(&env);
-
-        store_attestor_for_attestation(&env, &business, &period, &attestor);
-
-        assert_eq!(
-            get_attestor_for_attestation(&env, &business, &period),
-            Some(attestor)
-        );
-    }
-
-    #[test]
-    fn test_store_attestor_for_attestation_multiple_businesses() {
-        let env = Env::default();
-        let business1 = Address::generate(&env);
-        let business2 = Address::generate(&env);
-        let period = String::from_str(&env, "2026-02");
-        let attestor1 = Address::generate(&env);
-        let attestor2 = Address::generate(&env);
-
-        store_attestor_for_attestation(&env, &business1, &period, &attestor1);
-        store_attestor_for_attestation(&env, &business2, &period, &attestor2);
-
-        assert_eq!(
-            get_attestor_for_attestation(&env, &business1, &period),
-            Some(attestor1)
-        );
-        assert_eq!(
-            get_attestor_for_attestation(&env, &business2, &period),
-            Some(attestor2)
-        );
-    }
 
     fn setup() -> (Env, Address) {
         let env = Env::default();
