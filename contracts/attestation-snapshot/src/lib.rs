@@ -230,6 +230,8 @@ mod attestation_import {
 }
 
 #[cfg(test)]
+mod record_snapshot_adversarial_test;
+#[cfg(test)]
 mod test;
 /// Focused adversarial tests for `initialize`.
 #[cfg(test)]
