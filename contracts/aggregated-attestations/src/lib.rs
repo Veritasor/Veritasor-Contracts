@@ -35,6 +35,8 @@ mod admin_rotation_test;
 #[cfg(test)]
 mod event_ingestion_test;
 #[cfg(test)]
+mod get_aggregated_root_at_timestamp_test;
+#[cfg(test)]
 mod initialize_test;
 
 use veritasor_common::{governance_gating, replay_protection};
