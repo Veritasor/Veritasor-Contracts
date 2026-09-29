@@ -3855,6 +3855,11 @@ mod attestor_lock_test;
 mod attestor_staking_integration_test;
 #[cfg(test)]
 mod batch_auth_dedup_test;
+/// Adversarial coverage for `dispute::add_dispute_to_challenger_index`.
+/// Covers zero-init, ordering, boundary IDs, per-challenger isolation,
+/// duplicate append behavior, env independence, and contract-level path.
+#[cfg(all(test, feature = "full-tests"))]
+mod challenger_index_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod batch_submission_test;
 #[cfg(all(test, feature = "full-tests"))]
