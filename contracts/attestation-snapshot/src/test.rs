@@ -175,6 +175,161 @@ fn test_remove_writer() {
     assert!(!client.is_writer(&writer));
 }
 
+#[test]
+#[should_panic(expected = "caller is not admin")]
+fn test_remove_writer_non_admin_panics() {
+    let (env, client, admin) = setup_snapshot_only();
+    let writer = Address::generate(&env);
+    let outsider = Address::generate(&env);
+    // `add_writer` is admin-only, so the target must be granted by the admin
+    // before the outsider tries (and fails) to revoke it.
+    client.add_writer(&admin, &writer);
+    client.remove_writer(&outsider, &writer);
+}
+
+#[test]
+fn test_remove_writer_rejected_call_leaves_flag_unchanged() {
+    let (env, client, admin) = setup_snapshot_only();
+    let writer = Address::generate(&env);
+    let outsider = Address::generate(&env);
+    client.add_writer(&admin, &writer);
+    assert!(client.is_writer(&writer));
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.remove_writer(&outsider, &writer);
+    }));
+    assert!(rejected.is_err(), "non-admin remove_writer must panic");
+
+    // The rejected call must not have mutated the writer flag.
+    assert!(client.is_writer(&writer));
+}
+
+#[test]
+fn test_remove_writer_never_writer_is_idempotent() {
+    let (env, client, admin) = setup_snapshot_only();
+    let stranger = Address::generate(&env);
+    assert!(!client.is_writer(&stranger));
+
+    // Removing an account that was never a writer is a no-op, not an error.
+    client.remove_writer(&admin, &stranger);
+    assert!(!client.is_writer(&stranger));
+
+    // Repeating the revoke stays a no-op.
+    client.remove_writer(&admin, &stranger);
+    assert!(!client.is_writer(&stranger));
+}
+
+#[test]
+fn test_remove_writer_leaves_other_writers_untouched() {
+    let (env, client, admin) = setup_snapshot_only();
+    let w1 = Address::generate(&env);
+    let w2 = Address::generate(&env);
+    client.add_writer(&admin, &w1);
+    client.add_writer(&admin, &w2);
+    assert!(client.is_writer(&w1));
+    assert!(client.is_writer(&w2));
+
+    client.remove_writer(&admin, &w1);
+
+    assert!(!client.is_writer(&w1));
+    assert!(client.is_writer(&w2));
+}
+
+#[test]
+#[should_panic(expected = "caller must be admin or writer")]
+fn test_removed_writer_record_snapshot_panics() {
+    let (env, client, admin) = setup_snapshot_only();
+    let writer = Address::generate(&env);
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-03");
+    client.add_writer(&admin, &writer);
+    client.remove_writer(&admin, &writer);
+    client.record_snapshot(&writer, &business, &period, &100_000i128, &0u32, &0u64);
+}
+
+#[test]
+fn test_removed_writer_record_rejected_but_previous_snapshot_readable() {
+    let (env, client, admin) = setup_snapshot_only();
+    let writer = Address::generate(&env);
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-03");
+    client.add_writer(&admin, &writer);
+
+    // The writer records a snapshot while still authorized.
+    client.record_snapshot(&writer, &business, &period, &100_000i128, &1u32, &5u64);
+    assert!(client.get_snapshot(&business, &period).is_some());
+
+    client.remove_writer(&admin, &writer);
+
+    // A revoked writer can no longer record.
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.record_snapshot(&writer, &business, &period, &999_000i128, &9u32, &9u64);
+    }));
+    assert!(
+        rejected.is_err(),
+        "revoked writer must not be able to record"
+    );
+
+    // The rejected write left the earlier snapshot intact and readable.
+    let record = client.get_snapshot(&business, &period).unwrap();
+    assert_eq!(record.trailing_revenue, 100_000i128);
+    assert_eq!(record.anomaly_count, 1u32);
+    assert_eq!(record.attestation_count, 5u64);
+}
+
+#[test]
+fn test_readd_after_remove_restores_writer() {
+    let (env, client, admin) = setup_snapshot_only();
+    let writer = Address::generate(&env);
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-04");
+
+    client.add_writer(&admin, &writer);
+    client.remove_writer(&admin, &writer);
+    assert!(!client.is_writer(&writer));
+
+    client.add_writer(&admin, &writer);
+    assert!(client.is_writer(&writer));
+
+    // Re-granted writers regain the ability to record.
+    client.record_snapshot(&writer, &business, &period, &100_000i128, &0u32, &1u64);
+    assert!(client.get_snapshot(&business, &period).is_some());
+}
+
+#[test]
+#[should_panic(expected = "caller is not admin")]
+fn test_removed_writer_cannot_remove_other_writer() {
+    let (env, client, admin) = setup_snapshot_only();
+    let w1 = Address::generate(&env);
+    let w2 = Address::generate(&env);
+    client.add_writer(&admin, &w1);
+    client.add_writer(&admin, &w2);
+    client.remove_writer(&admin, &w1);
+    // A removed writer has no admin authority over other writers.
+    client.remove_writer(&w1, &w2);
+}
+
+#[test]
+fn test_removed_writer_remove_rejected_but_other_writer_unchanged() {
+    let (env, client, admin) = setup_snapshot_only();
+    let w1 = Address::generate(&env);
+    let w2 = Address::generate(&env);
+    client.add_writer(&admin, &w1);
+    client.add_writer(&admin, &w2);
+    client.remove_writer(&admin, &w1);
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.remove_writer(&w1, &w2);
+    }));
+    assert!(
+        rejected.is_err(),
+        "a removed writer must not be able to remove other writers"
+    );
+
+    assert!(!client.is_writer(&w1));
+    assert!(client.is_writer(&w2));
+}
+
 // ── Epoch finalization ────────────────────────────────────────────────
 
 #[test]
