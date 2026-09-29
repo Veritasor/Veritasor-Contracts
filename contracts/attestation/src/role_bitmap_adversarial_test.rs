@@ -13,6 +13,44 @@ fn in_contract<R>(env: &Env, contract: &Address, f: impl FnOnce(&Env) -> R) -> R
 }
 
 #[test]
+fn get_roles_returns_zero_for_unknown_accounts_without_creating_state() {
+    let (env, contract) = setup();
+    let account = Address::generate(&env);
+
+    assert_eq!(
+        in_contract(&env, &contract, |env| access_control::get_roles(env, &account)),
+        0
+    );
+    assert!(in_contract(&env, &contract, access_control::get_role_holders).is_empty());
+}
+
+#[test]
+fn get_roles_reads_composite_bitmaps_and_preserves_them_after_rejected_update() {
+    let (env, contract) = setup();
+    let account = Address::generate(&env);
+    let composite = ROLE_ADMIN | crate::access_control::ROLE_ATTESTOR;
+
+    in_contract(&env, &contract, |env| {
+        access_control::set_roles(env, &account, composite);
+    });
+    assert_eq!(
+        in_contract(&env, &contract, |env| access_control::get_roles(env, &account)),
+        composite
+    );
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        in_contract(&env, &contract, |env| {
+            access_control::set_roles(env, &account, ROLE_VALID_MASK + 1);
+        });
+    }));
+    assert!(rejected.is_err());
+    assert_eq!(
+        in_contract(&env, &contract, |env| access_control::get_roles(env, &account)),
+        composite
+    );
+}
+
+#[test]
 fn set_roles_accepts_all_defined_bits_and_tracks_holder() {
     let (env, contract) = setup();
     let account = Address::generate(&env);
