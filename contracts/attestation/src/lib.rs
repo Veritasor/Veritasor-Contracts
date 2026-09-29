@@ -3883,6 +3883,13 @@ mod get_dispute_test;
 mod dispute_test;
 #[cfg(test)]
 mod dispute_adversarial_test;
+/// Focused adversarial coverage for `dispute::store_dispute` (issue #912):
+/// field round-tripping, the dispute type/status matrix, id isolation and
+/// overwrite semantics, `u64` id boundaries, absence of index/counter side
+/// effects, and every rejected entry-point path leaving the stored record
+/// unchanged. Runs in the default test profile.
+#[cfg(test)]
+mod store_dispute_adversarial_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod dynamic_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
