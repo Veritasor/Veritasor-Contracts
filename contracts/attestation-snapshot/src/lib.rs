@@ -232,6 +232,100 @@ mod attestation_import {
 #[cfg(test)]
 mod test;
 
+#[cfg(test)]
+mod add_writer_adversarial_tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Address, Env};
+
+    fn setup(env: &Env) -> (Address, AttestationSnapshotContractClient<'static>) {
+        env.mock_all_auths();
+        let contract_id = env.register(AttestationSnapshotContract, ());
+        let client = AttestationSnapshotContractClient::new(env, &contract_id);
+        let admin = Address::generate(env);
+        client.initialize(&admin, &None);
+        (admin, client)
+    }
+
+    #[test]
+    fn add_writer_succeeds_for_admin() {
+        let env = Env::default();
+        let (admin, client) = setup(&env);
+        let writer = Address::generate(&env);
+
+        client.add_writer(&admin, &writer);
+
+        assert!(client.is_writer(&writer));
+    }
+
+    #[test]
+    fn add_writer_is_idempotent() {
+        let env = Env::default();
+        let (admin, client) = setup(&env);
+        let writer = Address::generate(&env);
+
+        client.add_writer(&admin, &writer);
+        client.add_writer(&admin, &writer);
+
+        assert!(client.is_writer(&writer));
+    }
+
+    #[test]
+    fn add_writer_rejects_unauthorized_caller() {
+        let env = Env::default();
+        let (_admin, client) = setup(&env);
+        let attacker = Address::generate(&env);
+        let writer = Address::generate(&env);
+
+        let result = client.try_add_writer(&attacker, &writer);
+        assert!(result.is_err());
+        assert!(!client.is_writer(&writer));
+    }
+
+    #[test]
+    fn add_writer_rejects_non_admin_writer() {
+        let env = Env::default();
+        let (admin, client) = setup(&env);
+        let first_writer = Address::generate(&env);
+        let second_writer = Address::generate(&env);
+
+        client.add_writer(&admin, &first_writer);
+
+        let result = client.try_add_writer(&first_writer, &second_writer);
+        assert!(result.is_err());
+        assert!(!client.is_writer(&second_writer));
+    }
+
+    #[test]
+    fn add_writer_state_unchanged_after_rejection() {
+        let env = Env::default();
+        let (_admin, client) = setup(&env);
+        let attacker = Address::generate(&env);
+        let writer = Address::generate(&env);
+
+        let before = client.is_writer(&writer);
+        let result = client.try_add_writer(&attacker, &writer);
+        let after = client.is_writer(&writer);
+
+        assert!(result.is_err());
+        assert_eq!(before, after);
+        assert!(!after);
+    }
+
+    #[test]
+    fn add_writer_requires_initialization() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AttestationSnapshotContract, ());
+        let client = AttestationSnapshotContractClient::new(&env, &contract_id);
+        let caller = Address::generate(&env);
+        let writer = Address::generate(&env);
+
+        let result = client.try_add_writer(&caller, &writer);
+        assert!(result.is_err());
+        assert!(!client.is_writer(&writer));
+    }
+}
+
 // ════════════════════════════════════════════════════════════════════
 //  Storage types
 // ════════════════════════════════════════════════════════════════════
