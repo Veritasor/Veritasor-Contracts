@@ -28,6 +28,124 @@ fn in_contract<R>(env: &Env, contract: &Address, f: impl FnOnce(&Env) -> R) -> R
     env.as_contract(contract, || f(env))
 }
 
+#[test]
+fn test_require_valid_nonce_tracks_account_and_channel_sequences() {
+    let (env, client, account) = setup();
+    let other_account = Address::generate(&env);
+
+    in_contract(&env, &client.address, |e| {
+        access_control::require_valid_nonce(e, &account, 1, None);
+        access_control::require_valid_nonce(e, &account, 2, None);
+        access_control::require_valid_nonce(e, &account, 1, Some(7));
+        access_control::require_valid_nonce(e, &other_account, 1, None);
+    });
+
+    in_contract(&env, &client.address, |e| {
+        let default_channel = e
+            .storage()
+            .instance()
+            .get::<_, u64>(&access_control::AccessControlKey::LastNonce((account.clone(), 0)));
+        let separate_channel = e.storage().instance().get::<_, u64>(
+            &access_control::AccessControlKey::LastNonce((account.clone(), 7)),
+        );
+        let separate_account = e.storage().instance().get::<_, u64>(
+            &access_control::AccessControlKey::LastNonce((other_account.clone(), 0)),
+        );
+
+        assert_eq!(default_channel, Some(2));
+        assert_eq!(separate_channel, Some(1));
+        assert_eq!(separate_account, Some(1));
+    });
+}
+
+#[test]
+fn test_require_valid_nonce_rejections_leave_storage_unchanged() {
+    let (env, client, account) = setup();
+
+    let zero_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        in_contract(&env, &client.address, |e| {
+            access_control::require_valid_nonce(e, &account, 0, Some(4));
+        });
+    }));
+    assert!(zero_result.is_err(), "zero nonce must be rejected");
+
+    in_contract(&env, &client.address, |e| {
+        let value = e.storage().instance().get::<_, u64>(
+            &access_control::AccessControlKey::LastNonce((account.clone(), 4)),
+        );
+        assert_eq!(value, None, "zero nonce must not create a stored value");
+        access_control::require_valid_nonce(e, &account, 3, Some(4));
+    });
+
+    for rejected_nonce in [3, 2, 1] {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            in_contract(&env, &client.address, |e| {
+                access_control::require_valid_nonce(e, &account, rejected_nonce, Some(4));
+            });
+        }));
+        assert!(
+            result.is_err(),
+            "nonce {} must be rejected",
+            rejected_nonce
+        );
+
+        in_contract(&env, &client.address, |e| {
+            let value = e.storage().instance().get::<_, u64>(
+                &access_control::AccessControlKey::LastNonce((account.clone(), 4)),
+            );
+            assert_eq!(value, Some(3), "rejection must preserve the prior nonce");
+        });
+    }
+
+    in_contract(&env, &client.address, |e| {
+        access_control::require_valid_nonce(e, &account, 1, None);
+        access_control::require_valid_nonce(e, &account, 2, Some(0));
+        let value = e.storage().instance().get::<_, u64>(
+            &access_control::AccessControlKey::LastNonce((account.clone(), 0)),
+        );
+        assert_eq!(value, Some(2), "None and Some(0) must share the default channel");
+    });
+
+    let default_channel_replay = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        in_contract(&env, &client.address, |e| {
+            access_control::require_valid_nonce(e, &account, 2, None);
+        });
+    }));
+    assert!(default_channel_replay.is_err(), "default-channel replay must be rejected");
+    in_contract(&env, &client.address, |e| {
+        let value = e.storage().instance().get::<_, u64>(
+            &access_control::AccessControlKey::LastNonce((account.clone(), 0)),
+        );
+        assert_eq!(value, Some(2), "replay rejection must preserve stored default-channel nonce");
+    });
+}
+
+#[test]
+fn test_require_valid_nonce_accepts_u64_max_without_wrapping() {
+    let (env, client, account) = setup();
+
+    in_contract(&env, &client.address, |e| {
+        access_control::require_valid_nonce(e, &account, u64::MAX, Some(9));
+        let value = e.storage().instance().get::<_, u64>(
+            &access_control::AccessControlKey::LastNonce((account.clone(), 9)),
+        );
+        assert_eq!(value, Some(u64::MAX));
+    });
+
+    let replay_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        in_contract(&env, &client.address, |e| {
+            access_control::require_valid_nonce(e, &account, u64::MAX, Some(9));
+        });
+    }));
+    assert!(replay_result.is_err(), "the maximum nonce cannot be replayed");
+    in_contract(&env, &client.address, |e| {
+        let value = e.storage().instance().get::<_, u64>(
+            &access_control::AccessControlKey::LastNonce((account.clone(), 9)),
+        );
+        assert_eq!(value, Some(u64::MAX), "rejection must preserve u64::MAX");
+    });
+}
+
 // ════════════════════════════════════════════════════════════════════
 //  Role Assignment Tests
 // ════════════════════════════════════════════════════════════════════
