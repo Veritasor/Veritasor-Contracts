@@ -924,6 +924,72 @@ mod test {
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{Address, Env, String};
 
+    fn make_dispute(env: &Env, id: u64, status: DisputeStatus) -> Dispute {
+        Dispute {
+            id,
+            challenger: Address::generate(env),
+            business: Address::generate(env),
+            attestor: Address::generate(env),
+            period: String::from_str(env, "2026-02"),
+            status,
+            dispute_type: DisputeType::Other,
+            evidence: String::from_str(env, "resolution validation test"),
+            timestamp: 1000,
+            resolution: OptionalResolution::None,
+        }
+    }
+
+    #[test]
+    fn test_validate_dispute_resolution_accepts_open_dispute_and_any_resolver() {
+        let env = Env::default();
+        let dispute = make_dispute(&env, 42, DisputeStatus::Open);
+        let resolver = Address::generate(&env);
+        store_dispute(&env, &dispute);
+
+        assert_eq!(
+            validate_dispute_resolution(&env, dispute.id, &resolver),
+            Ok(dispute.clone())
+        );
+        assert_eq!(get_dispute(&env, dispute.id), Some(dispute));
+    }
+
+    #[test]
+    fn test_validate_dispute_resolution_rejects_missing_boundary_ids() {
+        let env = Env::default();
+        let resolver = Address::generate(&env);
+
+        assert_eq!(
+            validate_dispute_resolution(&env, 0, &resolver),
+            Err("dispute not found")
+        );
+        assert_eq!(
+            validate_dispute_resolution(&env, u64::MAX, &resolver),
+            Err("dispute not found")
+        );
+    }
+
+    #[test]
+    fn test_validate_dispute_resolution_rejects_non_open_without_mutation() {
+        let env = Env::default();
+        let resolver = Address::generate(&env);
+        let resolved = make_dispute(&env, 43, DisputeStatus::Resolved);
+        let closed = make_dispute(&env, 44, DisputeStatus::Closed);
+        store_dispute(&env, &resolved);
+        store_dispute(&env, &closed);
+
+        assert_eq!(
+            validate_dispute_resolution(&env, resolved.id, &resolver),
+            Err("dispute is not open")
+        );
+        assert_eq!(get_dispute(&env, resolved.id), Some(resolved.clone()));
+
+        assert_eq!(
+            validate_dispute_resolution(&env, closed.id, &resolver),
+            Err("dispute is not open")
+        );
+        assert_eq!(get_dispute(&env, closed.id), Some(closed));
+    }
+
     #[test]
     fn test_validate_dispute_closure_valid() {
         let env = Env::default();
