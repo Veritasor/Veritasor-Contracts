@@ -1381,7 +1381,10 @@ mod get_pending_restore_adversarial_tests {
         );
         // Reading another key must not have disturbed the admin's token.
         assert_eq!(
-            client.get_pending_restore(&admin).unwrap().expires_at_ledger,
+            client
+                .get_pending_restore(&admin)
+                .unwrap()
+                .expires_at_ledger,
             100 + RESTORE_COMMIT_WINDOW_LEDGERS
         );
     }
@@ -1481,11 +1484,9 @@ mod get_pending_restore_adversarial_tests {
 
         // The reads must not have consumed the token.
         client.restore_commit(&admin, &entries);
-        assert!(
-            client
-                .get_snapshot(&business, &String::from_str(&env, "2026-01"))
-                .is_some()
-        );
+        assert!(client
+            .get_snapshot(&business, &String::from_str(&env, "2026-01"))
+            .is_some());
         assert!(client.get_last_restore_id().is_some());
     }
 
@@ -1521,7 +1522,10 @@ mod get_pending_restore_adversarial_tests {
         let entries = ready_batch(&env, &business, "2026-01");
         client.restore_dry_run(&admin, &entries);
 
-        let deadline = client.get_pending_restore(&admin).unwrap().expires_at_ledger;
+        let deadline = client
+            .get_pending_restore(&admin)
+            .unwrap()
+            .expires_at_ledger;
         env.ledger().set_sequence_number(deadline);
 
         client.restore_commit(&admin, &entries);
@@ -1540,7 +1544,10 @@ mod get_pending_restore_adversarial_tests {
         let entries = ready_batch(&env, &business, "2026-01");
         client.restore_dry_run(&admin, &entries);
 
-        let deadline = client.get_pending_restore(&admin).unwrap().expires_at_ledger;
+        let deadline = client
+            .get_pending_restore(&admin)
+            .unwrap()
+            .expires_at_ledger;
         env.ledger().set_sequence_number(deadline + 1);
 
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1576,7 +1583,10 @@ mod get_pending_restore_adversarial_tests {
             client.restore_commit(&admin, &tampered);
         }));
 
-        assert!(outcome.is_err(), "the hash binding must reject a swapped batch");
+        assert!(
+            outcome.is_err(),
+            "the hash binding must reject a swapped batch"
+        );
         assert!(client.get_last_restore_id().is_none());
         assert!(client
             .get_snapshot(&business, &String::from_str(&env, "2026-03"))
@@ -1607,7 +1617,10 @@ mod get_pending_restore_adversarial_tests {
         assert!(report.ready_to_commit);
         assert_eq!(report.entries_checked, 0);
         assert_eq!(report.entries_valid, 0);
-        assert_eq!(report.commit_deadline_ledger, 100 + RESTORE_COMMIT_WINDOW_LEDGERS);
+        assert_eq!(
+            report.commit_deadline_ledger,
+            100 + RESTORE_COMMIT_WINDOW_LEDGERS
+        );
 
         let token = client
             .get_pending_restore(&admin)

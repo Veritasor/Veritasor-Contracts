@@ -3876,11 +3876,20 @@ mod dispute_adversarial_test;
 /// (issue #917). Runs in the default test profile.
 #[cfg(test)]
 mod dispute_attestation_index_adversarial_test;
+/// Focused adversarial coverage for `dispute::validate_dispute_eligibility`.
+/// Runs in the default test profile.
+#[cfg(test)]
+mod dispute_eligibility_adversarial_test;
+/// Focused adversarial coverage for `dispute::record_revocation`.
+/// Runs in the default test profile.
+#[cfg(test)]
+mod dispute_record_revocation_adversarial_test;
+/// Focused adversarial coverage for `dispute::require_revocation_authorized`.
+/// Runs in the default test profile.
+#[cfg(test)]
+mod dispute_revocation_authorized_adversarial_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod dispute_test;
-/// Focused adversarial tests for `set_dispute_deadline`.
-#[cfg(test)]
-mod test_set_dispute_deadline;
 #[cfg(all(test, feature = "full-tests"))]
 mod dynamic_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
@@ -3949,6 +3958,9 @@ mod revocation_test;
 /// interaction with `require_not_paused`, and authorization boundary tests.
 #[cfg(test)]
 mod set_paused_test;
+/// Focused adversarial tests for `set_dispute_deadline`.
+#[cfg(test)]
+mod test_set_dispute_deadline;
 
 #[cfg(all(test, feature = "full-tests"))]
 #[cfg(test)]
