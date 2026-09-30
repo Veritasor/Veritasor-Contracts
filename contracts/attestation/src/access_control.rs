@@ -718,3 +718,53 @@ fn emit_role_granted(env: &Env, account: &Address, role: u32) {
 fn emit_role_revoked(env: &Env, account: &Address, role: u32) {
     soroban_sdk::log!(env, "role_revoked: account={:?}, role={}", account, role);
 }
+
+#[cfg(test)]
+mod pending_pause_tests {
+    use super::*;
+    use soroban_sdk::testutils::Ledger as _;
+    use soroban_sdk::Env;
+
+    #[test]
+    fn check_pending_pause_preserves_state_without_due_schedule() {
+        let env = Env::default();
+        let contract_id = env.register(crate::AttestationContract, ());
+        env.ledger().set_timestamp(100);
+
+        env.as_contract(&contract_id, || {
+            check_and_apply_pending_pause(&env);
+            assert!(!is_paused(&env));
+            assert_eq!(get_pending_pause_effective_at(&env), None);
+
+            set_pending_pause_effective_at(&env, u64::MAX);
+            check_and_apply_pending_pause(&env);
+            assert!(!is_paused(&env));
+            assert_eq!(get_pending_pause_effective_at(&env), Some(u64::MAX));
+        });
+    }
+
+    #[test]
+    fn check_pending_pause_applies_at_exact_deadline_once() {
+        let env = Env::default();
+        let contract_id = env.register(crate::AttestationContract, ());
+        env.ledger().set_timestamp(500);
+
+        env.as_contract(&contract_id, || {
+            set_pending_pause_effective_at(&env, 501);
+            check_and_apply_pending_pause(&env);
+            assert!(!is_paused(&env));
+            assert_eq!(get_pending_pause_effective_at(&env), Some(501));
+        });
+
+        env.ledger().set_timestamp(501);
+        env.as_contract(&contract_id, || {
+            check_and_apply_pending_pause(&env);
+            assert!(is_paused(&env));
+            assert_eq!(get_pending_pause_effective_at(&env), None);
+
+            check_and_apply_pending_pause(&env);
+            assert!(is_paused(&env));
+            assert_eq!(get_pending_pause_effective_at(&env), None);
+        });
+    }
+}
