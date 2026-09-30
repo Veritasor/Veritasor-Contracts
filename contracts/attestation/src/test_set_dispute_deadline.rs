@@ -107,7 +107,12 @@ fn u64_max_is_rejected_as_above_the_maximum() {
 fn out_of_range_values_leave_the_default_deadline_untouched() {
     let (_env, client, admin) = setup();
 
-    for value in [0u64, 1, MIN_DISPUTE_DEADLINE_SECONDS - 1, MAX_DISPUTE_DEADLINE_SECONDS + 1] {
+    for value in [
+        0u64,
+        1,
+        MIN_DISPUTE_DEADLINE_SECONDS - 1,
+        MAX_DISPUTE_DEADLINE_SECONDS + 1,
+    ] {
         let result = client.try_set_dispute_deadline(&admin, &value);
         assert!(result.is_err(), "value {value} should be rejected");
         assert_eq!(
@@ -127,7 +132,12 @@ fn a_rejected_write_does_not_reset_a_previously_configured_value() {
     assert_eq!(client.get_dispute_deadline(), configured);
 
     // Both directions of the range guard, and the extremes.
-    for rejected in [MIN_DISPUTE_DEADLINE_SECONDS - 1, MAX_DISPUTE_DEADLINE_SECONDS + 1, 0, u64::MAX] {
+    for rejected in [
+        MIN_DISPUTE_DEADLINE_SECONDS - 1,
+        MAX_DISPUTE_DEADLINE_SECONDS + 1,
+        0,
+        u64::MAX,
+    ] {
         assert!(client.try_set_dispute_deadline(&admin, &rejected).is_err());
         assert_eq!(
             client.get_dispute_deadline(),
