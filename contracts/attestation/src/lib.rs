@@ -3876,6 +3876,10 @@ mod dispute_adversarial_test;
 /// (issue #917). Runs in the default test profile.
 #[cfg(test)]
 mod dispute_attestation_index_adversarial_test;
+/// Focused adversarial coverage for `dispute::validate_dispute_eligibility`.
+/// Runs in the default test profile.
+#[cfg(test)]
+mod dispute_eligibility_adversarial_test;
 /// Focused adversarial coverage for `dispute::require_revocation_authorized`.
 /// Runs in the default test profile.
 #[cfg(test)]
