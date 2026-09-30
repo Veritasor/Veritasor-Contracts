@@ -7,7 +7,7 @@
 # Divergence from this snapshot fails CI unless EVENT_SCHEMA_VERSION
 # is bumped for breaking changes. See docs/attestation-events-indexer.md.
 EVENT_SCHEMA_VERSION: 2
-EVENT_SCHEMA_FINGERPRINT: sha256:3d611424163a3755d635b63ea8d3b193bc5589af4306631eecaf7215dc616bf5
+EVENT_SCHEMA_FINGERPRINT: sha256:af25443ae5dc919eea69ffe37ddc08bc1dd495c956c5c0e3426bbcce7ebbd6d5
 
 # ---- canonical event schema (sorted by type) ----
 struct AdminSwappedEvent {
@@ -299,10 +299,10 @@ struct SlashTriggeredEvent {
   condition:SlashingCondition
 }
 enum SlashingCondition {
-  DoubleSubmission
-  RevokedResubmit
-  ExpiredReuse
-  DisputeUpheld
+  DoubleSubmission=1
+  RevokedResubmit=2
+  ExpiredReuse=3
+  DisputeUpheld=4
 }
 struct StakingContractCancelledEvent {
   cancelled_contract:Address

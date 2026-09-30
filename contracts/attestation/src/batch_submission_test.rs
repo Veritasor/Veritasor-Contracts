@@ -1439,7 +1439,7 @@ fn test_batch_stress_many_sequential_full_batches() {
         for (b_idx, business) in businesses.iter().enumerate() {
             let period = String::from_str(&env, &std::format!("2026-B{}-P{}", batch_idx, b_idx));
             let mut root = [0u8; 32];
-            root[0] = ((batch_idx as usize * 5 + b_idx) as u8);
+            root[0] = (batch_idx * 5 + b_idx as u32) as u8;
             items.push_back(BatchAttestationItem {
                 business: business.clone(),
                 period,

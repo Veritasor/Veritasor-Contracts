@@ -815,6 +815,13 @@ pub fn handle_epoch_rollover(env: &Env) {
 }
 
 // ════════════════════════════════════════════════════════════════════
+//  Per-epoch checkpoint accumulators & backfill counter
+// ════════════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════════════
+//  Time-locked staking contract rebinding
+// ════════════════════════════════════════════════════════════════════
+
 //  Archive tier types and helpers
 // ════════════════════════════════════════════════════════════════════
 
@@ -1011,4 +1018,70 @@ pub fn set_min_reputation(env: &Env, min_score: u64) {
     env.storage()
         .instance()
         .set(&DataKey::MinReputation, &min_score);
+}
+
+#[cfg(test)]
+mod test_set_dao {
+    use super::*;
+    use crate::{AttestationContract, AttestationContractClient};
+    use soroban_sdk::{testutils::Address as _, Address, Env};
+
+    fn setup_env<'a>() -> (Env, AttestationContractClient<'a>, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let id = env.register(AttestationContract, ());
+        let client = AttestationContractClient::new(&env, &id);
+        client.initialize(&admin, &0u64);
+        (env, client, admin)
+    }
+
+    #[test]
+    fn test_set_dao_valid_call() {
+        let (env, client, _admin) = setup_env();
+        let dao = Address::generate(&env);
+
+        env.as_contract(&client.address, || {
+            assert_eq!(get_dao(&env), None);
+        });
+
+        let res = client.try_set_dao(&dao);
+        assert!(res.is_ok());
+
+        env.as_contract(&client.address, || {
+            assert_eq!(get_dao(&env), Some(dao));
+        });
+    }
+
+    #[test]
+    fn test_set_dao_unauthorized_call() {
+        let (env, client, _admin) = setup_env();
+        let dao = Address::generate(&env);
+
+        // Clear mocked auths to simulate an unauthorized call
+        env.mock_auths(&[]);
+
+        let res = client.try_set_dao(&dao);
+        assert!(res.is_err());
+
+        // State remains unchanged
+        env.as_contract(&client.address, || {
+            assert_eq!(get_dao(&env), None);
+        });
+    }
+
+    #[test]
+    fn test_set_dao_internal_directly() {
+        let env = Env::default();
+        let dao1 = Address::generate(&env);
+        let dao2 = Address::generate(&env);
+
+        assert_eq!(get_dao(&env), None);
+
+        set_dao(&env, &dao1);
+        assert_eq!(get_dao(&env), Some(dao1));
+
+        set_dao(&env, &dao2);
+        assert_eq!(get_dao(&env), Some(dao2));
+    }
 }

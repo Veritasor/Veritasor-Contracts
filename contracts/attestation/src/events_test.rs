@@ -1375,6 +1375,7 @@ fn test_attestation_submitted_timestamps_are_monotonic_per_topic() {
     // ledger" — ties must be allowed (non-decreasing), not necessarily
     // strictly increasing.
     let ledger_timestamps: [u64; 5] = [100, 100, 250, 400, 400];
+    let start = env.events().all().len();
 
     let start = env.events().all().len();
     let mut payload_timestamps: std::vec::Vec<u64> = std::vec::Vec::new();
@@ -1531,6 +1532,7 @@ fn test_attestation_revoked_and_proof_hash_updated_preserve_call_order() {
         );
     }
 
+    let start = env.events().all().len();
     let rev_ledger_timestamps: [u64; 4] = [500, 500, 650, 800];
     let start = env.events().all().len();
     let mut revoked_periods: std::vec::Vec<String> = std::vec::Vec::new();
@@ -1541,8 +1543,8 @@ fn test_attestation_revoked_and_proof_hash_updated_preserve_call_order() {
     let end = env.events().all().len();
 
     assert_eq!(
-        (end - start) as usize,
-        periods.len(),
+        end - start,
+        periods.len() as u32,
         "expected exactly one att_rev event per revocation"
     );
 
@@ -1582,6 +1584,7 @@ fn test_attestation_revoked_and_proof_hash_updated_preserve_call_order() {
     }
     let new_hash = BytesN::from_array(&env, &[5u8; 32]);
     let ph_ledger_timestamps: [u64; 3] = [1100, 1100, 1200];
+    let ph_start = env.events().all().len();
 
     let ph_start = env.events().all().len();
     let mut updated_periods: std::vec::Vec<String> = std::vec::Vec::new();

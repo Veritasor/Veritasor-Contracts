@@ -38,7 +38,8 @@
 
 use soroban_sdk::{contracttype, symbol_short, Address, Env, String, Symbol, Vec};
 
-use crate::access_control::{emergency_pause_execute, is_paused};
+use crate::access_control;
+use crate::access_control::{is_paused, set_paused};
 use crate::events;
 
 /// Default proposal expiry, expressed in ledger sequences after creation.
@@ -718,7 +719,7 @@ pub fn emergency_pause(env: &Env, signer1: &Address, signer2: &Address) {
     signer2.require_auth();
 
     // Execute pause using access control module
-    emergency_pause_execute(env, signer1, signer2);
+    access_control::emergency_pause_execute(env, signer1, signer2);
 }
 
 pub fn get_next_proposal_id(env: &Env) -> u64 {
@@ -801,7 +802,7 @@ pub fn revoke_approval(env: &Env, approver: &Address, id: u64) {
     let pos = approvals.iter().position(|a| a == *approver);
     if let Some(idx) = pos {
         let last = approvals.len() - 1;
-        if (idx as u32) != last {
+        if idx as u32 != last {
             let last_addr = approvals.get(last).unwrap();
             approvals.set(idx as u32, last_addr);
         }

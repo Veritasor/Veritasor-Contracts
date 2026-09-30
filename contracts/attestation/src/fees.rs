@@ -67,19 +67,6 @@ pub enum FlatFeeDataKey {
     EpochHistory,
 }
 
-/// Pending DAO rotation proposal (two-phase rotation).
-///
-/// Written by `propose_dao_rotation`; consumed by `accept_dao_rotation` or
-/// removed by `cancel_dao_rotation`.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DaoRotationProposal {
-    /// The DAO contract address being rotated away from.
-    pub old_dao: Address,
-    /// The DAO contract address being rotated to.
-    pub new_dao: Address,
-}
-
 /// Retrieve the current flat fee configuration from instance storage.
 pub fn get_flat_fee_config(env: &Env) -> Option<FlatFeeConfig> {
     env.storage().instance().get(&FlatFeeDataKey::FlatFeeConfig)

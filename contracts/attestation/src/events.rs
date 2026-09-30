@@ -189,29 +189,37 @@ pub const TOPIC_PAUSE_SCHEDULED: Symbol = symbol_short!("p_sch");
 pub const TOPIC_PAUSE_SCHEDULED_CANCELLED: Symbol = symbol_short!("p_canc");
 /// Topic: a slashing condition was triggered against an attestor
 pub const TOPIC_SLASH_TRIGGERED: Symbol = symbol_short!("sl_trg");
-/// Topic: DAO rotation proposed
-pub const TOPIC_DAO_ROTATION_PROPOSED: Symbol = symbol_short!("dao_prp");
-/// Topic: DAO rotation accepted
-pub const TOPIC_DAO_ROTATION_ACCEPTED: Symbol = symbol_short!("dao_acc");
-/// Topic: staking contract proposed
-pub const TOPIC_STAKING_CONTRACT_PROPOSED: Symbol = symbol_short!("stk_prp");
-/// Topic: staking contract committed
-pub const TOPIC_STAKING_CONTRACT_COMMITTED: Symbol = symbol_short!("stk_cmt");
-/// Topic: staking contract cancelled
-pub const TOPIC_STAKING_CONTRACT_CANCELLED: Symbol = symbol_short!("stk_cnc");
-/// Topic: admin weight changed
-pub const TOPIC_ADMIN_WEIGHT_CHANGED: Symbol = symbol_short!("adm_wt");
-/// Topic: owner recovery phrase acknowledged
-pub const TOPIC_OWNER_RECOVERY_PHRASE_ACKNOWLEDGED: Symbol = symbol_short!("own_ack");
-/// Topic: vote weight snapshot created
-pub const TOPIC_VOTE_WEIGHT_SNAPSHOT_CREATED: Symbol = symbol_short!("vw_snap");
-/// Topic: proposal cleaned
-pub const TOPIC_PROPOSAL_CLEANED: Symbol = symbol_short!("prp_cln");
-/// Topic: attestor locked for dispute
-pub const TOPIC_ATTESTOR_LOCKED_FOR_DISPUTE: Symbol = symbol_short!("att_lck");
-/// Topic: dispute rolled back
+/// Topic: an admin proposed rebinding the attestor-staking contract
+pub const TOPIC_STAKING_CONTRACT_PROPOSED: Symbol = symbol_short!("stk_prop");
+/// Topic: a proposed staking-contract rebinding was committed
+pub const TOPIC_STAKING_CONTRACT_COMMITTED: Symbol = symbol_short!("stk_comm");
+/// Topic: a proposed staking-contract rebinding was cancelled
+pub const TOPIC_STAKING_CONTRACT_CANCELLED: Symbol = symbol_short!("stk_canc");
+/// Topic: a permit was cancelled
+pub const TOPIC_PERMIT_CANCELLED: Symbol = symbol_short!("perm_canc");
+/// Topic: relayer gas usage was reported
+pub const TOPIC_RELAYER_GAS_REPORTED: Symbol = symbol_short!("rl_gas");
+/// Topic: an emergency pause was scheduled
+pub const TOPIC_PAUSE_SCHEDULED: Symbol = symbol_short!("p_sch");
+/// Topic: a scheduled emergency pause was cancelled
+pub const TOPIC_PAUSE_SCHEDULED_CANCELLED: Symbol = symbol_short!("p_canc");
+/// Topic: expired proposals were cleaned up
+pub const TOPIC_PROPOSAL_CLEANED: Symbol = symbol_short!("prop_cln");
+/// Topic: a dispute resolution was rolled back
 pub const TOPIC_DISPUTE_ROLLED_BACK: Symbol = symbol_short!("dsp_rb");
-/// Topic: revocation index cleaned
+/// Topic: a DAO collector rotation was proposed
+pub const TOPIC_DAO_ROTATION_PROPOSED: Symbol = symbol_short!("dao_prop");
+/// Topic: a DAO collector rotation was accepted
+pub const TOPIC_DAO_ROTATION_ACCEPTED: Symbol = symbol_short!("dao_acc");
+/// Topic: an admin vote weight changed
+pub const TOPIC_ADMIN_WEIGHT_CHANGED: Symbol = symbol_short!("adm_wgt");
+/// Topic: an attestor was locked because of a dispute
+pub const TOPIC_ATTESTOR_LOCKED_FOR_DISPUTE: Symbol = symbol_short!("att_lck");
+/// Topic: a vote-weight snapshot was created
+pub const TOPIC_VOTE_WEIGHT_SNAPSHOT_CREATED: Symbol = symbol_short!("vw_snap");
+/// Topic: the owner acknowledged the recovery phrase
+pub const TOPIC_OWNER_RECOVERY_PHRASE_ACKNOWLEDGED: Symbol = symbol_short!("rpy_ack");
+/// Topic: the revocation index was cleaned up
 pub const TOPIC_REVOCATION_INDEX_CLEANED: Symbol = symbol_short!("rv_cln");
 
 // ════════════════════════════════════════════════════════════════════
@@ -2487,6 +2495,61 @@ pub fn emit_reputation_gate_check(
     };
     env.events()
         .publish((TOPIC_REPUTATION_GATE_CHECK, attestor.clone()), event);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Additional Normalized Event Data Structures + Emitters
+//
+//  These emitters back entry-points added after the original event
+//  catalog (DAO/collector rotation, staking-contract timelock, multisig
+//  governance, dispute rollback, admin weights, archive rehydration
+//  bookkeeping).  They follow the same schema contract as the rest of
+//  this module: `#[contracttype]` payloads, ≤9-char topics, secondary
+//  topic keys where the payload has a natural actor.
+// ════════════════════════════════════════════════════════════════════
+
+// ── Analytics rotation ─────────────────────────────────────────────
+
+// ── Flat fee collector rotation ────────────────────────────────────
+
+/// Emit a `CollectorRotationProposed` event.
+///
+/// Publishes `(cr_prop,)` → `CollectorRotationProposedEvent`.
+pub fn emit_collector_rotation_proposed(
+    env: &Env,
+    old_collector: &Address,
+    new_collector: &Address,
+    token: &Address,
+    escrowed_amount: i128,
+) {
+    let event = CollectorRotationProposedEvent {
+        old_collector: old_collector.clone(),
+        new_collector: new_collector.clone(),
+        token: token.clone(),
+        escrowed_amount,
+    };
+    env.events()
+        .publish((TOPIC_COLLECTOR_ROTATION_PROPOSED,), event);
+}
+
+/// Emit a `CollectorRotationAccepted` event.
+///
+/// Publishes `(cr_acc,)` → `CollectorRotationAcceptedEvent`.
+pub fn emit_collector_rotation_accepted(
+    env: &Env,
+    old_collector: &Address,
+    new_collector: &Address,
+    token: &Address,
+    escrowed_amount: i128,
+) {
+    let event = CollectorRotationAcceptedEvent {
+        old_collector: old_collector.clone(),
+        new_collector: new_collector.clone(),
+        token: token.clone(),
+        escrowed_amount,
+    };
+    env.events()
+        .publish((TOPIC_COLLECTOR_ROTATION_ACCEPTED,), event);
 }
 
 // ── DAO controller rotation ────────────────────────────────────────

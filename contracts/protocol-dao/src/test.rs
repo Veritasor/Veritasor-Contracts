@@ -903,20 +903,19 @@ fn tied_votes_are_not_approved_even_when_quorum_is_met() {
 
 #[test]
 fn test_dao_pause_attestation() {
-    let (env, dao, _admin, token_addr) = setup_with_token(2, 100);
-
+    let (env, client, admin, gov_token) = setup_with_token(2, 100);
     let proposer = Address::generate(&env);
     let voter1 = Address::generate(&env);
     let voter2 = Address::generate(&env);
 
-    mint(&env, &token_addr, &proposer, 1000);
-    mint(&env, &token_addr, &voter1, 1000);
-    mint(&env, &token_addr, &voter2, 1000);
+    mint(&env, &gov_token, &proposer, 100);
+    mint(&env, &gov_token, &voter1, 100);
+    mint(&env, &gov_token, &voter2, 100);
 
-    let proposal_id = dao.create_pause_proposal(&proposer);
+    let proposal_id = client.create_pause_proposal(&proposer);
+    client.vote_for(&voter1, &proposal_id);
+    client.vote_for(&voter2, &proposal_id);
+    client.execute_proposal(&admin, &proposal_id);
 
-    dao.vote_for(&voter1, &proposal_id);
-    dao.vote_for(&voter2, &proposal_id);
-
-    assert!(dao.is_proposal_approved(&proposal_id));
+    assert!(client.is_attestation_paused());
 }

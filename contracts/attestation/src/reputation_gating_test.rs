@@ -3,7 +3,7 @@
 use std::format;
 
 use super::*;
-use soroban_sdk::testutils::{Address as _, Ledger as _};
+use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{token, Address, BytesN, Env, String, Symbol, Vec};
 use veritasor_attestor_staking::AttestorStakingContract;
 use veritasor_attestor_staking::AttestorStakingContractClient as StakingClient;
