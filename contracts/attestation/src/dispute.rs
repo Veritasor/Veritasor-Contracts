@@ -921,286 +921,730 @@ pub fn check_and_rollback_disputes(env: &Env, dispute_ids: &Vec<u64>, limit: u32
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::access_control::ROLE_BUSINESS;
+    use crate::{AttestationContract, AttestationContractClient};
     use soroban_sdk::testutils::Address as _;
-    use soroban_sdk::{Address, Env, String};
+    use soroban_sdk::{symbol_short, Address, BytesN, Env, String, Vec};
+
+    fn setup_env() -> (Env, AttestationContractClient<'static>, Address, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AttestationContract, ());
+        let client = AttestationContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin, &0u64);
+        (env, client, admin, contract_id)
+    }
+
+    fn with_contract<T>(env: &Env, contract_id: &Address, f: impl FnOnce() -> T) -> T {
+        env.as_contract(contract_id, f)
+    }
+
+    fn activate_business(
+        env: &Env,
+        client: &AttestationContractClient<'static>,
+        admin: &Address,
+        business: &Address,
+    ) {
+        client.grant_role(admin, business, &ROLE_BUSINESS);
+        client.register_business(
+            business,
+            &BytesN::from_array(env, &[7u8; 32]),
+            &symbol_short!("US"),
+            &Vec::new(env),
+        );
+        client.approve_business(admin, business);
+    }
+
+    fn submit_attestation(
+        env: &Env,
+        client: &AttestationContractClient<'static>,
+        business: &Address,
+        period: &str,
+    ) {
+        client.submit_attestation(
+            business,
+            &String::from_str(env, period),
+            &BytesN::from_array(env, &[1u8; 32]),
+            &1_700_000_000u64,
+            &1u32,
+            &0i128,
+            &None,
+            &None,
+        );
+    }
 
     #[test]
     fn test_validate_dispute_closure_valid() {
-        let env = Env::default();
-        let dispute_id = 1;
-        let dispute = Dispute {
-            id: dispute_id,
-            challenger: Address::generate(&env),
-            business: Address::generate(&env),
-            attestor: Address::generate(&env),
-            period: String::from_str(&env, "2026-02"),
-            status: DisputeStatus::Resolved,
-            dispute_type: DisputeType::Other,
-            evidence: String::from_str(&env, "evidence"),
-            timestamp: 1000,
-            resolution: OptionalResolution::None,
-        };
-        store_dispute(&env, &dispute);
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let dispute_id = 1;
+            let dispute = Dispute {
+                id: dispute_id,
+                challenger: Address::generate(&env),
+                business: Address::generate(&env),
+                attestor: Address::generate(&env),
+                period: String::from_str(&env, "2026-02"),
+                status: DisputeStatus::Resolved,
+                dispute_type: DisputeType::Other,
+                evidence: String::from_str(&env, "evidence"),
+                timestamp: 1000,
+                resolution: OptionalResolution::None,
+            };
+            store_dispute(&env, &dispute);
 
-        let result = validate_dispute_closure(&env, dispute_id);
-        assert_eq!(result, Ok(dispute));
+            let result = validate_dispute_closure(&env, dispute_id);
+            assert_eq!(result, Ok(dispute));
+        });
     }
 
     #[test]
     fn test_validate_dispute_closure_not_found() {
-        let env = Env::default();
-        let dispute_id = 999;
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let dispute_id = 999;
 
-        let result = validate_dispute_closure(&env, dispute_id);
-        assert_eq!(result, Err("dispute not found"));
+            let result = validate_dispute_closure(&env, dispute_id);
+            assert_eq!(result, Err("dispute not found"));
+        });
     }
 
     #[test]
     fn test_validate_dispute_closure_invalid_status_open() {
-        let env = Env::default();
-        let dispute_id = 2;
-        let dispute = Dispute {
-            id: dispute_id,
-            challenger: Address::generate(&env),
-            business: Address::generate(&env),
-            attestor: Address::generate(&env),
-            period: String::from_str(&env, "2026-02"),
-            status: DisputeStatus::Open,
-            dispute_type: DisputeType::Other,
-            evidence: String::from_str(&env, "evidence"),
-            timestamp: 1000,
-            resolution: OptionalResolution::None,
-        };
-        store_dispute(&env, &dispute);
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let dispute_id = 2;
+            let dispute = Dispute {
+                id: dispute_id,
+                challenger: Address::generate(&env),
+                business: Address::generate(&env),
+                attestor: Address::generate(&env),
+                period: String::from_str(&env, "2026-02"),
+                status: DisputeStatus::Open,
+                dispute_type: DisputeType::Other,
+                evidence: String::from_str(&env, "evidence"),
+                timestamp: 1000,
+                resolution: OptionalResolution::None,
+            };
+            store_dispute(&env, &dispute);
 
-        let result = validate_dispute_closure(&env, dispute_id);
-        assert_eq!(result, Err("dispute is not resolved"));
+            let result = validate_dispute_closure(&env, dispute_id);
+            assert_eq!(result, Err("dispute is not resolved"));
+        });
     }
 
     #[test]
     fn test_validate_dispute_closure_invalid_status_closed() {
-        let env = Env::default();
-        let dispute_id = 3;
-        let dispute = Dispute {
-            id: dispute_id,
-            challenger: Address::generate(&env),
-            business: Address::generate(&env),
-            attestor: Address::generate(&env),
-            period: String::from_str(&env, "2026-02"),
-            status: DisputeStatus::Closed,
-            dispute_type: DisputeType::Other,
-            evidence: String::from_str(&env, "evidence"),
-            timestamp: 1000,
-            resolution: OptionalResolution::None,
-        };
-        store_dispute(&env, &dispute);
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let dispute_id = 3;
+            let dispute = Dispute {
+                id: dispute_id,
+                challenger: Address::generate(&env),
+                business: Address::generate(&env),
+                attestor: Address::generate(&env),
+                period: String::from_str(&env, "2026-02"),
+                status: DisputeStatus::Closed,
+                dispute_type: DisputeType::Other,
+                evidence: String::from_str(&env, "evidence"),
+                timestamp: 1000,
+                resolution: OptionalResolution::None,
+            };
+            store_dispute(&env, &dispute);
 
-        let result = validate_dispute_closure(&env, dispute_id);
-        assert_eq!(result, Err("dispute is not resolved"));
+            let result = validate_dispute_closure(&env, dispute_id);
+            assert_eq!(result, Err("dispute is not resolved"));
+        });
     }
 
     #[test]
     fn test_store_attestor_for_attestation_valid() {
-        let env = Env::default();
-        let business = Address::generate(&env);
-        let period = String::from_str(&env, "2026-02");
-        let attestor = Address::generate(&env);
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business = Address::generate(&env);
+            let period = String::from_str(&env, "2026-02");
+            let attestor = Address::generate(&env);
 
-        // Verify initial state is empty
-        assert_eq!(get_attestor_for_attestation(&env, &business, &period), None);
+            // Verify initial state is empty
+            assert_eq!(get_attestor_for_attestation(&env, &business, &period), None);
 
-        // Store the attestor
-        store_attestor_for_attestation(&env, &business, &period, &attestor);
+            // Store the attestor
+            store_attestor_for_attestation(&env, &business, &period, &attestor);
 
-        // Verify it was saved correctly
-        assert_eq!(
-            get_attestor_for_attestation(&env, &business, &period),
-            Some(attestor.clone())
-        );
+            // Verify it was saved correctly
+            assert_eq!(
+                get_attestor_for_attestation(&env, &business, &period),
+                Some(attestor.clone())
+            );
+        });
     }
 
     #[test]
     fn test_store_attestor_for_attestation_overwrite() {
-        let env = Env::default();
-        let business = Address::generate(&env);
-        let period = String::from_str(&env, "2026-02");
-        let attestor1 = Address::generate(&env);
-        let attestor2 = Address::generate(&env);
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business = Address::generate(&env);
+            let period = String::from_str(&env, "2026-02");
+            let attestor1 = Address::generate(&env);
+            let attestor2 = Address::generate(&env);
 
-        // Store first attestor
-        store_attestor_for_attestation(&env, &business, &period, &attestor1);
+            // Store first attestor
+            store_attestor_for_attestation(&env, &business, &period, &attestor1);
 
-        // Overwrite with second attestor
-        store_attestor_for_attestation(&env, &business, &period, &attestor2);
+            // Overwrite with second attestor
+            store_attestor_for_attestation(&env, &business, &period, &attestor2);
 
-        // Verify the overwritten value is present
-        assert_eq!(
-            get_attestor_for_attestation(&env, &business, &period),
-            Some(attestor2)
-        );
+            // Verify the overwritten value is present
+            assert_eq!(
+                get_attestor_for_attestation(&env, &business, &period),
+                Some(attestor2)
+            );
+        });
     }
 
     #[test]
     fn test_store_attestor_for_attestation_boundary_period() {
-        let env = Env::default();
-        let business = Address::generate(&env);
-        // Empty period is a boundary condition
-        let period = String::from_str(&env, "");
-        let attestor = Address::generate(&env);
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business = Address::generate(&env);
+            // Empty period is a boundary condition
+            let period = String::from_str(&env, "");
+            let attestor = Address::generate(&env);
 
-        store_attestor_for_attestation(&env, &business, &period, &attestor);
+            store_attestor_for_attestation(&env, &business, &period, &attestor);
 
-        assert_eq!(
-            get_attestor_for_attestation(&env, &business, &period),
-            Some(attestor)
-        );
+            assert_eq!(
+                get_attestor_for_attestation(&env, &business, &period),
+                Some(attestor)
+            );
+        });
     }
 
     #[test]
     fn test_store_attestor_for_attestation_multiple_businesses() {
-        let env = Env::default();
-        let business1 = Address::generate(&env);
-        let business2 = Address::generate(&env);
-        let period = String::from_str(&env, "2026-02");
-        let attestor1 = Address::generate(&env);
-        let attestor2 = Address::generate(&env);
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business1 = Address::generate(&env);
+            let business2 = Address::generate(&env);
+            let period = String::from_str(&env, "2026-02");
+            let attestor1 = Address::generate(&env);
+            let attestor2 = Address::generate(&env);
 
-        store_attestor_for_attestation(&env, &business1, &period, &attestor1);
-        store_attestor_for_attestation(&env, &business2, &period, &attestor2);
+            store_attestor_for_attestation(&env, &business1, &period, &attestor1);
+            store_attestor_for_attestation(&env, &business2, &period, &attestor2);
 
-        assert_eq!(
-            get_attestor_for_attestation(&env, &business1, &period),
-            Some(attestor1)
-        );
-        assert_eq!(
-            get_attestor_for_attestation(&env, &business2, &period),
-            Some(attestor2)
-        );
+            assert_eq!(
+                get_attestor_for_attestation(&env, &business1, &period),
+                Some(attestor1)
+            );
+            assert_eq!(
+                get_attestor_for_attestation(&env, &business2, &period),
+                Some(attestor2)
+            );
+        });
     }
 
     #[test]
     fn test_get_anomaly_escalation_empty() {
-        let env = Env::default();
-        let business = Address::generate(&env);
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business = Address::generate(&env);
 
-        assert_eq!(get_anomaly_escalation(&env, &business), None);
+            assert_eq!(get_anomaly_escalation(&env, &business), None);
+        });
     }
 
     #[test]
     fn test_get_anomaly_escalation_after_update() {
-        let env = Env::default();
-        let business = Address::generate(&env);
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business = Address::generate(&env);
 
-        // score < 50 => no escalation (returns None because it's not set)
-        update_anomaly_escalation(&env, &business, 40);
-        assert_eq!(get_anomaly_escalation(&env, &business), None);
+            // score < 50 => no escalation (returns None because it's not set)
+            update_anomaly_escalation(&env, &business, 40);
+            assert_eq!(get_anomaly_escalation(&env, &business), None);
 
-        // score 50..=74 => level 1
-        update_anomaly_escalation(&env, &business, 50);
-        assert_eq!(get_anomaly_escalation(&env, &business), Some(1));
+            // score 50..=74 => level 1
+            update_anomaly_escalation(&env, &business, 50);
+            assert_eq!(get_anomaly_escalation(&env, &business), Some(1));
 
-        // score 75..=89 => level 2
-        update_anomaly_escalation(&env, &business, 75);
-        assert_eq!(get_anomaly_escalation(&env, &business), Some(2));
+            // score 75..=89 => level 2
+            update_anomaly_escalation(&env, &business, 75);
+            assert_eq!(get_anomaly_escalation(&env, &business), Some(2));
 
-        // score >= 90 => level 3
-        update_anomaly_escalation(&env, &business, 95);
-        assert_eq!(get_anomaly_escalation(&env, &business), Some(3));
+            // score >= 90 => level 3
+            update_anomaly_escalation(&env, &business, 95);
+            assert_eq!(get_anomaly_escalation(&env, &business), Some(3));
+        });
     }
 
     #[test]
     fn test_get_anomaly_escalation_monotonic() {
-        let env = Env::default();
-        let business = Address::generate(&env);
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business = Address::generate(&env);
 
-        // escalation level only increases
-        update_anomaly_escalation(&env, &business, 90); // level 3
-        assert_eq!(get_anomaly_escalation(&env, &business), Some(3));
+            // escalation level only increases
+            update_anomaly_escalation(&env, &business, 90); // level 3
+            assert_eq!(get_anomaly_escalation(&env, &business), Some(3));
 
-        update_anomaly_escalation(&env, &business, 50); // level 1, but should stay 3
-        assert_eq!(get_anomaly_escalation(&env, &business), Some(3));
+            update_anomaly_escalation(&env, &business, 50); // level 1, but should stay 3
+            assert_eq!(get_anomaly_escalation(&env, &business), Some(3));
+        });
     }
 
     #[test]
     fn test_get_anomaly_escalation_after_clear() {
-        let env = Env::default();
-        let business = Address::generate(&env);
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business = Address::generate(&env);
 
-        update_anomaly_escalation(&env, &business, 80); // level 2
-        assert_eq!(get_anomaly_escalation(&env, &business), Some(2));
+            update_anomaly_escalation(&env, &business, 80); // level 2
+            assert_eq!(get_anomaly_escalation(&env, &business), Some(2));
 
-        clear_anomaly_escalation(&env, &business);
-        assert_eq!(get_anomaly_escalation(&env, &business), None);
+            clear_anomaly_escalation(&env, &business);
+            assert_eq!(get_anomaly_escalation(&env, &business), None);
+        });
     }
 
     #[test]
     fn test_is_attestation_revoked_false_initially() {
-        let env = Env::default();
-        let business = Address::generate(&env);
-        let period = String::from_str(&env, "2026-03");
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business = Address::generate(&env);
+            let period = String::from_str(&env, "2026-03");
 
-        assert_eq!(is_attestation_revoked(&env, &business, &period), false);
+            assert_eq!(is_attestation_revoked(&env, &business, &period), false);
+        });
     }
 
     #[test]
     fn test_is_attestation_revoked_true_when_revoked() {
-        let env = Env::default();
-        let business = Address::generate(&env);
-        let period = String::from_str(&env, "2026-03");
-        let revoker = Address::generate(&env);
-        let reason = String::from_str(&env, "fraud");
-        let revocation: crate::RevocationData = (revoker, 1000, reason);
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business = Address::generate(&env);
+            let period = String::from_str(&env, "2026-03");
+            let revoker = Address::generate(&env);
+            let reason = String::from_str(&env, "fraud");
+            let revocation: crate::RevocationData = (revoker, 1000, reason);
 
-        store_attestation_revocation(&env, &business, &period, &revocation);
+            store_attestation_revocation(&env, &business, &period, &revocation);
 
-        assert_eq!(is_attestation_revoked(&env, &business, &period), true);
+            assert_eq!(is_attestation_revoked(&env, &business, &period), true);
+        });
     }
 
     #[test]
     fn test_is_attestation_revoked_different_period() {
-        let env = Env::default();
-        let business = Address::generate(&env);
-        let period1 = String::from_str(&env, "2026-03");
-        let period2 = String::from_str(&env, "2026-04");
-        let revoker = Address::generate(&env);
-        let reason = String::from_str(&env, "fraud");
-        let revocation: crate::RevocationData = (revoker, 1000, reason);
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business = Address::generate(&env);
+            let period1 = String::from_str(&env, "2026-03");
+            let period2 = String::from_str(&env, "2026-04");
+            let revoker = Address::generate(&env);
+            let reason = String::from_str(&env, "fraud");
+            let revocation: crate::RevocationData = (revoker, 1000, reason);
 
-        store_attestation_revocation(&env, &business, &period1, &revocation);
+            store_attestation_revocation(&env, &business, &period1, &revocation);
 
-        assert_eq!(is_attestation_revoked(&env, &business, &period1), true);
-        assert_eq!(is_attestation_revoked(&env, &business, &period2), false);
+            assert_eq!(is_attestation_revoked(&env, &business, &period1), true);
+            assert_eq!(is_attestation_revoked(&env, &business, &period2), false);
+        });
     }
 
     #[test]
     fn test_is_attestation_revoked_different_business() {
-        let env = Env::default();
-        let business1 = Address::generate(&env);
-        let business2 = Address::generate(&env);
-        let period = String::from_str(&env, "2026-03");
-        let revoker = Address::generate(&env);
-        let reason = String::from_str(&env, "fraud");
-        let revocation: crate::RevocationData = (revoker, 1000, reason);
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business1 = Address::generate(&env);
+            let business2 = Address::generate(&env);
+            let period = String::from_str(&env, "2026-03");
+            let revoker = Address::generate(&env);
+            let reason = String::from_str(&env, "fraud");
+            let revocation: crate::RevocationData = (revoker, 1000, reason);
 
-        store_attestation_revocation(&env, &business1, &period, &revocation);
+            store_attestation_revocation(&env, &business1, &period, &revocation);
 
-        assert_eq!(is_attestation_revoked(&env, &business1, &period), true);
-        assert_eq!(is_attestation_revoked(&env, &business2, &period), false);
+            assert_eq!(is_attestation_revoked(&env, &business1, &period), true);
+            assert_eq!(is_attestation_revoked(&env, &business2, &period), false);
+        });
     }
 
     #[test]
     fn test_is_attestation_revoked_empty_period() {
-        let env = Env::default();
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business = Address::generate(&env);
+            let period = String::from_str(&env, "");
+
+            assert_eq!(is_attestation_revoked(&env, &business, &period), false);
+
+            let revoker = Address::generate(&env);
+            let reason = String::from_str(&env, "fraud");
+            let revocation: crate::RevocationData = (revoker, 1000, reason);
+            store_attestation_revocation(&env, &business, &period, &revocation);
+
+            assert_eq!(is_attestation_revoked(&env, &business, &period), true);
+        });
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    //  Adversarial coverage for `get_dispute_ids_by_attestation`
+    // ────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_dispute_ids_by_attestation_empty_on_fresh_state() {
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business = Address::generate(&env);
+            let period = String::from_str(&env, "2026-02");
+
+            let ids = get_dispute_ids_by_attestation(&env, &business, &period);
+            assert!(ids.is_empty(), "fresh index must return an empty list");
+            assert_eq!(ids.len(), 0);
+
+            // Repeat query to verify read purity and idempotence
+            let ids_second = get_dispute_ids_by_attestation(&env, &business, &period);
+            assert!(ids_second.is_empty());
+        });
+    }
+
+    #[test]
+    fn test_get_dispute_ids_by_attestation_single_and_fifo_order() {
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business = Address::generate(&env);
+            let period = String::from_str(&env, "2026-02");
+
+            // 1. Single insertion
+            add_dispute_to_attestation_index(&env, &business, &period, 101);
+            let single = get_dispute_ids_by_attestation(&env, &business, &period);
+            assert_eq!(single.len(), 1);
+            assert_eq!(single.get(0).unwrap(), 101);
+
+            // 2. FIFO order verification with multiple non-sequential IDs
+            let dispute_ids = [42u64, 7u64, 9999u64, 1u64];
+            for &id in &dispute_ids {
+                add_dispute_to_attestation_index(&env, &business, &period, id);
+            }
+
+            let result = get_dispute_ids_by_attestation(&env, &business, &period);
+            assert_eq!(result.len(), 5);
+            assert_eq!(result.get(0).unwrap(), 101);
+            assert_eq!(result.get(1).unwrap(), 42);
+            assert_eq!(result.get(2).unwrap(), 7);
+            assert_eq!(result.get(3).unwrap(), 9999);
+            assert_eq!(result.get(4).unwrap(), 1);
+        });
+    }
+
+    #[test]
+    fn test_get_dispute_ids_by_attestation_boundary_dispute_ids_and_duplicates() {
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business = Address::generate(&env);
+            let period = String::from_str(&env, "2026-02");
+
+            // Lower and upper boundaries of u64
+            add_dispute_to_attestation_index(&env, &business, &period, 0);
+            add_dispute_to_attestation_index(&env, &business, &period, u64::MAX);
+            add_dispute_to_attestation_index(&env, &business, &period, u64::MAX - 1);
+            add_dispute_to_attestation_index(&env, &business, &period, 1u64 << 32);
+
+            // Appending duplicate IDs (append-only contract semantics)
+            add_dispute_to_attestation_index(&env, &business, &period, 42);
+            add_dispute_to_attestation_index(&env, &business, &period, 42);
+
+            let ids = get_dispute_ids_by_attestation(&env, &business, &period);
+            assert_eq!(ids.len(), 6);
+            assert_eq!(ids.get(0).unwrap(), 0);
+            assert_eq!(ids.get(1).unwrap(), u64::MAX);
+            assert_eq!(ids.get(2).unwrap(), u64::MAX - 1);
+            assert_eq!(ids.get(3).unwrap(), 1u64 << 32);
+            assert_eq!(ids.get(4).unwrap(), 42);
+            assert_eq!(ids.get(5).unwrap(), 42);
+        });
+    }
+
+    #[test]
+    fn test_get_dispute_ids_by_attestation_scoped_by_business() {
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business_a = Address::generate(&env);
+            let business_b = Address::generate(&env);
+            let business_c = Address::generate(&env);
+            let period = String::from_str(&env, "2026-02");
+
+            add_dispute_to_attestation_index(&env, &business_a, &period, 11);
+            add_dispute_to_attestation_index(&env, &business_b, &period, 22);
+
+            let ids_a = get_dispute_ids_by_attestation(&env, &business_a, &period);
+            assert_eq!(ids_a.len(), 1);
+            assert_eq!(ids_a.get(0).unwrap(), 11);
+
+            let ids_b = get_dispute_ids_by_attestation(&env, &business_b, &period);
+            assert_eq!(ids_b.len(), 1);
+            assert_eq!(ids_b.get(0).unwrap(), 22);
+
+            let ids_c = get_dispute_ids_by_attestation(&env, &business_c, &period);
+            assert!(ids_c.is_empty(), "unseen business must remain empty");
+        });
+    }
+
+    #[test]
+    fn test_get_dispute_ids_by_attestation_scoped_by_period() {
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business = Address::generate(&env);
+            let period_a = String::from_str(&env, "2026-02");
+            let period_b = String::from_str(&env, "2026-03");
+            let period_c = String::from_str(&env, "2026-04");
+
+            add_dispute_to_attestation_index(&env, &business, &period_a, 501);
+            add_dispute_to_attestation_index(&env, &business, &period_b, 502);
+
+            let ids_a = get_dispute_ids_by_attestation(&env, &business, &period_a);
+            assert_eq!(ids_a.len(), 1);
+            assert_eq!(ids_a.get(0).unwrap(), 501);
+
+            let ids_b = get_dispute_ids_by_attestation(&env, &business, &period_b);
+            assert_eq!(ids_b.len(), 1);
+            assert_eq!(ids_b.get(0).unwrap(), 502);
+
+            let ids_c = get_dispute_ids_by_attestation(&env, &business, &period_c);
+            assert!(ids_c.is_empty(), "unqueried period must remain empty");
+        });
+    }
+
+    #[test]
+    fn test_get_dispute_ids_by_attestation_boundary_empty_period() {
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business = Address::generate(&env);
+            let empty_period = String::from_str(&env, "");
+            let normal_period = String::from_str(&env, "2026-02");
+
+            assert!(get_dispute_ids_by_attestation(&env, &business, &empty_period).is_empty());
+
+            add_dispute_to_attestation_index(&env, &business, &empty_period, 99);
+
+            let ids_empty = get_dispute_ids_by_attestation(&env, &business, &empty_period);
+            assert_eq!(ids_empty.len(), 1);
+            assert_eq!(ids_empty.get(0).unwrap(), 99);
+
+            // Normal period remains isolated
+            assert!(get_dispute_ids_by_attestation(&env, &business, &normal_period).is_empty());
+        });
+    }
+
+    #[test]
+    fn test_get_dispute_ids_by_attestation_boundary_period_prefix_and_delimiter_isolation() {
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business = Address::generate(&env);
+            let p_base = String::from_str(&env, "2026-02");
+            let p_extended = String::from_str(&env, "2026-02-01");
+            let p_zero_extended = String::from_str(&env, "2026-020");
+            let p_short = String::from_str(&env, "2026-2");
+
+            add_dispute_to_attestation_index(&env, &business, &p_base, 10);
+            add_dispute_to_attestation_index(&env, &business, &p_extended, 20);
+            add_dispute_to_attestation_index(&env, &business, &p_zero_extended, 30);
+            add_dispute_to_attestation_index(&env, &business, &p_short, 40);
+
+            let ids_base = get_dispute_ids_by_attestation(&env, &business, &p_base);
+            assert_eq!(ids_base.len(), 1);
+            assert_eq!(ids_base.get(0).unwrap(), 10);
+
+            let ids_extended = get_dispute_ids_by_attestation(&env, &business, &p_extended);
+            assert_eq!(ids_extended.len(), 1);
+            assert_eq!(ids_extended.get(0).unwrap(), 20);
+
+            let ids_zero = get_dispute_ids_by_attestation(&env, &business, &p_zero_extended);
+            assert_eq!(ids_zero.len(), 1);
+            assert_eq!(ids_zero.get(0).unwrap(), 30);
+
+            let ids_short = get_dispute_ids_by_attestation(&env, &business, &p_short);
+            assert_eq!(ids_short.len(), 1);
+            assert_eq!(ids_short.get(0).unwrap(), 40);
+        });
+    }
+
+    #[test]
+    fn test_get_dispute_ids_by_attestation_boundary_special_characters_and_long_period() {
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business = Address::generate(&env);
+
+            let p_spaces = String::from_str(&env, "  2026-02  ");
+            let p_sql = String::from_str(&env, "2026-02'; DROP TABLE disputes;--");
+            let p_slash = String::from_str(&env, "2026/02/01\0test");
+            let p_long = String::from_str(
+                &env,
+                "2026-02-very-long-period-specification-designed-to-test-storage-key-encoding-limits-and-prevent-truncation-or-buffer-overflows-in-the-soroban-environment-padding-1234567890-abcdefghijklmnopqrstuvwxyz",
+            );
+
+            add_dispute_to_attestation_index(&env, &business, &p_spaces, 1);
+            add_dispute_to_attestation_index(&env, &business, &p_sql, 2);
+            add_dispute_to_attestation_index(&env, &business, &p_slash, 3);
+            add_dispute_to_attestation_index(&env, &business, &p_long, 4);
+
+            assert_eq!(
+                get_dispute_ids_by_attestation(&env, &business, &p_spaces).get(0),
+                Some(1)
+            );
+            assert_eq!(
+                get_dispute_ids_by_attestation(&env, &business, &p_sql).get(0),
+                Some(2)
+            );
+            assert_eq!(
+                get_dispute_ids_by_attestation(&env, &business, &p_slash).get(0),
+                Some(3)
+            );
+            assert_eq!(
+                get_dispute_ids_by_attestation(&env, &business, &p_long).get(0),
+                Some(4)
+            );
+        });
+    }
+
+    #[test]
+    fn test_get_dispute_ids_by_attestation_pure_read_leaves_storage_unmodified() {
+        let (env, _client, _admin, contract_id) = setup_env();
+        with_contract(&env, &contract_id, || {
+            let business = Address::generate(&env);
+            let period = String::from_str(&env, "2026-02");
+            let challenger = Address::generate(&env);
+
+            // Execute multiple read queries against unindexed and indexed pairs
+            for _ in 0..10 {
+                let ids = get_dispute_ids_by_attestation(&env, &business, &period);
+                assert!(ids.is_empty());
+            }
+
+            // Verify secondary structures remain untouched
+            assert_eq!(get_revocation_sequence(&env), 0);
+            assert!(get_revoked_periods(&env, &business).is_empty());
+            assert!(get_dispute_ids_by_challenger(&env, &challenger).is_empty());
+            assert_eq!(get_dispute(&env, 1), None);
+            assert_eq!(has_open_dispute(&env, &business, &period), false);
+            assert_eq!(
+                has_existing_dispute(&env, &challenger, &business, &period),
+                false
+            );
+        });
+    }
+
+    #[test]
+    fn test_get_dispute_ids_by_attestation_unauthorized_and_public_client_entrypoint() {
+        let (env, client, _admin, contract_id) = setup_env();
         let business = Address::generate(&env);
-        let period = String::from_str(&env, "");
+        let period_str = "2026-02";
+        let period = String::from_str(&env, period_str);
 
-        assert_eq!(is_attestation_revoked(&env, &business, &period), false);
+        with_contract(&env, &contract_id, || {
+            add_dispute_to_attestation_index(&env, &business, &period, 777);
+        });
 
-        let revoker = Address::generate(&env);
-        let reason = String::from_str(&env, "fraud");
-        let revocation: crate::RevocationData = (revoker, 1000, reason);
-        store_attestation_revocation(&env, &business, &period, &revocation);
+        // Query through public entrypoint with NO authorizations mocked
+        env.mock_auths(&[]);
+        let public_result = client.get_disputes_by_attestation(&business, &period);
+        assert_eq!(public_result.len(), 1);
+        assert_eq!(public_result.get(0).unwrap(), 777);
 
-        assert_eq!(is_attestation_revoked(&env, &business, &period), true);
+        // Verify parity between internal helper and contract client entrypoint
+        with_contract(&env, &contract_id, || {
+            let internal_result = get_dispute_ids_by_attestation(&env, &business, &period);
+            assert_eq!(public_result, internal_result);
+        });
+    }
+
+    #[test]
+    fn test_get_dispute_ids_by_attestation_state_unchanged_after_rejected_operations() {
+        let (env, client, admin, contract_id) = setup_env();
+        let business = Address::generate(&env);
+        activate_business(&env, &client, &admin, &business);
+        submit_attestation(&env, &client, &business, "2026-02");
+
+        let valid_period = String::from_str(&env, "2026-02");
+        let uncommitted_period = String::from_str(&env, "2026-09");
+        let challenger = Address::generate(&env);
+        let challenger_b = Address::generate(&env);
+
+        // 1. Rejected open on non-existent attestation: index must remain untouched
+        let res1 = client.try_open_dispute(
+            &challenger,
+            &business,
+            &uncommitted_period,
+            &DisputeType::RevenueMismatch,
+            &String::from_str(&env, "evidence"),
+        );
+        assert!(res1.is_err(), "open on non-existent attestation must fail");
+        with_contract(&env, &contract_id, || {
+            assert!(
+                get_dispute_ids_by_attestation(&env, &business, &uncommitted_period).is_empty()
+            );
+        });
+
+        // 2. Valid dispute open: index records exactly dispute #1
+        let dispute_id = client.open_dispute(
+            &challenger,
+            &business,
+            &valid_period,
+            &DisputeType::RevenueMismatch,
+            &String::from_str(&env, "valid dispute"),
+        );
+        assert_eq!(dispute_id, 1);
+        with_contract(&env, &contract_id, || {
+            let ids = get_dispute_ids_by_attestation(&env, &business, &valid_period);
+            assert_eq!(ids.len(), 1);
+            assert_eq!(ids.get(0).unwrap(), 1);
+        });
+
+        // 3. Rejected concurrent dispute on already-disputed attestation
+        let res2 = client.try_open_dispute(
+            &challenger_b,
+            &business,
+            &valid_period,
+            &DisputeType::Other,
+            &String::from_str(&env, "another dispute"),
+        );
+        assert!(res2.is_err(), "concurrent open dispute must be rejected");
+        with_contract(&env, &contract_id, || {
+            // Index MUST remain byte-for-byte unchanged: still [1]
+            let ids_after_rejected = get_dispute_ids_by_attestation(&env, &business, &valid_period);
+            assert_eq!(ids_after_rejected.len(), 1);
+            assert_eq!(ids_after_rejected.get(0).unwrap(), 1);
+        });
+
+        // 4. Close the dispute and record attestation revocation
+        with_contract(&env, &contract_id, || {
+            let mut dispute = get_dispute(&env, 1).unwrap();
+            dispute.status = DisputeStatus::Closed;
+            store_dispute(&env, &dispute);
+
+            let revoker = Address::generate(&env);
+            let reason = String::from_str(&env, "settled revocation");
+            let revocation: crate::RevocationData = (revoker, 1000, reason);
+            record_revocation(&env, &business, &valid_period, &revocation);
+        });
+
+        // 5. Attempting to open dispute against revoked attestation is rejected
+        let res3 = client.try_open_dispute(
+            &challenger_b,
+            &business,
+            &valid_period,
+            &DisputeType::DataIntegrity,
+            &String::from_str(&env, "post revocation"),
+        );
+        assert!(res3.is_err(), "open on revoked attestation must be rejected");
+
+        with_contract(&env, &contract_id, || {
+            // Index MUST remain completely unchanged
+            let ids_final = get_dispute_ids_by_attestation(&env, &business, &valid_period);
+            assert_eq!(ids_final.len(), 1);
+            assert_eq!(ids_final.get(0).unwrap(), 1);
+        });
     }
 }
+
