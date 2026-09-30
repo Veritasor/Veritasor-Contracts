@@ -375,6 +375,24 @@ fn has_attestation_key_returns_false_for_unregistered() {
 }
 
 #[test]
+fn has_attestation_key_is_exact_and_stable_for_adversarial_queries() {
+    let (env, client, _admin, _initial_impl) = setup();
+    let attester = Address::generate(&env);
+    let other_attester = Address::generate(&env);
+    let key = soroban_sdk::String::from_str(&env, "A");
+    let empty_key = soroban_sdk::String::from_str(&env, "");
+    let case_variant = soroban_sdk::String::from_str(&env, "a");
+
+    client.register_attestation_key(&attester, &key);
+
+    assert!(client.has_attestation_key(&attester, &key));
+    assert!(!client.has_attestation_key(&attester, &empty_key));
+    assert!(!client.has_attestation_key(&attester, &case_variant));
+    assert!(!client.has_attestation_key(&other_attester, &key));
+    assert!(client.has_attestation_key(&attester, &key));
+}
+
+#[test]
 fn has_attestation_key_returns_false_when_uninitialized() {
     let (env, client) = setup_uninitialized();
     let attester = Address::generate(&env);
@@ -773,4 +791,7 @@ fn query_functions_do_not_require_auth() {
     assert_eq!(client.get_previous_implementation(), None);
     assert_eq!(client.get_previous_version(), None);
     assert_eq!(client.get_version_info(), None);
+    let attester = Address::generate(&env);
+    let key = soroban_sdk::String::from_str(&env, "unauthorized-query");
+    assert!(!client.has_attestation_key(&attester, &key));
 }
