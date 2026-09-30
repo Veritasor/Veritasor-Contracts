@@ -848,3 +848,21 @@ fn registrations_are_isolated_per_attester_and_key() {
     // A pair that was never registered stays absent.
     assert!(!client.has_attestation_key(&bob, &key_y));
 }
+
+#[test]
+fn current_version_is_none_before_initialization_and_stable_after_rejected_upgrade() {
+    let (env, client) = setup_uninitialized();
+    assert_eq!(client.get_current_version(), None);
+
+    let admin = Address::generate(&env);
+    let implementation = Address::generate(&env);
+    client.initialize(&admin, &implementation, &7u32);
+    assert_eq!(client.get_current_version(), Some(7u32));
+
+    let next = Address::generate(&env);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.upgrade(&next, &6u32, &None);
+    }));
+    assert!(result.is_err());
+    assert_eq!(client.get_current_version(), Some(7u32));
+}
