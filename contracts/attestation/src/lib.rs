@@ -3876,7 +3876,7 @@ mod dispute_adversarial_test;
 /// (issue #917). Runs in the default test profile.
 #[cfg(test)]
 mod dispute_attestation_index_adversarial_test;
-#[cfg(all(test, feature = "full-tests"))]
+#[cfg(test)]
 mod dispute_test;
 /// Focused adversarial tests for `set_dispute_deadline`.
 #[cfg(test)]

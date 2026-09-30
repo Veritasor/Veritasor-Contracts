@@ -1176,6 +1176,98 @@ fn test_submit_dispute_witness_dispute_not_open_rejected() {
 }
 
 // ════════════════════════════════════════════════════════════════════
+//  get_dispute_resolution (#915)
+// ════════════════════════════════════════════════════════════════════
+
+/// Register the contract and return its id so `env.as_contract` can exercise
+/// the `dispute` support functions directly in the contract's storage context.
+fn setup_with_id() -> (Env, Address, AttestationContractClient<'static>) {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &0u64);
+    (env, contract_id, client)
+}
+
+fn resolution(
+    env: &Env,
+    outcome: DisputeOutcome,
+    timestamp: u64,
+    notes: &str,
+) -> super::dispute::DisputeResolution {
+    super::dispute::DisputeResolution {
+        resolver: Address::generate(env),
+        outcome,
+        timestamp,
+        notes: String::from_str(env, notes),
+    }
+}
+
+#[test]
+fn get_dispute_resolution_unknown_id_is_none() {
+    let (env, contract_id, _client) = setup_with_id();
+    env.as_contract(&contract_id, || {
+        assert!(super::dispute::get_dispute_resolution(&env, 999u64).is_none());
+    });
+}
+
+#[test]
+fn get_dispute_resolution_round_trips_stored_value() {
+    let (env, contract_id, _client) = setup_with_id();
+    let expected = resolution(
+        &env,
+        DisputeOutcome::Settled,
+        1_700_000_000,
+        "settled after review",
+    );
+    env.as_contract(&contract_id, || {
+        super::dispute::store_dispute_resolution(&env, 7u64, &expected);
+        let stored = super::dispute::get_dispute_resolution(&env, 7u64)
+            .expect("resolution should be stored");
+        assert_eq!(stored, expected);
+    });
+}
+
+#[test]
+fn get_dispute_resolution_is_scoped_per_dispute_id() {
+    let (env, contract_id, _client) = setup_with_id();
+    let first = resolution(&env, DisputeOutcome::Upheld, 1, "upheld");
+    let second = resolution(&env, DisputeOutcome::Rejected, 2, "rejected");
+    env.as_contract(&contract_id, || {
+        super::dispute::store_dispute_resolution(&env, 1u64, &first);
+        super::dispute::store_dispute_resolution(&env, 2u64, &second);
+
+        assert_eq!(
+            super::dispute::get_dispute_resolution(&env, 1u64),
+            Some(first.clone())
+        );
+        assert_eq!(
+            super::dispute::get_dispute_resolution(&env, 2u64),
+            Some(second.clone())
+        );
+        // A neighbouring id that was never written must stay `None`.
+        assert!(super::dispute::get_dispute_resolution(&env, 3u64).is_none());
+    });
+}
+
+#[test]
+fn get_dispute_resolution_returns_latest_after_overwrite() {
+    let (env, contract_id, _client) = setup_with_id();
+    let initial = resolution(&env, DisputeOutcome::Upheld, 10, "first");
+    let updated = resolution(&env, DisputeOutcome::Rejected, 20, "second");
+    env.as_contract(&contract_id, || {
+        super::dispute::store_dispute_resolution(&env, 5u64, &initial);
+        super::dispute::store_dispute_resolution(&env, 5u64, &updated);
+
+        let stored = super::dispute::get_dispute_resolution(&env, 5u64).expect("resolution");
+        assert_eq!(stored, updated);
+        assert_eq!(stored.timestamp, 20);
+    });
+}
+
+// ════════════════════════════════════════════════════════════════════
 //  Adversarial coverage: dispute::set_revoked_periods
 //
 //  `set_revoked_periods` is the single raw writer for the per-business
