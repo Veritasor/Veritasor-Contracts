@@ -1647,3 +1647,5 @@ mod finalize_epoch_test;
 
 #[cfg(test)]
 mod restore_commit_adversarial_test;
+#[cfg(test)]
+mod restore_dry_run_test;
