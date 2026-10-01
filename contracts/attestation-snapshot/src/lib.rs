@@ -231,6 +231,12 @@ mod attestation_import {
 
 #[cfg(test)]
 mod test;
+/// Focused adversarial tests for `initialize`.
+#[cfg(test)]
+mod test_initialize;
+
+#[cfg(test)]
+mod last_restore_id_test;
 
 // ════════════════════════════════════════════════════════════════════
 //  Storage types
@@ -1259,6 +1265,387 @@ impl AttestationSnapshotContract {
 
 #[cfg(test)]
 mod snapshot_ttl_test;
+// ═════════════════════════════════════════════════════════════════════════════
+//  Adversarial coverage for `get_pending_restore`
+//
+//  `src/test.rs` exercises the dry-run / commit happy paths but never inspects
+//  the pending token directly.  This module pins the observable contract of the
+//  read-only query: when a token exists, which batch it is bound to, how long
+//  it lives, that it is namespaced per admin, that reading it is side-effect
+//  free, and exactly when the commit consumes it.
+// ═════════════════════════════════════════════════════════════════════════════
 
+#[cfg(test)]
+mod get_pending_restore_adversarial_tests {
+    extern crate std;
+
+    use super::*;
+    use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
+    use soroban_sdk::{vec, Address, Env, String};
+
+    fn setup() -> (Env, AttestationSnapshotContractClient<'static>, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AttestationSnapshotContract, ());
+        let client = AttestationSnapshotContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin, &None::<Address>);
+        (env, client, admin)
+    }
+
+    /// Anchor the clock so `recorded_at` is never "in the future".
+    fn anchor_clock(env: &Env, sequence: u32) {
+        env.ledger().set_sequence_number(sequence);
+        env.ledger().set_timestamp(5_000_000);
+    }
+
+    fn make_entry(env: &Env, business: &Address, period: &str, recorded_at: u64) -> RestoreEntry {
+        RestoreEntry {
+            business: business.clone(),
+            period: String::from_str(env, period),
+            record: SnapshotRecord {
+                period: String::from_str(env, period),
+                trailing_revenue: 100_000i128,
+                anomaly_count: 0,
+                attestation_count: 1,
+                recorded_at,
+            },
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            business_count: 1,
+        }
+    }
+
+    /// A batch that passes every dry-run invariant.
+    fn ready_batch(env: &Env, business: &Address, period: &str) -> Vec<RestoreEntry> {
+        vec![env, make_entry(env, business, period, 1_000_000)]
+    }
+
+    // ── absent by default ───────────────────────────────────────────────
+
+    #[test]
+    fn no_token_is_reported_before_any_dry_run() {
+        let (env, client, admin) = setup();
+        let stranger = Address::generate(&env);
+
+        assert!(client.get_pending_restore(&admin).is_none());
+        assert!(client.get_pending_restore(&stranger).is_none());
+        assert!(client.get_pending_restore(&client.get_admin()).is_none());
+    }
+
+    // ── a ready dry-run arms a token bound to the batch ─────────────────
+
+    #[test]
+    fn a_ready_dry_run_arms_a_token_bound_to_the_exact_batch() {
+        let (env, client, admin) = setup();
+        anchor_clock(&env, 100);
+        let business = Address::generate(&env);
+        let entries = ready_batch(&env, &business, "2026-01");
+
+        let report = client.restore_dry_run(&admin, &entries);
+        assert!(report.ready_to_commit);
+
+        let token = client
+            .get_pending_restore(&admin)
+            .expect("a ready dry-run must arm a commit token");
+
+        // The token must bind the batch the dry-run actually validated.
+        assert_eq!(
+            token.batch_hash,
+            AttestationSnapshotContract::compute_batch_hash(&env, &entries)
+        );
+        // ... and it must expire exactly at the reported deadline.
+        assert_eq!(token.expires_at_ledger, report.commit_deadline_ledger);
+        assert_eq!(token.expires_at_ledger, 100 + RESTORE_COMMIT_WINDOW_LEDGERS);
+        assert_eq!(report.entries_valid, 1);
+    }
+
+    #[test]
+    fn a_token_is_only_visible_to_the_admin_it_is_keyed_to() {
+        let (env, client, admin) = setup();
+        anchor_clock(&env, 100);
+        let business = Address::generate(&env);
+        let other = Address::generate(&env);
+        let writer = Address::generate(&env);
+        client.add_writer(&admin, &writer);
+
+        client.restore_dry_run(&admin, &ready_batch(&env, &business, "2026-01"));
+
+        assert!(client.get_pending_restore(&admin).is_some());
+        assert!(
+            client.get_pending_restore(&other).is_none(),
+            "an arbitrary address must never see the admin's pending token"
+        );
+        assert!(
+            client.get_pending_restore(&writer).is_none(),
+            "writer privileges do not grant visibility into the admin's token"
+        );
+        // Reading another key must not have disturbed the admin's token.
+        assert_eq!(
+            client.get_pending_restore(&admin).unwrap().expires_at_ledger,
+            100 + RESTORE_COMMIT_WINDOW_LEDGERS
+        );
+    }
+
+    // ── rejected dry-runs do not arm (or clobber) a token ───────────────
+
+    #[test]
+    fn a_rejected_dry_run_never_arms_a_token() {
+        let (env, client, admin) = setup();
+        anchor_clock(&env, 100);
+        let business = Address::generate(&env);
+
+        // `recorded_at` in the future is a dry-run violation.
+        let bad = vec![&env, make_entry(&env, &business, "2026-01", 9_999_999)];
+        let report = client.restore_dry_run(&admin, &bad);
+
+        assert!(!report.ready_to_commit);
+        assert_eq!(report.entries_valid, 0);
+        assert_eq!(report.commit_deadline_ledger, 0);
+        assert!(
+            client.get_pending_restore(&admin).is_none(),
+            "a dry-run with violations must not arm a commit"
+        );
+    }
+
+    #[test]
+    fn a_rejected_dry_run_does_not_clobber_an_armed_token() {
+        let (env, client, admin) = setup();
+        anchor_clock(&env, 100);
+        let business = Address::generate(&env);
+        let good = ready_batch(&env, &business, "2026-01");
+        client.restore_dry_run(&admin, &good);
+        let armed = client.get_pending_restore(&admin).expect("armed");
+
+        // Same business, duplicate (business, period) pair -> violation.
+        let bad = vec![
+            &env,
+            make_entry(&env, &business, "2026-02", 1_000_000),
+            make_entry(&env, &business, "2026-02", 1_000_000),
+        ];
+        let report = client.restore_dry_run(&admin, &bad);
+        assert!(!report.ready_to_commit);
+
+        let still_armed = client
+            .get_pending_restore(&admin)
+            .expect("a rejected dry-run must leave the previous token intact");
+        assert_eq!(still_armed.batch_hash, armed.batch_hash);
+        assert_eq!(still_armed.expires_at_ledger, armed.expires_at_ledger);
+    }
+
+    #[test]
+    fn a_second_ready_dry_run_replaces_the_previous_token() {
+        let (env, client, admin) = setup();
+        anchor_clock(&env, 100);
+        let business = Address::generate(&env);
+        let first = ready_batch(&env, &business, "2026-01");
+        let second = ready_batch(&env, &business, "2026-02");
+
+        client.restore_dry_run(&admin, &first);
+        let token_a = client.get_pending_restore(&admin).unwrap();
+
+        client.restore_dry_run(&admin, &second);
+        let token_b = client.get_pending_restore(&admin).unwrap();
+
+        assert_ne!(
+            token_a.batch_hash, token_b.batch_hash,
+            "the token must follow the most recent dry-run batch"
+        );
+        assert_eq!(
+            token_b.batch_hash,
+            AttestationSnapshotContract::compute_batch_hash(&env, &second)
+        );
+    }
+
+    // ── reading is side-effect free ─────────────────────────────────────
+
+    #[test]
+    fn reading_the_token_is_side_effect_free_and_non_consuming() {
+        let (env, client, admin) = setup();
+        anchor_clock(&env, 100);
+        let business = Address::generate(&env);
+        let entries = ready_batch(&env, &business, "2026-01");
+        client.restore_dry_run(&admin, &entries);
+
+        let before = env.events().all().len();
+        let first = client.get_pending_restore(&admin).unwrap();
+        for _ in 0..5 {
+            let again = client.get_pending_restore(&admin).expect("still armed");
+            assert_eq!(again.batch_hash, first.batch_hash);
+            assert_eq!(again.expires_at_ledger, first.expires_at_ledger);
+        }
+        assert_eq!(
+            env.events().all().len(),
+            before,
+            "a read-only query must not emit events"
+        );
+
+        // The reads must not have consumed the token.
+        client.restore_commit(&admin, &entries);
+        assert!(
+            client
+                .get_snapshot(&business, &String::from_str(&env, "2026-01"))
+                .is_some()
+        );
+        assert!(client.get_last_restore_id().is_some());
+    }
+
+    // ── consumption ─────────────────────────────────────────────────────
+
+    #[test]
+    fn a_successful_commit_consumes_the_token() {
+        let (env, client, admin) = setup();
+        anchor_clock(&env, 100);
+        let business = Address::generate(&env);
+        let entries = ready_batch(&env, &business, "2026-01");
+
+        client.restore_dry_run(&admin, &entries);
+        assert!(client.get_pending_restore(&admin).is_some());
+
+        client.restore_commit(&admin, &entries);
+
+        assert!(
+            client.get_pending_restore(&admin).is_none(),
+            "the token is one-shot and must be consumed by the commit"
+        );
+        assert_eq!(
+            client.get_last_restore_id().unwrap(),
+            AttestationSnapshotContract::compute_batch_hash(&env, &entries)
+        );
+    }
+
+    #[test]
+    fn a_token_that_expires_exactly_on_the_deadline_is_still_accepted() {
+        let (env, client, admin) = setup();
+        anchor_clock(&env, 100);
+        let business = Address::generate(&env);
+        let entries = ready_batch(&env, &business, "2026-01");
+        client.restore_dry_run(&admin, &entries);
+
+        let deadline = client.get_pending_restore(&admin).unwrap().expires_at_ledger;
+        env.ledger().set_sequence_number(deadline);
+
+        client.restore_commit(&admin, &entries);
+
+        assert!(client
+            .get_snapshot(&business, &String::from_str(&env, "2026-01"))
+            .is_some());
+        assert!(client.get_pending_restore(&admin).is_none());
+    }
+
+    #[test]
+    fn a_token_one_ledger_past_the_deadline_blocks_the_commit() {
+        let (env, client, admin) = setup();
+        anchor_clock(&env, 100);
+        let business = Address::generate(&env);
+        let entries = ready_batch(&env, &business, "2026-01");
+        client.restore_dry_run(&admin, &entries);
+
+        let deadline = client.get_pending_restore(&admin).unwrap().expires_at_ledger;
+        env.ledger().set_sequence_number(deadline + 1);
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.restore_commit(&admin, &entries);
+        }));
+
+        assert!(outcome.is_err(), "an expired token must block the commit");
+        assert!(
+            client
+                .get_snapshot(&business, &String::from_str(&env, "2026-01"))
+                .is_none(),
+            "nothing may be restored from an expired token"
+        );
+        assert!(client.get_last_restore_id().is_none());
+    }
+
+    #[test]
+    fn a_mismatched_batch_cannot_consume_the_token() {
+        let (env, client, admin) = setup();
+        anchor_clock(&env, 100);
+        let business = Address::generate(&env);
+        let entries = ready_batch(&env, &business, "2026-01");
+        client.restore_dry_run(&admin, &entries);
+        let armed = client.get_pending_restore(&admin).unwrap();
+
+        // Different batch, same schema version: the bound hash must reject it.
+        let tampered = vec![
+            &env,
+            make_entry(&env, &business, "2026-01", 1_000_000),
+            make_entry(&env, &business, "2026-03", 1_000_000),
+        ];
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.restore_commit(&admin, &tampered);
+        }));
+
+        assert!(outcome.is_err(), "the hash binding must reject a swapped batch");
+        assert!(client.get_last_restore_id().is_none());
+        assert!(client
+            .get_snapshot(&business, &String::from_str(&env, "2026-03"))
+            .is_none());
+
+        // A reverted commit must leave the token as it was: the admin can retry
+        // with the batch the dry-run actually validated.
+        let after = client
+            .get_pending_restore(&admin)
+            .expect("a reverted commit must not consume the pending token");
+        assert_eq!(after.batch_hash, armed.batch_hash);
+        assert_eq!(after.expires_at_ledger, armed.expires_at_ledger);
+
+        client.restore_commit(&admin, &entries);
+        assert!(client
+            .get_snapshot(&business, &String::from_str(&env, "2026-01"))
+            .is_some());
+        assert!(client.get_pending_restore(&admin).is_none());
+    }
+
+    #[test]
+    fn an_empty_batch_is_a_deterministic_boundary_for_the_token() {
+        let (env, client, admin) = setup();
+        anchor_clock(&env, 100);
+        let empty: Vec<RestoreEntry> = Vec::new(&env);
+
+        let report = client.restore_dry_run(&admin, &empty);
+        assert!(report.ready_to_commit);
+        assert_eq!(report.entries_checked, 0);
+        assert_eq!(report.entries_valid, 0);
+        assert_eq!(report.commit_deadline_ledger, 100 + RESTORE_COMMIT_WINDOW_LEDGERS);
+
+        let token = client
+            .get_pending_restore(&admin)
+            .expect("an empty batch has no violations, so it arms a token");
+        assert_eq!(
+            token.batch_hash,
+            AttestationSnapshotContract::compute_batch_hash(&env, &empty),
+            "the empty batch must have a well-defined fingerprint"
+        );
+    }
+
+    #[test]
+    fn unrelated_calls_do_not_disturb_the_pending_token() {
+        let (env, client, admin) = setup();
+        anchor_clock(&env, 100);
+        let business = Address::generate(&env);
+        client.restore_dry_run(&admin, &ready_batch(&env, &business, "2026-01"));
+        let armed = client.get_pending_restore(&admin).unwrap();
+
+        // Ordinary reads and a writer-role mutation must leave the token alone.
+        let writer = Address::generate(&env);
+        client.add_writer(&admin, &writer);
+        let _ = client.get_snapshot(&business, &String::from_str(&env, "2026-01"));
+        let _ = client.is_epoch_finalized(&String::from_str(&env, "2026-01"));
+        let _ = client.get_total_epoch_count();
+
+        let still_armed = client
+            .get_pending_restore(&admin)
+            .expect("unrelated calls must not clear the pending token");
+        assert_eq!(still_armed.batch_hash, armed.batch_hash);
+        assert_eq!(still_armed.expires_at_ledger, armed.expires_at_ledger);
+    }
+}
+
+#[cfg(test)]
+mod finalize_epoch_test;
+
+#[cfg(test)]
+mod restore_commit_adversarial_test;
 #[cfg(test)]
 mod attestation_contract_linkage_test;

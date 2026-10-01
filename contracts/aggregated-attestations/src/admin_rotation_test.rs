@@ -22,9 +22,9 @@ fn test_admin_rotation_success() {
     client.set_pending_admin(&admin1, &0u64, &admin2, &delay);
 
     // Should panic if activated too early
-    let res = std::panic::catch_unwind(|| {
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.activate_admin();
-    });
+    }));
     assert!(res.is_err());
 
     env.ledger().with_mut(|l| l.timestamp += delay + 1);
@@ -33,13 +33,13 @@ fn test_admin_rotation_success() {
     assert_eq!(client.get_admin(), admin2);
 
     // Verify admin1 no longer authorized (should fail to register portfolio)
-    let res = std::panic::catch_unwind(|| {
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.register_portfolio(
             &admin1,
             &1u64,
             &String::from_str(&env, "p1"),
             &Vec::new(&env),
         );
-    });
+    }));
     assert!(res.is_err());
 }
