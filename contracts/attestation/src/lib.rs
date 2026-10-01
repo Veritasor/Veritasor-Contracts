@@ -4365,3 +4365,5 @@ mod has_existing_dispute_test;
 /// Adversarial tests for `dispute::has_open_dispute` (issue #932).
 #[cfg(test)]
 mod has_open_dispute_test;
+#[cfg(test)]
+mod access_control_role_names_test;
