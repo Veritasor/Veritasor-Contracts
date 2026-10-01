@@ -613,3 +613,205 @@ fn emergency_pause_requires_two_distinct_keys() {
     // Distinct but not a multisig owner: rejected by the owner-set check.
     client.emergency_pause(&admin, &admin, &stranger, &2u64);
 }
+
+// ── Direct storage-helper coverage for the scheduled-pause timestamp ──
+//
+// The tests above reach `get_pending_pause_effective_at` only through
+// `schedule_pause`, which rejects any effective-at timestamp less than one hour
+// away. That leaves the storage helpers themselves — and the exact `>=`
+// comparison in `check_and_apply_pending_pause` — unexercised at the boundary.
+// These tests call the helpers directly, which is the only way to cover the
+// zero / u64::MAX timestamps and an effective-at equal to the current ledger
+// time.
+
+/// Run an internal storage helper inside the contract context. SDK 22 requires
+/// storage access to go through `env.as_contract` when called from a test.
+fn in_contract<R>(env: &Env, contract: &Address, f: impl FnOnce(&Env) -> R) -> R {
+    env.as_contract(contract, || f(env))
+}
+
+/// Read the pending scheduled-pause timestamp through the internal helper.
+fn pending_at(env: &Env, client: &AttestationContractClient) -> Option<u64> {
+    in_contract(env, &client.address, |e| {
+        access_control::get_pending_pause_effective_at(e)
+    })
+}
+
+#[test]
+fn pending_pause_helper_defaults_to_none_without_a_schedule() {
+    let (env, client, _admin) = setup();
+
+    assert_eq!(pending_at(&env, &client), None);
+}
+
+#[test]
+fn pending_pause_helper_round_trips_without_pausing_on_its_own() {
+    let (env, client, _admin) = setup();
+
+    in_contract(&env, &client.address, |e| {
+        access_control::set_pending_pause_effective_at(e, 1_700_000_000);
+    });
+
+    assert_eq!(pending_at(&env, &client), Some(1_700_000_000));
+    assert!(!client.is_paused(), "scheduling alone must not pause");
+}
+
+#[test]
+fn pending_pause_helper_overwrites_the_previous_timestamp() {
+    let (env, client, _admin) = setup();
+
+    in_contract(&env, &client.address, |e| {
+        access_control::set_pending_pause_effective_at(e, 100);
+        access_control::set_pending_pause_effective_at(e, 200);
+    });
+
+    assert_eq!(pending_at(&env, &client), Some(200));
+}
+
+#[test]
+fn pending_pause_helper_preserves_boundary_values() {
+    let (env, client, _admin) = setup();
+
+    in_contract(&env, &client.address, |e| {
+        access_control::set_pending_pause_effective_at(e, 0);
+    });
+    assert_eq!(pending_at(&env, &client), Some(0));
+
+    in_contract(&env, &client.address, |e| {
+        access_control::set_pending_pause_effective_at(e, u64::MAX);
+    });
+    assert_eq!(pending_at(&env, &client), Some(u64::MAX));
+}
+
+#[test]
+fn clear_pending_pause_helper_removes_the_timestamp() {
+    let (env, client, _admin) = setup();
+
+    in_contract(&env, &client.address, |e| {
+        access_control::set_pending_pause_effective_at(e, 1_700_000_000);
+        access_control::clear_pending_pause(e);
+    });
+
+    assert_eq!(pending_at(&env, &client), None);
+    assert!(!client.is_paused());
+}
+
+#[test]
+fn clear_pending_pause_helper_without_a_schedule_is_a_noop() {
+    let (env, client, _admin) = setup();
+
+    in_contract(&env, &client.address, |e| {
+        access_control::clear_pending_pause(e);
+    });
+
+    assert_eq!(pending_at(&env, &client), None);
+}
+
+#[test]
+fn check_and_apply_leaves_state_untouched_before_effective_at() {
+    let (env, client, _admin) = setup();
+    env.ledger().set_timestamp(999);
+
+    in_contract(&env, &client.address, |e| {
+        access_control::set_pending_pause_effective_at(e, 1_000);
+        access_control::check_and_apply_pending_pause(e);
+    });
+
+    assert_eq!(pending_at(&env, &client), Some(1_000));
+    assert!(!client.is_paused());
+}
+
+#[test]
+fn check_and_apply_pauses_exactly_at_the_effective_boundary() {
+    let (env, client, _admin) = setup();
+    env.ledger().set_timestamp(1_000);
+
+    in_contract(&env, &client.address, |e| {
+        access_control::set_pending_pause_effective_at(e, 1_000);
+        access_control::check_and_apply_pending_pause(e);
+    });
+
+    assert!(client.is_paused());
+    assert_eq!(pending_at(&env, &client), None);
+}
+
+#[test]
+fn check_and_apply_pauses_after_the_effective_boundary() {
+    let (env, client, _admin) = setup();
+    env.ledger().set_timestamp(1_001);
+
+    in_contract(&env, &client.address, |e| {
+        access_control::set_pending_pause_effective_at(e, 1_000);
+        access_control::check_and_apply_pending_pause(e);
+    });
+
+    assert!(client.is_paused());
+    assert_eq!(pending_at(&env, &client), None);
+}
+
+#[test]
+fn check_and_apply_without_a_schedule_does_not_pause() {
+    let (env, client, _admin) = setup();
+    env.ledger().set_timestamp(1_000);
+
+    in_contract(&env, &client.address, |e| {
+        access_control::check_and_apply_pending_pause(e);
+    });
+
+    assert!(!client.is_paused());
+    assert_eq!(pending_at(&env, &client), None);
+}
+
+#[test]
+fn check_and_apply_does_not_fire_for_a_far_future_timestamp() {
+    let (env, client, _admin) = setup();
+    env.ledger().set_timestamp(0);
+
+    in_contract(&env, &client.address, |e| {
+        access_control::set_pending_pause_effective_at(e, u64::MAX);
+        access_control::check_and_apply_pending_pause(e);
+    });
+
+    assert!(!client.is_paused());
+    assert_eq!(pending_at(&env, &client), Some(u64::MAX));
+}
+
+#[test]
+fn check_and_apply_fires_for_a_zero_effective_at() {
+    let (env, client, _admin) = setup();
+    env.ledger().set_timestamp(0);
+
+    in_contract(&env, &client.address, |e| {
+        access_control::set_pending_pause_effective_at(e, 0);
+        access_control::check_and_apply_pending_pause(e);
+    });
+
+    assert!(client.is_paused());
+    assert_eq!(pending_at(&env, &client), None);
+}
+
+#[test]
+fn require_not_paused_ignores_a_future_scheduled_pause() {
+    let (env, client, _admin) = setup();
+    env.ledger().set_timestamp(1_000);
+
+    in_contract(&env, &client.address, |e| {
+        access_control::set_pending_pause_effective_at(e, 1_001);
+        access_control::require_not_paused(e);
+    });
+
+    assert!(!client.is_paused());
+    assert_eq!(pending_at(&env, &client), Some(1_001));
+}
+
+#[test]
+#[should_panic(expected = "contract is paused")]
+fn require_not_paused_rejects_an_overdue_scheduled_pause() {
+    let (env, client, _admin) = setup();
+    env.ledger().set_timestamp(1_000);
+
+    in_contract(&env, &client.address, |e| {
+        access_control::set_pending_pause_effective_at(e, 1_000);
+        access_control::require_not_paused(e);
+    });
+}

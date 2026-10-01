@@ -102,7 +102,8 @@ fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. Extract members: lines of "kind|TypeName|member" in source order.
-#    A member is "name:Type" for a struct field or a variant name for an enum.
+#    A member is "name:Type" for a struct field or a variant with its optional
+#    numeric discriminant for an enum.
 # ─────────────────────────────────────────────────────────────────────────────
 extract_members() {
     local src="$1"
@@ -180,7 +181,7 @@ extract_members() {
                 print "unparseable struct member in " name ": " t > "/dev/stderr"
                 exit 2
             }
-            if (t ~ /^[A-Za-z0-9_]+[ \t]*,?$/) {
+            if (t ~ /^[A-Za-z0-9_]+([ \t]*=[ \t]*[0-9]+)?[ \t]*,?$/) {
                 v = t; sub(/,[ \t]*$/, "", v); gsub(/[ \t]+/, "", v)
                 printf "enum|%s|%s\n", name, v
                 members++
@@ -285,6 +286,7 @@ read_snapshot() {
     : > "$block_out"
     local in_block=false has_content=false
     while IFS= read -r line; do
+        line="${line%$'\r'}"
         case "$line" in
             EVENT_SCHEMA_VERSION:*)
                 V_SNAP="${line#EVENT_SCHEMA_VERSION: }"
