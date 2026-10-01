@@ -7,6 +7,7 @@
 #![cfg(test)]
 
 use std::format;
+use std::vec::Vec as StdVec;
 
 use super::*;
 use proptest::prelude::*;
