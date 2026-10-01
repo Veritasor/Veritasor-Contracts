@@ -7,6 +7,8 @@
 
 extern crate std;
 
+use std::format;
+
 use super::*;
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
 use soroban_sdk::{vec, Address, Env, String, Symbol, TryFromVal, Vec};
@@ -644,6 +646,56 @@ fn test_set_attestation_contract_non_admin_panics() {
     client.set_attestation_contract(&other, &None::<Address>);
 }
 
+#[test]
+fn test_set_attestation_contract_state_unchanged_on_unauthorized() {
+    let (env, client, admin) = setup_snapshot_only();
+    let att_id = Address::generate(&env);
+    client.set_attestation_contract(&admin, &Some(att_id.clone()));
+    assert_eq!(client.get_attestation_contract(), Some(att_id.clone()));
+
+    let other = Address::generate(&env);
+
+    // Call should fail with None
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.set_attestation_contract(&other, &None::<Address>);
+    }));
+    assert!(res.is_err());
+
+    // State should be unchanged
+    assert_eq!(client.get_attestation_contract(), Some(att_id.clone()));
+
+    // Try setting to a different Some
+    let other_att_id = Address::generate(&env);
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.set_attestation_contract(&other, &Some(other_att_id));
+    }));
+    assert!(res.is_err());
+
+    // State should still be unchanged
+    assert_eq!(client.get_attestation_contract(), Some(att_id));
+}
+
+#[test]
+fn test_set_attestation_contract_no_op_when_already_none() {
+    let (env, client, admin) = setup_snapshot_only();
+    assert!(client.get_attestation_contract().is_none());
+
+    client.set_attestation_contract(&admin, &None::<Address>);
+    assert!(client.get_attestation_contract().is_none());
+}
+
+#[test]
+fn test_set_attestation_contract_no_op_when_already_same() {
+    let (env, client, admin) = setup_snapshot_only();
+    let att_id = Address::generate(&env);
+
+    client.set_attestation_contract(&admin, &Some(att_id.clone()));
+    assert_eq!(client.get_attestation_contract(), Some(att_id.clone()));
+
+    client.set_attestation_contract(&admin, &Some(att_id.clone()));
+    assert_eq!(client.get_attestation_contract(), Some(att_id));
+}
+
 // ── Restore version checking ───────────────────────────────────────────
 
 #[test]
@@ -873,4 +925,57 @@ fn test_restore_version_mismatch_event_emitted() {
     assert_eq!(evt.batch_version, 999);
     assert_eq!(evt.expected_version, SNAPSHOT_SCHEMA_VERSION);
     assert_eq!(evt.detected_at, 5_000_000);
+}
+
+// ── get_max_business_periods (#875) ──────────────────────────────────
+
+/// The getter reports the compiled-in cap exactly and is stable across reads.
+#[test]
+fn get_max_business_periods_reports_compiled_cap() {
+    let (_env, client, _admin) = setup_snapshot_only();
+
+    assert_eq!(client.get_max_business_periods(), MAX_BUSINESS_PERIODS);
+    assert_eq!(MAX_BUSINESS_PERIODS, 512);
+
+    for _ in 0..4 {
+        assert_eq!(client.get_max_business_periods(), 512u32);
+    }
+}
+
+/// The getter is a pure read and must not create or mutate any snapshot state.
+#[test]
+fn get_max_business_periods_is_a_pure_read() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-01");
+    client.record_snapshot(&admin, &business, &period, &1i128, &0u32, &1u64);
+
+    let before = client.get_snapshots_for_business(&business);
+    let _ = client.get_max_business_periods();
+    let _ = client.get_max_business_periods();
+    let after = client.get_snapshots_for_business(&business);
+
+    assert_eq!(before.len(), 1);
+    assert_eq!(after.len(), 1);
+    assert_eq!(before.get(0).unwrap().period, after.get(0).unwrap().period);
+}
+
+/// The reported value is exactly the enforced per-business period boundary:
+/// `cap` distinct periods are accepted and the next one is rejected.
+#[test]
+fn get_max_business_periods_matches_enforced_boundary() {
+    let (env, client, admin) = setup_snapshot_only();
+    let business = Address::generate(&env);
+    let cap = client.get_max_business_periods();
+    assert_eq!(cap, MAX_BUSINESS_PERIODS);
+
+    for i in 0..cap {
+        let period = String::from_str(&env, &format!("p{:05}", i));
+        client.record_snapshot(&admin, &business, &period, &1i128, &0u32, &1u64);
+    }
+    assert_eq!(client.get_snapshots_for_business(&business).len(), cap);
+
+    let overflow = String::from_str(&env, &format!("p{:05}", cap));
+    let res = client.try_record_snapshot(&admin, &business, &overflow, &1i128, &0u32, &1u64);
+    assert!(res.is_err(), "recording past the reported cap must fail");
 }
