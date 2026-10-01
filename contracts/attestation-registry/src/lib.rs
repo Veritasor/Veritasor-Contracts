@@ -522,3 +522,5 @@ impl AttestationRegistry {
 
 #[cfg(test)]
 mod upgrade_adversarial_test;
+mod get_current_implementation_test;
+#[cfg(test)]
