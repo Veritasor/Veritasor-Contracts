@@ -19,26 +19,36 @@
 
 use super::dispute::{DisputeStatus, DisputeType, OptionalResolution};
 use super::*;
+use crate::access_control::ROLE_BUSINESS;
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{Address, BytesN, Env, String};
+use soroban_sdk::{Address, BytesN, Env, String, Symbol, Vec};
 
 /// Helper: register the contract, mock auths, and initialize.
-fn setup<'a>(env: &'a Env) -> AttestationContractClient<'a> {
+fn setup<'a>(env: &'a Env) -> (AttestationContractClient<'a>, Address) {
     env.mock_all_auths();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(env, &contract_id);
     let admin = Address::generate(env);
     client.initialize(&admin, &0u64);
-    client
+    (client, admin)
 }
 
 /// Submit a minimal, valid attestation so a dispute can be opened against it.
 fn submit_attestation(
     client: &AttestationContractClient,
     env: &Env,
+    admin: &Address,
     business: &Address,
     period: &str,
 ) {
+    let _ = client.try_grant_role(admin, business, &ROLE_BUSINESS);
+    let _ = client.try_register_business(
+        business,
+        &BytesN::from_array(env, &[1u8; 32]),
+        &Symbol::new(env, "US"),
+        &Vec::new(env),
+    );
+    let _ = client.try_approve_business(admin, business);
     let root = BytesN::from_array(env, &[7u8; 32]);
     client.submit_attestation(
         business,
@@ -77,7 +87,7 @@ fn open_dispute(
 #[test]
 fn test_get_dispute_unknown_id_returns_none() {
     let env = Env::default();
-    let client = setup(&env);
+    let (client, _admin) = setup(&env);
 
     // Id 0 is never allocated (`generate_dispute_id` is 1-based) and any
     // unbounded id is simply absent. None of these may panic.
@@ -93,11 +103,11 @@ fn test_get_dispute_unknown_id_returns_none() {
 #[test]
 fn test_get_dispute_round_trips_full_record() {
     let env = Env::default();
-    let client = setup(&env);
+    let (client, admin) = setup(&env);
 
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-02");
-    submit_attestation(&client, &env, &business, "2026-02");
+    submit_attestation(&client, &env, &admin, &business, "2026-02");
 
     let challenger = Address::generate(&env);
     // Multi-byte UTF-8: the stored record must survive encoding unchanged.
@@ -132,12 +142,12 @@ fn test_get_dispute_round_trips_full_record() {
 #[test]
 fn test_get_dispute_is_isolated_per_id() {
     let env = Env::default();
-    let client = setup(&env);
+    let (client, admin) = setup(&env);
 
     let business_a = Address::generate(&env);
     let business_b = Address::generate(&env);
-    submit_attestation(&client, &env, &business_a, "2026-02");
-    submit_attestation(&client, &env, &business_b, "2026-02");
+    submit_attestation(&client, &env, &admin, &business_a, "2026-02");
+    submit_attestation(&client, &env, &admin, &business_b, "2026-02");
 
     let challenger_a = Address::generate(&env);
     let challenger_b = Address::generate(&env);
@@ -170,10 +180,10 @@ fn test_get_dispute_is_isolated_per_id() {
 #[test]
 fn test_get_dispute_unchanged_after_rejected_open() {
     let env = Env::default();
-    let client = setup(&env);
+    let (client, admin) = setup(&env);
 
     let business = Address::generate(&env);
-    submit_attestation(&client, &env, &business, "2026-02");
+    submit_attestation(&client, &env, &admin, &business, "2026-02");
 
     let challenger = Address::generate(&env);
     let dispute_id = open_dispute(&client, &env, &challenger, &business, "2026-02", "original");
@@ -198,10 +208,10 @@ fn test_get_dispute_unchanged_after_rejected_open() {
 #[test]
 fn test_get_dispute_unchanged_after_failed_witness_verification() {
     let env = Env::default();
-    let client = setup(&env);
+    let (client, admin) = setup(&env);
 
     let business = Address::generate(&env);
-    submit_attestation(&client, &env, &business, "2026-02");
+    submit_attestation(&client, &env, &admin, &business, "2026-02");
 
     let challenger = Address::generate(&env);
     let dispute_id = open_dispute(&client, &env, &challenger, &business, "2026-02", "evidence");
@@ -229,7 +239,7 @@ fn test_get_dispute_unchanged_after_failed_witness_verification() {
 #[test]
 fn test_get_dispute_reads_and_failed_open_do_not_consume_ids() {
     let env = Env::default();
-    let client = setup(&env);
+    let (client, admin) = setup(&env);
 
     // A failed `open_dispute` (no attestation for this pair) must not allocate
     // a dispute id — otherwise ids would drift and indexers would see gaps.
@@ -254,7 +264,7 @@ fn test_get_dispute_reads_and_failed_open_do_not_consume_ids() {
 
     // The first real dispute therefore receives id 1.
     let business = Address::generate(&env);
-    submit_attestation(&client, &env, &business, "2026-02");
+    submit_attestation(&client, &env, &admin, &business, "2026-02");
     let first_id = open_dispute(&client, &env, &challenger, &business, "2026-02", "first");
     assert_eq!(first_id, 1u64);
 
@@ -266,7 +276,7 @@ fn test_get_dispute_reads_and_failed_open_do_not_consume_ids() {
     }
 
     let other_business = Address::generate(&env);
-    submit_attestation(&client, &env, &other_business, "2026-02");
+    submit_attestation(&client, &env, &admin, &other_business, "2026-02");
     let second_challenger = Address::generate(&env);
     let second_id = open_dispute(
         &client,

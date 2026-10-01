@@ -179,14 +179,6 @@ pub const TOPIC_BACKFILL_CHECKPOINT: Symbol = symbol_short!("bkf_chk");
 pub const TOPIC_ARCHIVAL_COMPACTED: Symbol = symbol_short!("arc_cmp");
 /// Topic: reputation gating check performed
 pub const TOPIC_REPUTATION_GATE_CHECK: Symbol = symbol_short!("rep_gat");
-/// Topic: permit cancelled
-pub const TOPIC_PERMIT_CANCELLED: Symbol = symbol_short!("perm_canc");
-/// Topic: relayer gas reported
-pub const TOPIC_RELAYER_GAS_REPORTED: Symbol = symbol_short!("rl_gas");
-/// Topic: pause scheduled
-pub const TOPIC_PAUSE_SCHEDULED: Symbol = symbol_short!("p_sch");
-/// Topic: pause scheduled cancelled
-pub const TOPIC_PAUSE_SCHEDULED_CANCELLED: Symbol = symbol_short!("p_canc");
 /// Topic: a slashing condition was triggered against an attestor
 pub const TOPIC_SLASH_TRIGGERED: Symbol = symbol_short!("sl_trg");
 /// Topic: an admin proposed rebinding the attestor-staking contract
@@ -872,25 +864,20 @@ pub struct DisputeRolledBackEvent {
 pub enum SlashingCondition {
     /// The attestor submitted a duplicate attestation for a business+period
     /// that already has an active (non-revoked) attestation.
-    DoubleSubmission,
+    DoubleSubmission = 1,
     /// The attestor resubmitted an attestation for a period that was revoked.
-    RevokedResubmit,
+    RevokedResubmit = 2,
     /// The attestor attempted to reuse an expired attestation as if it were
     /// still valid (expiry-reuse).
-    ExpiredReuse,
+    ExpiredReuse = 3,
     /// A dispute against an attestor's attestation was resolved as Upheld.
-    DisputeUpheld,
+    DisputeUpheld = 4,
 }
 
 impl SlashingCondition {
     /// Stable numeric code for indexers and dashboards.
     pub fn code(&self) -> u32 {
-        match self {
-            SlashingCondition::DoubleSubmission => 1,
-            SlashingCondition::RevokedResubmit => 2,
-            SlashingCondition::ExpiredReuse => 3,
-            SlashingCondition::DisputeUpheld => 4,
-        }
+        *self as u32
     }
 }
 
@@ -2509,48 +2496,6 @@ pub fn emit_reputation_gate_check(
 // ════════════════════════════════════════════════════════════════════
 
 // ── Analytics rotation ─────────────────────────────────────────────
-
-// ── Flat fee collector rotation ────────────────────────────────────
-
-/// Emit a `CollectorRotationProposed` event.
-///
-/// Publishes `(cr_prop,)` → `CollectorRotationProposedEvent`.
-pub fn emit_collector_rotation_proposed(
-    env: &Env,
-    old_collector: &Address,
-    new_collector: &Address,
-    token: &Address,
-    escrowed_amount: i128,
-) {
-    let event = CollectorRotationProposedEvent {
-        old_collector: old_collector.clone(),
-        new_collector: new_collector.clone(),
-        token: token.clone(),
-        escrowed_amount,
-    };
-    env.events()
-        .publish((TOPIC_COLLECTOR_ROTATION_PROPOSED,), event);
-}
-
-/// Emit a `CollectorRotationAccepted` event.
-///
-/// Publishes `(cr_acc,)` → `CollectorRotationAcceptedEvent`.
-pub fn emit_collector_rotation_accepted(
-    env: &Env,
-    old_collector: &Address,
-    new_collector: &Address,
-    token: &Address,
-    escrowed_amount: i128,
-) {
-    let event = CollectorRotationAcceptedEvent {
-        old_collector: old_collector.clone(),
-        new_collector: new_collector.clone(),
-        token: token.clone(),
-        escrowed_amount,
-    };
-    env.events()
-        .publish((TOPIC_COLLECTOR_ROTATION_ACCEPTED,), event);
-}
 
 // ── DAO controller rotation ────────────────────────────────────────
 

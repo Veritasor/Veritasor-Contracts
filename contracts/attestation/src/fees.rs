@@ -49,6 +49,15 @@ pub struct CollectorRotationProposal {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DaoRotationProposal {
+    /// Current DAO address proposing the rotation.
+    pub old_dao: Address,
+    /// Proposed new DAO address.
+    pub new_dao: Address,
+}
+
+#[contracttype]
 #[derive(Clone)]
 pub enum FlatFeeDataKey {
     /// Core flat fee configuration (`FlatFeeConfig`).

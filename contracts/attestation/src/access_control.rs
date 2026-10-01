@@ -54,7 +54,6 @@ use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 use crate::dispute;
 use crate::events;
-use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 /// Role identifiers as bit flags for efficient storage
 /// SECURITY: Only the first 4 bits are valid (0b1111 = 0xF)
