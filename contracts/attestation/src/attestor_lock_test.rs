@@ -5,7 +5,7 @@ use super::*;
 use crate::access_control::{ROLE_ATTESTOR, ROLE_BUSINESS};
 use crate::dispute::{DisputeOutcome, DisputeType};
 use soroban_sdk::testutils::{Address as _, Events, Ledger};
-use soroban_sdk::{Address, BytesN, Env, String};
+use soroban_sdk::{Address, BytesN, Env, String, Symbol, Vec};
 
 fn setup() -> (Env, AttestationContractClient<'static>, Address, Address) {
     let env = Env::default();
@@ -15,6 +15,17 @@ fn setup() -> (Env, AttestationContractClient<'static>, Address, Address) {
     let admin = Address::generate(&env);
     client.initialize(&admin, &0u64);
     (env, client, admin, contract_id)
+}
+
+fn register_business(client: &AttestationContractClient, admin: &Address, business: &Address) {
+    client.grant_role(admin, business, &ROLE_BUSINESS);
+    client.register_business(
+        business,
+        &BytesN::from_array(&client.env, &[1u8; 32]),
+        &Symbol::new(&client.env, "US"),
+        &Vec::new(&client.env),
+    );
+    client.approve_business(admin, business);
 }
 
 fn with_contract<F, R>(env: &Env, contract_id: &Address, f: F) -> R
@@ -176,7 +187,7 @@ fn test_open_dispute_no_lock_when_no_attestor_recorded() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
-    client.grant_role(&admin, &business, &ROLE_BUSINESS);
+    register_business(&client, &admin, &business);
 
     client.submit_attestation(
         &business,
@@ -242,7 +253,7 @@ fn test_business_submission_not_affected_by_attestor_lock() {
     client.grant_role(&admin, &attestor, &ROLE_ATTESTOR);
 
     let business = Address::generate(&env);
-    client.grant_role(&admin, &business, &ROLE_BUSINESS);
+    register_business(&client, &admin, &business);
 
     let attestor_period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);

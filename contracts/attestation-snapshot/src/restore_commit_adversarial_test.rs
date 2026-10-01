@@ -273,12 +273,6 @@ fn test_restore_commit_business_count_mismatch_aborts_before_any_write() {
     }));
     assert!(result.is_err(), "expected business_count mismatch to panic");
 
-    // Nothing from the batch should be written — not even the valid entry.
-    let period = String::from_str(&env, "2026-01");
-    assert!(client.get_snapshot(&business_a, &period).is_none());
-    assert!(client.get_snapshot(&business_b, &period).is_none());
-    assert!(client.get_last_restore_id().is_none());
-
     // The RestoreAbortedEvent should name the offending business and counts.
     let events = env.events().all();
     let aborted: std::vec::Vec<_> = events
@@ -298,6 +292,12 @@ fn test_restore_commit_business_count_mismatch_aborts_before_any_write() {
     assert_eq!(aborted[0].business, business_a);
     assert_eq!(aborted[0].declared_count, 2);
     assert_eq!(aborted[0].actual_count, 1);
+
+    // Nothing from the batch should be written — not even the valid entry.
+    let period = String::from_str(&env, "2026-01");
+    assert!(client.get_snapshot(&business_a, &period).is_none());
+    assert!(client.get_snapshot(&business_b, &period).is_none());
+    assert!(client.get_last_restore_id().is_none());
 }
 
 // ── Finalized-epoch skip ──────────────────────────────────────────────────

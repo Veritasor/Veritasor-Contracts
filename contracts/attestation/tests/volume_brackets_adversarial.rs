@@ -71,7 +71,29 @@ fn balance(env: &Env, token_addr: &Address, who: &Address) -> i128 {
     TokenClient::new(env, token_addr).balance(who)
 }
 
-fn submit(client: &AttestationContractClient, env: &Env, business: &Address, index: u32) {
+fn register_business(client: &AttestationContractClient, admin: &Address, business: &Address) {
+    let _ = client.try_grant_role(
+        admin,
+        business,
+        &veritasor_attestation::access_control::ROLE_BUSINESS,
+    );
+    let _ = client.try_register_business(
+        business,
+        &BytesN::from_array(&client.env, &[1u8; 32]),
+        &soroban_sdk::Symbol::new(&client.env, "US"),
+        &soroban_sdk::Vec::new(&client.env),
+    );
+    let _ = client.try_approve_business(admin, business);
+}
+
+fn submit(
+    client: &AttestationContractClient,
+    env: &Env,
+    admin: &Address,
+    business: &Address,
+    index: u32,
+) {
+    register_business(client, admin, business);
     let period = String::from_str(env, &std::format!("P-{index:04}"));
     let root = BytesN::from_array(env, &[index as u8; 32]);
     client.submit_attestation(
@@ -148,7 +170,7 @@ fn test_set_volume_brackets_rejected_length_mismatch_leaves_state_unchanged() {
     mint(&t.env, &t.token_addr, &business, 100_000_000);
     assert_eq!(t.client.get_volume_discount(&business), 0);
     for i in 1..=5 {
-        submit(&t.client, &t.env, &business, i);
+        submit(&t.client, &t.env, &t.admin, &business, i);
     }
     assert_eq!(t.client.get_business_count(&business), 5);
     assert_eq!(t.client.get_volume_discount(&business), 500);
@@ -218,7 +240,7 @@ fn test_set_volume_brackets_rejection_on_unset_state_keeps_empty() {
     let business = Address::generate(&t.env);
     mint(&t.env, &t.token_addr, &business, 100_000_000);
     for i in 1..=6 {
-        submit(&t.client, &t.env, &business, i);
+        submit(&t.client, &t.env, &t.admin, &business, i);
     }
     assert_eq!(t.client.get_business_count(&business), 6);
     assert_eq!(t.client.get_volume_discount(&business), 0);
@@ -270,17 +292,17 @@ fn test_set_volume_brackets_discounts_may_decrease_with_higher_threshold() {
 
     assert_eq!(t.client.get_volume_discount(&business), 0);
     for i in 1..=4 {
-        submit(&t.client, &t.env, &business, i);
+        submit(&t.client, &t.env, &t.admin, &business, i);
     }
     assert_eq!(t.client.get_business_count(&business), 4);
     assert_eq!(t.client.get_volume_discount(&business), 0);
 
-    submit(&t.client, &t.env, &business, 5);
+    submit(&t.client, &t.env, &t.admin, &business, 5);
     assert_eq!(t.client.get_volume_discount(&business), 2_000);
     assert_eq!(t.client.get_fee_quote(&business), 800_000);
 
     for i in 6..=10 {
-        submit(&t.client, &t.env, &business, i);
+        submit(&t.client, &t.env, &t.admin, &business, i);
     }
     assert_eq!(t.client.get_business_count(&business), 10);
     assert_eq!(t.client.get_volume_discount(&business), 500);
@@ -347,7 +369,7 @@ fn test_set_volume_brackets_empty_vectors_clear_previous_configuration() {
     let business = Address::generate(&t.env);
     mint(&t.env, &t.token_addr, &business, 100_000_000);
     for i in 1..=11 {
-        submit(&t.client, &t.env, &business, i);
+        submit(&t.client, &t.env, &t.admin, &business, i);
     }
     assert_eq!(t.client.get_business_count(&business), 11);
     assert_eq!(t.client.get_volume_discount(&business), 0);
@@ -374,7 +396,7 @@ fn test_set_volume_brackets_extreme_threshold_bounds_are_deterministic() {
     // count = 0 already satisfies the 0-threshold bracket.
     assert_eq!(t.client.get_volume_discount(&business), 100);
 
-    submit(&t.client, &t.env, &business, 1);
+    submit(&t.client, &t.env, &t.admin, &business, 1);
     assert_eq!(t.client.get_business_count(&business), 1);
     // The u64::MAX bracket is unreachable at any realistic count, so the
     // 10_000 bps discount must not apply here.

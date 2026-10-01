@@ -38,8 +38,8 @@ Note: Cost tracking shows 0 in test environment (expected for simple operations)
 # Update these values after intentional performance changes by running:
 #   cargo test bench_submit_attestation_no_fee -- --nocapture
 # and copying the printed CPU/memory figures below.
-single_cpu_baseline: 35750
-single_mem_baseline: 5648
+single_cpu_baseline: 150435
+single_mem_baseline: 14087
 #
 # Sample output from bench_batch_vs_single_profiling
 # (values are representative; actual figures depend on the host environment)

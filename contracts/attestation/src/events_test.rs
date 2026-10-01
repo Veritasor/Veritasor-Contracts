@@ -1377,6 +1377,7 @@ fn test_attestation_submitted_timestamps_are_monotonic_per_topic() {
     let ledger_timestamps: [u64; 5] = [100, 100, 250, 400, 400];
     let start = env.events().all().len();
 
+    let start = env.events().all().len();
     let mut payload_timestamps: std::vec::Vec<u64> = std::vec::Vec::new();
     for (i, business) in businesses.iter().enumerate() {
         advance_ledger_to(&env, ledger_timestamps[i]);
@@ -1533,6 +1534,7 @@ fn test_attestation_revoked_and_proof_hash_updated_preserve_call_order() {
 
     let start = env.events().all().len();
     let rev_ledger_timestamps: [u64; 4] = [500, 500, 650, 800];
+    let start = env.events().all().len();
     let mut revoked_periods: std::vec::Vec<String> = std::vec::Vec::new();
     for (i, period) in periods.iter().enumerate() {
         advance_ledger_to(&env, rev_ledger_timestamps[i]);
@@ -1584,6 +1586,7 @@ fn test_attestation_revoked_and_proof_hash_updated_preserve_call_order() {
     let ph_ledger_timestamps: [u64; 3] = [1100, 1100, 1200];
     let ph_start = env.events().all().len();
 
+    let ph_start = env.events().all().len();
     let mut updated_periods: std::vec::Vec<String> = std::vec::Vec::new();
     for (i, period) in ph_periods.iter().enumerate() {
         advance_ledger_to(&env, ph_ledger_timestamps[i]);
@@ -1591,7 +1594,11 @@ fn test_attestation_revoked_and_proof_hash_updated_preserve_call_order() {
     }
     let ph_end = env.events().all().len();
 
-    assert_eq!(ph_end - ph_start, ph_periods.len() as u32);
+    assert_eq!(
+        (ph_end - ph_start) as usize,
+        ph_periods.len(),
+        "expected exactly one ph_upd event per proof hash update"
+    );
     let all_events2 = env.events().all();
     let mut updated_periods: std::vec::Vec<String> = std::vec::Vec::new();
     for i in ph_start..ph_end {

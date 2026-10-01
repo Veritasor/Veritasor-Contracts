@@ -1598,6 +1598,42 @@ pub fn emit_flat_fee_config_changed(
     env.events().publish((TOPIC_FLAT_FEE_CONFIG,), event);
 }
 
+/// Emit a `CollectorRotationProposed` event.
+pub fn emit_collector_rotation_proposed(
+    env: &Env,
+    old_collector: &Address,
+    new_collector: &Address,
+    token: &Address,
+    escrowed_amount: i128,
+) {
+    let event = CollectorRotationProposedEvent {
+        old_collector: old_collector.clone(),
+        new_collector: new_collector.clone(),
+        token: token.clone(),
+        escrowed_amount,
+    };
+    env.events()
+        .publish((TOPIC_COLLECTOR_ROTATION_PROPOSED,), event);
+}
+
+/// Emit a `CollectorRotationAccepted` event.
+pub fn emit_collector_rotation_accepted(
+    env: &Env,
+    old_collector: &Address,
+    new_collector: &Address,
+    token: &Address,
+    escrowed_amount: i128,
+) {
+    let event = CollectorRotationAcceptedEvent {
+        old_collector: old_collector.clone(),
+        new_collector: new_collector.clone(),
+        token: token.clone(),
+        escrowed_amount,
+    };
+    env.events()
+        .publish((TOPIC_COLLECTOR_ROTATION_ACCEPTED,), event);
+}
+
 /// Emit a `FeeConfigProposed` event.
 ///
 /// Call this after a fee configuration change has been stored in the
@@ -2460,48 +2496,6 @@ pub fn emit_reputation_gate_check(
 // ════════════════════════════════════════════════════════════════════
 
 // ── Analytics rotation ─────────────────────────────────────────────
-
-// ── Flat fee collector rotation ────────────────────────────────────
-
-/// Emit a `CollectorRotationProposed` event.
-///
-/// Publishes `(cr_prop,)` → `CollectorRotationProposedEvent`.
-pub fn emit_collector_rotation_proposed(
-    env: &Env,
-    old_collector: &Address,
-    new_collector: &Address,
-    token: &Address,
-    escrowed_amount: i128,
-) {
-    let event = CollectorRotationProposedEvent {
-        old_collector: old_collector.clone(),
-        new_collector: new_collector.clone(),
-        token: token.clone(),
-        escrowed_amount,
-    };
-    env.events()
-        .publish((TOPIC_COLLECTOR_ROTATION_PROPOSED,), event);
-}
-
-/// Emit a `CollectorRotationAccepted` event.
-///
-/// Publishes `(cr_acc,)` → `CollectorRotationAcceptedEvent`.
-pub fn emit_collector_rotation_accepted(
-    env: &Env,
-    old_collector: &Address,
-    new_collector: &Address,
-    token: &Address,
-    escrowed_amount: i128,
-) {
-    let event = CollectorRotationAcceptedEvent {
-        old_collector: old_collector.clone(),
-        new_collector: new_collector.clone(),
-        token: token.clone(),
-        escrowed_amount,
-    };
-    env.events()
-        .publish((TOPIC_COLLECTOR_ROTATION_ACCEPTED,), event);
-}
 
 // ── DAO controller rotation ────────────────────────────────────────
 
