@@ -3878,6 +3878,9 @@ mod dispute_adversarial_test;
 mod dispute_attestation_index_adversarial_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod dispute_test;
+/// Adversarial coverage for `dispute::get_dispute_ids_by_challenger` (issue #918).
+#[cfg(test)]
+mod dispute_challenger_index_adversarial_test;
 /// Focused adversarial tests for `set_dispute_deadline`.
 #[cfg(test)]
 mod test_set_dispute_deadline;
