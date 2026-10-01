@@ -121,7 +121,10 @@ fn rejected_same_implementation_upgrade_leaves_every_pointer_unchanged() {
 
     let res = client.try_upgrade(&initial_impl, &2u32, &None);
 
-    assert!(res.is_err(), "same-as-current implementation must be rejected");
+    assert!(
+        res.is_err(),
+        "same-as-current implementation must be rejected"
+    );
     assert_eq!(snapshot(&client), before);
 }
 
@@ -149,7 +152,9 @@ fn rejected_upgrade_does_not_clobber_the_existing_rollback_target() {
     // Rejected attempts of every flavour.
     assert!(client.try_upgrade(&impl_v2, &3u32, &None).is_err()); // same impl
     assert!(client.try_upgrade(&admin, &3u32, &None).is_err()); // admin impl
-    assert!(client.try_upgrade(&Address::generate(&env), &2u32, &None).is_err()); // old version
+    assert!(client
+        .try_upgrade(&Address::generate(&env), &2u32, &None)
+        .is_err()); // old version
 
     // v2 is still current, v1 is still the rollback target.
     assert_eq!(client.get_current_implementation(), Some(impl_v2.clone()));
@@ -233,7 +238,9 @@ fn version_zero_current_accepts_only_a_strictly_greater_target() {
     assert_eq!(client.get_current_version(), Some(0u32));
 
     let before = snapshot(&client);
-    assert!(client.try_upgrade(&Address::generate(&env), &0u32, &None).is_err());
+    assert!(client
+        .try_upgrade(&Address::generate(&env), &0u32, &None)
+        .is_err());
     assert_eq!(snapshot(&client), before);
 
     client.upgrade(&Address::generate(&env), &1u32, &None);
@@ -254,8 +261,12 @@ fn u32_max_version_is_accepted_and_then_saturated() {
     // Nothing can be strictly greater than the ceiling, including the ceiling
     // itself — and the rejection must not wrap or corrupt the counter.
     let before = snapshot(&client);
-    assert!(client.try_upgrade(&Address::generate(&env), &u32::MAX, &None).is_err());
-    assert!(client.try_upgrade(&Address::generate(&env), &(u32::MAX - 1), &None).is_err());
+    assert!(client
+        .try_upgrade(&Address::generate(&env), &u32::MAX, &None)
+        .is_err());
+    assert!(client
+        .try_upgrade(&Address::generate(&env), &(u32::MAX - 1), &None)
+        .is_err());
     assert_eq!(snapshot(&client), before);
 
     // The ceiling is still a valid rollback source.
@@ -302,8 +313,12 @@ fn interleaved_rejections_do_not_add_extra_history() {
     client.upgrade(&impl_v2, &2u32, &None);
     // Interleave three rejections of different classes.
     assert!(client.try_upgrade(&impl_v2, &3u32, &None).is_err());
-    assert!(client.try_upgrade(&Address::generate(&env), &1u32, &None).is_err());
-    assert!(client.try_upgrade(&Address::generate(&env), &2u32, &None).is_err());
+    assert!(client
+        .try_upgrade(&Address::generate(&env), &1u32, &None)
+        .is_err());
+    assert!(client
+        .try_upgrade(&Address::generate(&env), &2u32, &None)
+        .is_err());
     client.upgrade(&impl_v3, &3u32, &None);
 
     assert_eq!(client.get_current_implementation(), Some(impl_v3));
@@ -358,7 +373,9 @@ fn duplicate_key_guard_survives_rejected_and_accepted_upgrades() {
     client.register_attestation_key(&attester, &key);
     assert!(client.has_attestation_key(&attester, &key));
 
-    assert!(client.try_upgrade(&Address::generate(&env), &1u32, &None).is_err());
+    assert!(client
+        .try_upgrade(&Address::generate(&env), &1u32, &None)
+        .is_err());
     client.upgrade(&Address::generate(&env), &2u32, &None);
 
     assert!(client.has_attestation_key(&attester, &key));

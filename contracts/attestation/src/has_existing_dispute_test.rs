@@ -138,7 +138,13 @@ fn test_has_existing_dispute_is_scoped_to_the_challenger() {
     let _id = open(&env, &client, &challenger_a, &business, &period);
 
     assert!(probe(&env, &contract_id, &challenger_a, &business, &period));
-    assert!(!probe(&env, &contract_id, &challenger_b, &business, &period));
+    assert!(!probe(
+        &env,
+        &contract_id,
+        &challenger_b,
+        &business,
+        &period
+    ));
 }
 
 /// The guard is keyed on `(business, period)` too — a dispute for one

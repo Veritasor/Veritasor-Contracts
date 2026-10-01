@@ -654,23 +654,23 @@ fn test_set_attestation_contract_state_unchanged_on_unauthorized() {
     assert_eq!(client.get_attestation_contract(), Some(att_id.clone()));
 
     let other = Address::generate(&env);
-    
+
     // Call should fail with None
     let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.set_attestation_contract(&other, &None::<Address>);
     }));
     assert!(res.is_err());
-    
+
     // State should be unchanged
     assert_eq!(client.get_attestation_contract(), Some(att_id.clone()));
-    
+
     // Try setting to a different Some
     let other_att_id = Address::generate(&env);
     let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.set_attestation_contract(&other, &Some(other_att_id));
     }));
     assert!(res.is_err());
-    
+
     // State should still be unchanged
     assert_eq!(client.get_attestation_contract(), Some(att_id));
 }
@@ -679,7 +679,7 @@ fn test_set_attestation_contract_state_unchanged_on_unauthorized() {
 fn test_set_attestation_contract_no_op_when_already_none() {
     let (env, client, admin) = setup_snapshot_only();
     assert!(client.get_attestation_contract().is_none());
-    
+
     client.set_attestation_contract(&admin, &None::<Address>);
     assert!(client.get_attestation_contract().is_none());
 }
@@ -688,10 +688,10 @@ fn test_set_attestation_contract_no_op_when_already_none() {
 fn test_set_attestation_contract_no_op_when_already_same() {
     let (env, client, admin) = setup_snapshot_only();
     let att_id = Address::generate(&env);
-    
+
     client.set_attestation_contract(&admin, &Some(att_id.clone()));
     assert_eq!(client.get_attestation_contract(), Some(att_id.clone()));
-    
+
     client.set_attestation_contract(&admin, &Some(att_id.clone()));
     assert_eq!(client.get_attestation_contract(), Some(att_id));
 }

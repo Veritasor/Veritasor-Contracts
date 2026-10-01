@@ -1069,8 +1069,7 @@ fn fee_zero_base_no_negative() {
 
             // Submit a first attestation.  Business needs no balance
             // because the fee is 0 — if this panics the arithmetic is wrong.
-            let period_1 =
-                String::from_str(&env, &std::format!("zero-t{tier:02}-v{vol_bps:05}-A"));
+            let period_1 = String::from_str(&env, &std::format!("zero-t{tier:02}-v{vol_bps:05}-A"));
             let root_1 = BytesN::from_array(&env, &[tier as u8; 32]);
             client.submit_attestation(
                 &business,
@@ -1102,8 +1101,7 @@ fn fee_zero_base_no_negative() {
             );
 
             // Submit a second attestation to confirm volume path also yields 0.
-            let period_2 =
-                String::from_str(&env, &std::format!("zero-t{tier:02}-v{vol_bps:05}-B"));
+            let period_2 = String::from_str(&env, &std::format!("zero-t{tier:02}-v{vol_bps:05}-B"));
             let root_2 = BytesN::from_array(&env, &[(tier as u8).wrapping_add(64); 32]);
             client.submit_attestation(
                 &business,

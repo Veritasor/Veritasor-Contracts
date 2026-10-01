@@ -36,7 +36,10 @@ fn activate_admin_without_pending_rotation_panics_and_preserves_admin() {
 
     // No rotation was ever proposed: activation must be rejected.
     let result = std::panic::catch_unwind(|| client.activate_admin());
-    assert!(result.is_err(), "activation without pending admin must panic");
+    assert!(
+        result.is_err(),
+        "activation without pending admin must panic"
+    );
 
     // Rejected operation must not mutate the stored admin.
     assert_eq!(client.get_admin(), admin);
@@ -87,7 +90,10 @@ fn activate_admin_one_tick_early_panics_and_keeps_pending_rotation() {
     // original admin retained.
     env.ledger().with_mut(|l| l.timestamp = delay - 1);
     let result = std::panic::catch_unwind(|| client.activate_admin());
-    assert!(result.is_err(), "activation before the time-lock must panic");
+    assert!(
+        result.is_err(),
+        "activation before the time-lock must panic"
+    );
     assert_eq!(client.get_admin(), admin);
 
     // A rejected attempt must not consume the pending rotation: the very same

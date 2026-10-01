@@ -58,7 +58,12 @@ fn activate_business(
 }
 
 /// Submit an attestation for `(business, period)`.
-fn submit(env: &Env, client: &AttestationContractClient<'static>, business: &Address, period: &str) {
+fn submit(
+    env: &Env,
+    client: &AttestationContractClient<'static>,
+    business: &Address,
+    period: &str,
+) {
     client.submit_attestation(
         business,
         &String::from_str(env, period),
@@ -83,12 +88,7 @@ fn add_to_index(
     });
 }
 
-fn read_index(
-    env: &Env,
-    contract_id: &Address,
-    business: &Address,
-    period: &String,
-) -> Vec<u64> {
+fn read_index(env: &Env, contract_id: &Address, business: &Address, period: &String) -> Vec<u64> {
     with_contract(env, contract_id, || {
         dispute::get_dispute_ids_by_attestation(env, business, period)
     })
@@ -150,7 +150,11 @@ fn test_add_is_append_only_and_does_not_deduplicate() {
     add_to_index(&env, &contract_id, &business, &period, 5);
 
     let ids = read_index(&env, &contract_id, &business, &period);
-    assert_eq!(ids.len(), 2, "the helper is a pure append, dedup lives in the caller");
+    assert_eq!(
+        ids.len(),
+        2,
+        "the helper is a pure append, dedup lives in the caller"
+    );
     assert_eq!(ids.get(0).unwrap(), 5);
     assert_eq!(ids.get(1).unwrap(), 5);
 }
@@ -306,10 +310,15 @@ fn test_open_dispute_without_attestation_leaves_index_untouched() {
         &DisputeType::RevenueMismatch,
         &String::from_str(&env, "no attestation"),
     );
-    assert!(result.is_err(), "dispute without an attestation must be rejected");
+    assert!(
+        result.is_err(),
+        "dispute without an attestation must be rejected"
+    );
 
     assert!(
-        client.get_disputes_by_attestation(&business, &period).is_empty(),
+        client
+            .get_disputes_by_attestation(&business, &period)
+            .is_empty(),
         "a rejected open_dispute must not touch the attestation index"
     );
     assert!(client.get_disputes_by_challenger(&challenger).is_empty());
@@ -334,12 +343,17 @@ fn test_concurrent_open_dispute_is_rejected_and_index_unchanged() {
         &DisputeType::Other,
         &String::from_str(&env, "second opinion"),
     );
-    assert!(result.is_err(), "only one open dispute per attestation is allowed");
+    assert!(
+        result.is_err(),
+        "only one open dispute per attestation is allowed"
+    );
 
     let ids = client.get_disputes_by_attestation(&business, &period);
     assert_eq!(ids.len(), 1, "rejected dispute must not be indexed");
     assert_eq!(ids.get(0).unwrap(), dispute_id);
-    assert!(client.get_disputes_by_challenger(&second_challenger).is_empty());
+    assert!(client
+        .get_disputes_by_challenger(&second_challenger)
+        .is_empty());
 }
 
 #[test]
@@ -364,7 +378,9 @@ fn test_open_dispute_requires_challenger_auth_and_index_unchanged() {
     assert!(result.is_err(), "open_dispute must require challenger auth");
 
     assert!(
-        client.get_disputes_by_attestation(&business, &period).is_empty(),
+        client
+            .get_disputes_by_attestation(&business, &period)
+            .is_empty(),
         "an unauthenticated call must not mutate the index"
     );
 }
@@ -391,7 +407,11 @@ fn test_index_is_not_pruned_when_a_dispute_is_closed() {
     assert_eq!(stored.status, DisputeStatus::Closed);
 
     let ids = client.get_disputes_by_attestation(&business, &period);
-    assert_eq!(ids.len(), 1, "the index is append-only history, not open disputes");
+    assert_eq!(
+        ids.len(),
+        1,
+        "the index is append-only history, not open disputes"
+    );
     assert_eq!(ids.get(0).unwrap(), dispute_id);
 }
 
@@ -422,7 +442,10 @@ fn test_same_challenger_cannot_reopen_after_close_and_index_unchanged() {
         &DisputeType::Other,
         &String::from_str(&env, "relitigation attempt"),
     );
-    assert!(result.is_err(), "a challenger may not relitigate the same attestation");
+    assert!(
+        result.is_err(),
+        "a challenger may not relitigate the same attestation"
+    );
 
     let ids = client.get_disputes_by_attestation(&business, &period);
     assert_eq!(ids.len(), 1);

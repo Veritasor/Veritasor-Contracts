@@ -54,7 +54,9 @@ fn admin_grant_adds_exactly_the_requested_role() {
     assert!(!client.has_role(&user, &ROLE_ADMIN));
     assert!(!client.has_role(&user, &ROLE_BUSINESS));
     assert_eq!(
-        in_contract(&env, &client.address, |e| access_control::get_roles(e, &user)),
+        in_contract(&env, &client.address, |e| access_control::get_roles(
+            e, &user
+        )),
         ROLE_ATTESTOR,
     );
 }
@@ -75,7 +77,9 @@ fn admin_grant_is_additive_across_calls() {
     });
 
     assert_eq!(
-        in_contract(&env, &client.address, |e| access_control::get_roles(e, &user)),
+        in_contract(&env, &client.address, |e| access_control::get_roles(
+            e, &user
+        )),
         ROLE_ATTESTOR | ROLE_BUSINESS | ROLE_OPERATOR,
     );
 }
@@ -93,7 +97,9 @@ fn granting_a_role_twice_is_idempotent_and_does_not_duplicate_the_holder() {
     });
 
     assert_eq!(
-        in_contract(&env, &client.address, |e| access_control::get_roles(e, &user)),
+        in_contract(&env, &client.address, |e| access_control::get_roles(
+            e, &user
+        )),
         ROLE_ATTESTOR,
     );
     assert_eq!(
@@ -122,7 +128,9 @@ fn granting_admin_role_increments_admin_count_and_quorum_weight() {
         before_count + 1,
     );
     assert_eq!(
-        in_contract(&env, &client.address, |e| access_control::admin_quorum_weight(e)),
+        in_contract(&env, &client.address, |e| {
+            access_control::admin_quorum_weight(e)
+        }),
         before_weight + access_control::DEFAULT_ADMIN_WEIGHT as u64,
     );
 }
@@ -155,7 +163,9 @@ fn admin_grant_accepts_the_full_valid_bitmap() {
     });
 
     assert_eq!(
-        in_contract(&env, &client.address, |e| access_control::get_roles(e, &user)),
+        in_contract(&env, &client.address, |e| access_control::get_roles(
+            e, &user
+        )),
         ROLE_VALID_MASK,
     );
 }
@@ -279,7 +289,9 @@ fn rejected_invalid_bitmap_leaves_target_state_unchanged() {
 
     assert!(result.is_err(), "undefined role bit must be rejected");
     assert_eq!(
-        in_contract(&env, &client.address, |e| access_control::get_roles(e, &target)),
+        in_contract(&env, &client.address, |e| access_control::get_roles(
+            e, &target
+        )),
         0,
         "rejected grant must not write any roles",
     );

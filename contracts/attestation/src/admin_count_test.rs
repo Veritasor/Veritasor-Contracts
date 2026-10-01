@@ -170,7 +170,11 @@ fn admin_count_counts_a_holder_with_several_roles_once() {
     let (env, client, admin) = setup();
     let multi = Address::generate(&env);
 
-    client.grant_role(&admin, &multi, &(ROLE_ADMIN | ROLE_ATTESTOR | ROLE_BUSINESS));
+    client.grant_role(
+        &admin,
+        &multi,
+        &(ROLE_ADMIN | ROLE_ATTESTOR | ROLE_BUSINESS),
+    );
     assert_eq!(admin_count_of(&env, &client.address), 2);
 
     // Adding another non-admin role to the same address must not move the count.
@@ -276,7 +280,10 @@ fn admin_count_guard_is_evaluated_before_the_removal_cooldown() {
     // still rejects the second removal and the count must not move.
     env.ledger().set_timestamp(1);
     let blocked = client.try_revoke_role(&admin, &second, &ROLE_ADMIN);
-    assert!(blocked.is_err(), "second removal inside the cooldown must be rejected");
+    assert!(
+        blocked.is_err(),
+        "second removal inside the cooldown must be rejected"
+    );
     assert_eq!(admin_count_of(&env, &client.address), 2);
     assert!(client.has_role(&second, &ROLE_ADMIN));
 
@@ -293,7 +300,10 @@ fn admin_count_is_unchanged_when_an_admin_grant_to_the_zero_address_is_rejected(
     let before = admin_count_of(&env, &client.address);
 
     let rejected = client.try_grant_role(&admin, &zero, &ROLE_ADMIN);
-    assert!(rejected.is_err(), "ADMIN must never be granted to the zero address");
+    assert!(
+        rejected.is_err(),
+        "ADMIN must never be granted to the zero address"
+    );
     assert_eq!(admin_count_of(&env, &client.address), before);
 
     // Boundary: the same zero address may hold a non-admin role, which must not

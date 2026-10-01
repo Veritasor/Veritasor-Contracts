@@ -221,7 +221,10 @@ fn op9_state_unchanged_after_rejected_call() {
             access_control::require_operator(&env_ref, &caller_ref);
         });
     }));
-    assert!(result.is_err(), "require_operator must panic for non-operator");
+    assert!(
+        result.is_err(),
+        "require_operator must panic for non-operator"
+    );
 
     // Storage must be identical to its pre-call snapshot.
     let roles_after = in_contract(&env, &client.address, |e| {

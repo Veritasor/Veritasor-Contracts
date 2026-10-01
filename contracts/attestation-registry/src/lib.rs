@@ -54,6 +54,8 @@ mod get_previous_version_test;
 #[cfg(test)]
 mod registry_batch_consistency_test;
 #[cfg(test)]
+mod rollback_adversarial_test;
+#[cfg(test)]
 mod test;
 #[cfg(test)]
 mod validate_implementation_test;

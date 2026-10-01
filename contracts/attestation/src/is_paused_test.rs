@@ -44,7 +44,10 @@ fn is_paused_defaults_false_before_and_after_initialization() {
     env.mock_all_auths();
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
-    assert!(!client.is_paused(), "uninitialized contract must not be paused");
+    assert!(
+        !client.is_paused(),
+        "uninitialized contract must not be paused"
+    );
 
     // After initialization the default must still be `false`.
     let admin = Address::generate(&env);
@@ -77,10 +80,14 @@ fn unpause_clears_is_paused() {
 fn internal_set_paused_round_trips_through_public_reader() {
     let (env, client, _admin) = setup();
 
-    in_contract(&env, &client.address, |e| access_control::set_paused(e, true));
+    in_contract(&env, &client.address, |e| {
+        access_control::set_paused(e, true)
+    });
     assert!(client.is_paused());
 
-    in_contract(&env, &client.address, |e| access_control::set_paused(e, false));
+    in_contract(&env, &client.address, |e| {
+        access_control::set_paused(e, false)
+    });
     assert!(!client.is_paused());
 }
 
@@ -90,11 +97,15 @@ fn paused_state_is_idempotent_for_same_value() {
 
     client.pause(&admin, &1u64);
     // A direct writer must not flip the value back when given the same state.
-    in_contract(&env, &client.address, |e| access_control::set_paused(e, true));
+    in_contract(&env, &client.address, |e| {
+        access_control::set_paused(e, true)
+    });
     assert!(client.is_paused());
 
     client.unpause(&admin, &2u64);
-    in_contract(&env, &client.address, |e| access_control::set_paused(e, false));
+    in_contract(&env, &client.address, |e| {
+        access_control::set_paused(e, false)
+    });
     assert!(!client.is_paused());
 }
 
@@ -123,7 +134,10 @@ fn non_admin_unpause_is_rejected_and_paused_state_preserved() {
     let result = client.try_unpause(&stranger, &0u64);
 
     assert!(result.is_err(), "non-admin unpause must be rejected");
-    assert!(client.is_paused(), "rejected unpause must preserve pause state");
+    assert!(
+        client.is_paused(),
+        "rejected unpause must preserve pause state"
+    );
 }
 
 #[test]
@@ -155,7 +169,10 @@ fn scheduled_pause_not_applied_before_effective_at() {
         access_control::check_and_apply_pending_pause(e)
     });
 
-    assert!(!client.is_paused(), "pause must not apply before effective_at");
+    assert!(
+        !client.is_paused(),
+        "pause must not apply before effective_at"
+    );
     let pending = in_contract(&env, &client.address, |e| {
         access_control::get_pending_pause_effective_at(e)
     });
@@ -247,14 +264,19 @@ fn emergency_pause_execute_sets_paused_state() {
         access_control::emergency_pause_execute(e, &signer1, &signer2)
     });
 
-    assert!(client.is_paused(), "emergency pause must pause the contract");
+    assert!(
+        client.is_paused(),
+        "emergency pause must pause the contract"
+    );
 }
 
 #[test]
 #[should_panic(expected = "contract already paused")]
 fn emergency_pause_execute_rejected_when_already_paused() {
     let (env, client, _admin) = setup();
-    in_contract(&env, &client.address, |e| access_control::set_paused(e, true));
+    in_contract(&env, &client.address, |e| {
+        access_control::set_paused(e, true)
+    });
 
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
@@ -278,7 +300,9 @@ fn require_not_paused_passes_when_not_paused() {
 #[should_panic(expected = "contract is paused")]
 fn require_not_paused_panics_when_paused() {
     let (env, client, _admin) = setup();
-    in_contract(&env, &client.address, |e| access_control::set_paused(e, true));
+    in_contract(&env, &client.address, |e| {
+        access_control::set_paused(e, true)
+    });
 
     in_contract(&env, &client.address, |e| {
         access_control::require_not_paused(e)

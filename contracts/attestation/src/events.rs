@@ -98,7 +98,7 @@ use soroban_sdk::{contracttype, symbol_short, Address, BytesN, Env, String, Symb
 /// every `#[contracttype]` type below and compares it against the committed
 /// baseline in `contracts/attestation/event_schema_snapshot.txt`. Run
 /// `./scripts/check_event_schema.sh --update` after an intentional change.
-pub const EVENT_SCHEMA_VERSION: u32 = 1;
+pub const EVENT_SCHEMA_VERSION: u32 = 2;
 
 // ════════════════════════════════════════════════════════════════════
 //  Event Topics  (short symbols ≤ 9 chars for gas efficiency)

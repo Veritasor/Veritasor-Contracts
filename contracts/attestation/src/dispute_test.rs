@@ -1197,7 +1197,12 @@ fn period_vec(env: &Env, items: &[&str]) -> soroban_sdk::Vec<String> {
 }
 
 /// Submit an attestation so later revocations have a target.
-fn submit(env: &Env, client: &AttestationContractClient<'static>, business: &Address, period: &str) {
+fn submit(
+    env: &Env,
+    client: &AttestationContractClient<'static>,
+    business: &Address,
+    period: &str,
+) {
     client.submit_attestation(
         business,
         &String::from_str(env, period),
@@ -1254,7 +1259,11 @@ fn set_revoked_periods_clear_then_repopulate_leaves_no_residue() {
     dispute::set_revoked_periods(&env, &business, &period_vec(&env, &["2026-09"]));
 
     let read = client.get_revoked_periods(&business);
-    assert_eq!(read.len(), 1, "cleared entries must not survive a repopulate");
+    assert_eq!(
+        read.len(),
+        1,
+        "cleared entries must not survive a repopulate"
+    );
     assert_eq!(read.get(0).unwrap(), String::from_str(&env, "2026-09"));
 }
 

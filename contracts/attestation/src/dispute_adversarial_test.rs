@@ -1,1 +1,406 @@
-dXNlIGNyYXRlOjpkaXNwdXRlOwp1c2UgY3JhdGU6OlJldm9jYXRpb25EYXRhOwp1c2Ugc29yb2Jhbl9zZGs6OnRlc3R1dGlsczo6QWRkcmVzcyBhcyBfOwp1c2Ugc29yb2Jhbl9zZGs6OnRlc3R1dGlsczo6TGVkZ2VyIGFzIF87CnVzZSBzb3JvYmFuX3Nkazp7QWRkcmVzcywgRW52LCBTdHJpbmd9OwoKZm4gc2V0dXAoKSAtPiAoRW52LCBBZGRyZXNzKSB7CiAgICBsZXQgZW52ID0gRW52OjpkZWZhdWx0KCk7CiAgICBlbnYubGVkZ2VyKCkuc2V0X3RpbWVzdGFtcCgxNzAwMDAwMDAwKTsKICAgIGxldCBjb250cmFjdCA9IGVudi5yZWdpc3RlcihjcmF0ZTo6QXR0ZXN0YXRpb25Db250cmFjdCwgKCkpOwogICAgKGVudiwgY29udHJhY3QpCn0KCmZuIGluX2NvbnRyYWN0PFI+KG VudjogJkVudiwgY29udHJhY3Q6ICZBZGRyZXNzLCBmOiBpbXBsIEZ uT25jZSgmRW52KSAtPiBSKSAtPiBSIHsKICAgIGVudi5hc19jb250cmFjdChjb250cmFjdCwgfHwgZihlbnYpKQp9CgojW3Rlc3RdCmZuIHJlcXVpcmVfbm90X3Jldm9rZWRfZm9yX3VwZGF0ZV9hbGxvd3NfYWN0aXZlX2F0dGVzdGF0aW9uKCkgewogICAgbGV0IChlbnYsIGNvbnRyYWN0KSA9IHNldHVwKCk7CiAgICBsZXQgYnVzaW5lc3MgPSBBZGRyZXNzOjpnZW5lcmF0ZSgmZW52KTsKICAgIGxldCBwZXJpb2QgPSBTdHJpbmc6OmZyb21fc3RyKCZlbnYsICIyMDI2LTA5Iik7CgogICAgbGV0IHJlc3VsdCA9IHN0ZDo6cGFuaWM6OmNhdGNoX3Vud2luZChzdGQ6OnBhbmljOjpBc3NlcnRVbndpbmRTYWZlKHx8IHsKICAgICAgICBpbl9jb250cmFjdCgmZW52LCAmY29udHJhY3QsIHxlbnZ8IHsKICAgICAgICAgICAgZGlzcHV0ZTo6cmVxdWlyZV9ub3RfcmV2b2tlZF9mb3JfdXBkYXRlKGVudiwgJmJ1c2luZXNzLCAmcGVyaW9kKTsKICAgICAgICB9KTsKICAgIH0pKTsKCiAgICBhc3NlcnQhKAogICAgICAgIHJlc3VsdC5pc19vaygpLAogICAgICAgICJhbiBhY3RpdmUgYXR0ZXN0YXRpb24gbXVzdCByZW1haW4gdXBkYXRhYmxlIgogICAgKTsKICAgIGFzc2VydCghaW5fY29udHJhY3QoJmVudiwgJmNvbnRyYWN0LCB8ZW52fCB7CiAgICAgICAgZGlzcHV0ZTo6aXNfYXR0ZXN0YXRpb25fcmV2b2tlZChlbnYsICZidXNpbmVzcywgJnBlcmlvZCkKICAgIH0pKTsKfQoKI1t0ZXN0XQpmbiByZXF1aXJlX25vdF9yZXZva2VkX2Zvcl91cGRhdGVfcmVqZWN0c19yZXZva2VkX2F0dGVzdGF0aW9uKCkgewogICAgbGV0IChlbnYsIGNvbnRyYWN0KSA9IHNldHVwKCk7CiAgICBsZXQgYnVzaW5lc3MgPSBBZGRyZXNzOjpnZW5lcmF0ZSgmZW52KTsKICAgIGxldCBwZXJpb2QgPSBTdHJpbmc6OmZyb21fc3RyKCZlbnYsICIyMDI2LTA5Iik7CiAgICBsZXQgcmVhc29uID0gU3RyaW5nOjpmcm9tX3N0cigmZW52LCAiYWR2ZXJzYXJpYWwgdGVzdCByZXZvY2F0aW9uIik7CiAgICBsZXQgcmV2b2NhdGlvbjogUmV2b2NhdGlvbkRhdGEgPSAoYnVzaW5lc3MuY2xvbmUoKSwgZW52LmxlZGdlci gpLnRpbWVzdGFtcCgpLCByZWFzb24pOwoKICAgIGluX2NvbnRyYWN0KCZlbnYsICZjb250cmFjdCwgfGVudnwgewogICAgICAgIGRpc3B1dGU6OnJlY29yZF9yZXZvY2F0aW9uKGVudiwgJmJ1c2luZXNzLCAmcGVyaW9kLCAmcmV2b2NhdGlvbik7CiAgICB9KTsKCiAgICBsZXQgcmVzdWx0ID0gc3RkOjpwYW5pYzo6Y2F0Y2hfdW53aW5kKHN0ZDo6cGFuaWM6OkFzc2VydFVud2luZFNhZmUofHwgewogICAgICAgIGluX2NvbnRyYWN0KCZlbnYsICZjb250cmFjdCwgfGVudnwgewogICAgICAgICAgICBkaXNwdXRlOjpyZXF1aXJlX25vdF9yZXZva2VkX2Zvcl91cGRhdGUoZW52LCAmYnVzaW5lc3MsICZwZXJpb2QpOwogICAgICAgIH0pOwogICAgfSkpOwoKICAgIGFzc2VydCEocmVzdWx0LmlzX2Vycm9yKCksICJyZXZva2VkIGF0dGVzdGF0aW9ucyBtdXN0IGJlIGltbXV0YWJsZSIpOwogICAgYXNzZXJ0IShpbl9jb250cmFjdCgmZW52LCAmY29udHJhY3QsIHxlbnZ8IHsKICAgICAgICBkaXNwdXRlOjppc19hdHRlc3RhdGlvbl9yZXZva2VkKGVudiwgJmJ1c2luZXNzLCAmcGVyaW9kKQogICAgfSkpOwp9CgojW3Rlc3RdCmZuIHJlcXVpcmVfbm90X3Jldm9rZWRfZm9yX3VwZGF0ZV91c2VzX2J1c2luZXNzX2FuZF9wZXJpb2RfYm91bmRhcmllcygpIHsKICAgIGxldCAoZW52LCBjb250cmFjdCkgPSBzZXR1cCgpOwogICAgbGV0IGJ1c2luZXNzID0gQWRkcmVzczo6Z2VuZXJhdGUoJmVudik7CiAgICBsZXQgb3RoZXJfYnVzaW5lc3MgPSBBZGRyZXNzOjpnZW5lcmF0ZSgmZW52KTsKICAgIGxldCBwZXJpb2QgPSBTdHJpbmc6OmZyb21fc3RyKCZlbnYsICIiKTsKCiAgICBpbl9jb250cmFjdCgmZW52LCAmY29udHJhY3QsIHxlbnZ8IHsKICAgICAgICBkaXNwdXRlOjpyZXF1aXJlX25vdF9yZXZva2VkX2Zvcl91cGRhdGUoZW52LCAmYnVzaW5lc3MsICZwZXJpb2QpOwogICAgfSk7CgogICAgbGV0IHJlYXNvbiA9IFN0cmluZzo6ZnJvbV9zdHIoJmVudiwgIm9ubHkgb25lIGtleSBpcyByZXZva2VkIik7CiAgICBsZXQgcmV2b2NhdGlvbjogUmV2b2NhdGlvbkRhdGEgPSAoYnVzaW5lc3MuY2xvbmUoKSwgZW52LmxlZGdlcigpLnRpbWVzdGFtcCgpLCByZWFzb24pOwogICAgaW5fY29udHJhY3QoJmVudiwgJmNvbnRyYWN0LCB8ZW52fCB7CiAgICAgICAgZGlzcHV0ZTo6cmVjb3JkX3Jldm9jYXRpb24oZW52LCAmYnVzaW5lc3MsICZwZXJpb2QsICZyZXZvY2F0aW9uKTsKICAgIH0pOwoKICAgIGxldCByZXN1bHQgPSBzdGQ6OnBhbmljOjpjYXRjaF91bndpbmQoc3RkOjpwYW5pYzo6QXNzZXJ0VW53aW5kU2FmZSh8fCB7CiAgICAgICAgaW5fY29udHJhY3QoJmVudiwgJmNvbnRyYWN0LCB8ZW52fCB7CiAgICAgICAgICAgIGRpc3B1dGU6OnJlcXVpcmVfbm90X3Jldm9rZWRfZm9yX3VwZGF0ZShlbnYsICZvdGhlcl9idXNpbmVzcywgJnBlcmlvZCk7CiAgICAgICAgfSk7CiAgICB9KSk7CiAgICBhc3NlcnQhKAogICAgICAgIHJlc3VsdC5pc19vaygpLAogICAgICAgICJyZXZvY2F0aW9uIG11c3QgYmUgc2NvcGVkIHRvIGJ1c2luZXNzIGFuZCBwZXJpb2QiCiAgICApOwp9CgojW3Rlc3RdCmZuIGdldF9yZXZvY2F0aW9uX3NlcXVlbmNlX3JldHVybnNfbm9uZV9mb3JfdW5yZXZva2VkX2F0dGVzdGF0aW9uKCkgewogICAgbGV0IChlbnYsIGNvbnRyYWN0KSA9IHNldHVwKCk7CiAgICBsZXQgYnVzaW5lc3MgPSBBZGRyZXNzOjpnZW5lcmF0ZSgmZW52KTsKICAgIGxldCBwZXJpb2QgPSBTdHJpbmc6OmZyb21fc3RyKCZlbnYsICIyMDI2LTA5Iik7CgogICAgbGV0IHNlcXVlbmNlID0gaW5fY29udHJhY3QoJmVudiwgJmNvbnRyYWN0LCB8ZW52fCB7CiAgICAgICAgZGlzcHV0ZTo6Z2V0X3Jldm9jYXRpb25fc2VxdWVuY2UoZW52LCAmYnVzaW5lc3MsICZwZXJpb2QpCiAgICB9KTsKCiAgICBhc3NlcnQhKHNlcXVlbmNlLmlzX25vbmUoKSwgInVucmV2b2tlZCBhdHRlc3RhdGlvbiBoYXMgbm8gc2VxdWVuY2UiKTsKICAgIGFzc2VydCghaW5fY29udHJhY3QoJmVudiwgJmNvbnRyYWN0LCB8ZW52fCB7CiAgICAgICAgZGlzcHV0ZTo6aXNfYXR0ZXN0YXRpb25fcmV2b2tlZChlbnYsICZidXNpbmVzcywgJnBlcmlvZCkKICAgIH0pKTsKfQoKI1t0ZXN0XQpmbiBnZXRfcmV2b2NhdGlvbl9zZXF1ZW5jZV9yZXR1cm5zX3NlcXVlbmNlX2FmdGVyX3Jldm9jYXRpb24oKSB7CiAgICBsZXQgKGVudiwgY29udHJhY3QpID0gc2V0dXAoKTsKICAgIGxldCBidXNpbmVzcyA9IEFkZHJlc3M6OmdlbmVyYXRlKCZlbnYpOwogICAgbGV0IHBlcmlvZCA9IFN0cmluZzo6ZnJvbV9zdHIoJmVudiwgIjIwMjYtMDkiKTsKICAgIGxldCByZWFzb24gPSBTdHJpbmc6OmZyb21fc3RyKCZlbnYsICJhZHZlcnNhcmlhbCB0ZXN0IHJldm9jYXRpb24iKTsKICAgIGxldCByZXZvY2F0aW9uOiBSZXZvY2F0aW9uRGF0YSA9IChidXNpbmVzcy5jbG9uZSgpLCBlbnYubGVkZ2VyKCkudGltZXN0YW1wKCksIHJlYXNvbik7CgogICAgaW5fY29udHJhY3QoJmVudiwgJmNvbnRyYWN0LCB8ZW52fCB7CiAgICAgICAgZGlzcHV0ZTo6cmVjb3JkX3Jldm9jYXRpb24oZW52LCAmYnVzaW5lc3MsICZwZXJpb2QsICZyZXZvY2F0aW9uKTsKICAgIH0pOwoKICAgIGxldCBzZXF1ZW5jZSA9IGluX2NvbnRyYWN0KCZlbnYsICZjb250cmFjdCwgfGVudnwgewogICAgICAgIGRpc3B1dGU6OmdldF9yZXZvY2F0aW9uX3NlcXVlbmNlKGVudiwgJmJ1c2luZXNzLCAmcGVyaW9kKQogICAgfSk7CgogICAgYXNzZXJ0IShzZXF1ZW5jZS5pc19zb21lKCksICJyZXZva2VkIGF0dGVzdGF0aW9uIG11c3QgaGF2ZSBhIHNlcXVlbmNlIik7CiAgICBhc3NlcnQhKGluX2NvbnRyYWN0KCZlbnYsICZjb250cmFjdCwgfGVudnwgewogICAgICAgIGRpc3B1dGU6OmlzX2F0dGVzdGF0aW9uX3Jldm9rZWQoZW52LCAmYnVzaW5lc3MsICZwZXJpb2QpCiAgICB9KSk7Cn0KCiNbdGVzdF0KZm4gZ2V0X3Jldm9jYXRpb25fc2VxdWVuY2VfaXNfc2NvcGVkX3RvX2J1c2luZXNzX2FuZF9wZXJpb2QoKSB7CiAgICBsZXQgKGVudiwgY29udHJhY3QpID0gc2V0dXAoKTsKICAgIGxldCBidXNpbmVzcyA9IEFkZHJlc3M6OmdlbmVyYXRlKCZlbnYpOwogICAgbGV0IG90aGVyX2J1c2luZXNzID0gQWRkcmVzczo6Z2VuZXJhdGUoJmVudik7CiAgICBsZXQgcGVyaW9kID0gU3RyaW5nOjpmcm9tX3N0cigmZW52LCAiMjAyNi0wOSIpOwogICAgbGV0IG90aGVyX3BlcmlvZCA9IFN0cmluZzo6ZnJvbV9zdHIoJmVudiwgIjIwMjYtMTAiKTsKICAgIGxldCByZWFzb24gPSBTdHJpbmc6OmZyb21fc3RyKCZlbnYsICJzY29wZWQgcmV2b2NhdGlvbiIpOwogICAgbGV0IHJldm9jYXRpb246IFJldm9jYXRpb25EYXRhID0gKGJ1c2luZXNzLmNsb25lKCksIGVudi5sZWRnZXIoKS50aW1lc3RhbXAoKSwgcmVhc29uKTsKCiAgICBpbl9jb250cmFjdCgmZW52LCAmY29udHJhY3QsIHxlbnZ8IHsKICAgICAgICBkaXNwdXRlOjpyZWNvcmRfcmV2b2NhdGlvbihlbnYsICZidXNpbmVzcywgJnBlcmlvZCwgJnJldm9jYXRpb24pOwogICAgfSk7CgogICAgYXNzZXJ0IShpbl9jb250cmFjdCgmZW52LCAmY29udHJhY3QsIHxlbnZ8IHsKICAgICAgICBkaXNwdXRlOjpnZXRfcmV2b2NhdGlvbl9zZXF1ZW5jZShlbnYsICZidXNpbmVzcywgJnBlcmlvZCkKICAgIH0pLmlzX3NvbWUoKSk7CiAgICBhc3NlcnQhKGluX2NvbnRyYWN0KCZlbnYsICZjb250cmFjdCwgfGVudnwgewogICAgICAgIGRpc3B1dGU6OmdldF9yZXZvY2F0aW9uX3NlcXVlbmNlKGVudiwgJm90aGVyX2J1c2luZXNzLCAmcGVyaW9kKQogICAgfSkuaXNfbm9uZSgpKTsKICAgIGFzc2VydCEoaW5fY29udHJhY3QoJmVudiwgJmNvbnRyYWN0LCB8ZW52fCB7CiAgICAgICAgZGlzcHV0ZTo6Z2V0X3Jldm9jYXRpb25fc2VxdWVuY2UoZW52LCAmYnVzaW5lc3MsICZvdGhlcl9wZXJpb2QpCiAgICB9KS5pc19ub25lKCkpOwp9CgojW3Rlc3RdCmZuIGdldF9yZXZvY2F0aW9uX3NlcXVlbmNlX2lzX3N0YWJsZV9hbmRfZGV0ZXJtaW5pc3RpYygpIHsKICAgIGxldCAoZW52LCBjb250cmFjdCkgPSBzZXR1cCgpOwogICAgbGV0IGJ1c2luZXNzID0gQWRkcmVzczo6Z2VuZXJhdGUoJmVudik7CiAgICBsZXQgcGVyaW9kID0gU3RyaW5nOjpmcm9tX3N0cigmZW52LCAiMjAyNi0wOSIpOwogICAgbGV0IHJlYXNvbiA9IFN0cmluZzo6ZnJvbV9zdHIoJmVudiwgImRldGVybWluaXN0aWMgcmV2b2NhdGlvbiIpOwogICAgbGV0IHJldm9jYXRpb246IFJldm9jYXRpb25EYXRhID0gKGJ1c2luZXNzLmNsb25lKCksIGVudi5sZWRnZXIoKS50aW1lc3RhbXAoKSwgcmVhc29uKTsKCiAgICBpbl9jb250cmFjdCgmZW52LCAmY29udHJhY3QsIHxlbnZ8IHsKICAgICAgICBkaXNwdXRlOjpyZWNvcmRfcmV2b2NhdGlvbihlbnYsICZidXNpbmVzcywgJnBlcmlvZCwgJnJldm9jYXRpb24pOwogICAgfSk7CgogICAgbGV0IGZpcnN0ID0gaW5fY29udHJhY3QoJmVudiwgJmNvbnRyYWN0LCB8ZW52fCB7CiAgICAgICAgZGlzcHV0ZTo6Z2V0X3Jldm9jYXRpb25fc2VxdWVuY2UoZW52LCAmYnVzaW5lc3MsICZwZXJpb2QpCiAgICB9KTsKICAgIGxldCBzZWNvbmQgPSBpbl9jb250cmFjdCgmZW52LCAmY29udHJhY3QsIHxlbnZ8IHsKICAgICAgICBkaXNwdXRlOjpnZXRfcmV2b2NhdGlvbl9zZXF1ZW5jZShlbnYsICZidXNpbmVzcywgJnBlcmlvZCkKICAgIH0pOwoKICAgIGFzc2VydF9lcSEoZmlyc3QsIHNlY29uZCwgInNlcXVlbmNlIG11c3QgYmUgc3RhYmxlIGFjcm9zcyBjYWxscyIpOwogICAgYXNzZXJ0IShmaXJzdC5pc19zb21lKCkpOwp9CgojW3Rlc3RdCmZuIGdldF9yZXZvY2F0aW9uX3NlcXVlbmNlX2lzX3VuY2hhbmdlZF9hZnRlcl9yZWplY3RlZF91cGRhdGUoKSB7CiAgICBsZXQgKGVudiwgY29udHJhY3QpID0gc2V0dXAoKTsKICAgIGxldCBidXNpbmVzcyA9IEFkZHJlc3M6OmdlbmVyYXRlKCZlbnYpOwogICAgbGV0IHBlcmlvZCA9IFN0cmluZzo6ZnJvbV9zdHIoJmVudiwgIjIwMjYtMDkiKTsKICAgIGxldCByZWFzb24gPSBTdHJpbmc6OmZyb21fc3RyKCZlbnYsICJ1bmNoYW5nZWQgYWZ0ZXIgcmVqZWN0aW9uIik7CiAgICBsZXQgcmV2b2NhdGlvbjogUmV2b2NhdGlvbkRhdGEgPSAoYnVzaW5lc3MuY2xvbmUoKSwgZW52LmxlZGdlcigpLnRpbWVzdGFtcCgpLCByZWFzb24pOwoKICAgIGluX2NvbnRyYWN0KCZlbnYsICZjb250cmFjdCwgfGVudnwgewogICAgICAgIGRpc3B1dGU6OnJlY29yZF9yZXZvY2F0aW9uKGVudiwgJmJ1c2luZXNzLCAmcGVyaW9kLCAmcmV2b2NhdGlvbik7CiAgICB9KTsKCiAgICBsZXQgYmVmb3JlID0gaW5fY29udHJhY3QoJmVudiwgJmNvbnRyYWN0LCB8ZW52fCB7CiAgICAgICAgZGlzcHV0ZTo6Z2V0X3Jldm9jYXRpb25fc2VxdWVuY2UoZW52LCAmYnVzaW5lc3MsICZwZXJpb2QpCiAgICB9KTsKCiAgICBsZXQgcmVzdWx0ID0gc3RkOjpwYW5pYzo6Y2F0Y2hfdW53aW5kKHN0ZDo6cGFuaWM6OkFzc2VydFVud2luZFNhZmUofHwgewogICAgICAgIGluX2NvbnRyYWN0KCZlbnYsICZjb250cmFjdCwgfGVudnwgewogICAgICAgICAgICBkaXNwdXRlOjpyZXF1aXJlX25vdF9yZXZva2VkX2Zvcl91cGRhdGUoZW52LCAmYnVzaW5lc3MsICZwZXJpb2QpOwogICAgICAgIH0pOwogICAgfSkpOwogICAgYXNzZXJ0IShyZXN1bHQuaXNfZXJyKCkpOwoKICAgIGxldCBhZnRlciA9IGluX2NvbnRyYWN0KCZlbnYsICZjb250cmFjdCwgfGVudnwgewogICAgICAgIGRpc3B1dGU6OmdldF9yZXZvY2F0aW9uX3NlcXVlbmNlKGVudiwgJmJ1c2luZXNzLCAmcGVyaW9kKQogICAgfSk7CgogICAgYXNzZXJ0X2VxIShiZWZvcmUsIGFmdGVyLCAicmVqZWN0ZWQgdXBkYXRlIG11c3Qgbm90IG11dGF0ZSB0aGUgc2VxdWVuY2UiKTsKfQo=
+use crate::dispute;
+use crate::RevocationData;
+use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::Ledger as _;
+use soroban_sdk::{Address, Env, String};
+
+fn setup() -> (Env, Address) {
+    let env = Env::default();
+    env.ledger().set_timestamp(1700000000);
+    let contract = env.register(crate::AttestationContract, ());
+    (env, contract)
+}
+
+fn in_contract<R>(
+env: &Env,
+
+contract: &Address,
+
+f: impl FnOnce(&Env) -> R,
+) -> R
+{
+
+env.as_contract(contract, || f(env))
+}
+
+// -----------------------------------------------------------------------------
+// check_and_rollback_disputes adversarial coverage
+// -----------------------------------------------------------------------------
+
+#[test]
+fn check_and_rollback_disputes_empty_ids_is_no_op() {
+
+let (env, contract) = setup();
+
+let dispute_ids = soroban_sdk::Vec::new(&env);
+
+
+let result = in_contract(&env, &contract, |env| {
+
+dispute::check_and_rollback_disputes(env, &dispute_ids, 0)
+
+});
+
+assert_eq!(
+    result,
+
+    0,
+
+    "an empty dispute set must roll back nothing"
+
+);
+}
+
+#[test]
+fn check_and_rollback_disputes_respects_limit_and_reports_count() {
+
+let (env, contract) = setup();
+
+let dispute_ids = soroban_sdk::Vec::from_array(&env, [1, 2, 3]);
+
+
+let result = in_contract(&env, &contract, |env| {
+
+dispute::check_and_rollback_disputes(env, &dispute_ids, 2)
+
+});
+
+assert_eq!(
+    result,
+
+    2,
+
+    "only the first limit disputes may be rolled back"
+
+);
+}
+
+#[test]
+fn check_and_rollback_disputes_limit_greater_than_length_is_clamped() {
+
+let (env, contract) = setup();
+
+let dispute_ids = soroban_sdk::Vec::from_array(&env, [10, 20]);
+
+let result = in_contract(&env, &contract, |env| {
+
+dispute::check_and_rollback_disputes(env, &dispute_ids, u32::MAX)
+
+});
+
+assert_eq!(
+    result,
+
+    2,
+
+    "limit larger than the input length must not overcount"
+
+);
+}
+
+#[test]
+fn check_and_rollback_disputes_zero_limit_rollbacks_nothing() {
+
+let (env, contract) = setup();
+
+let dispute_ids = soroban_sdk::Vec::from_array(&env, [7, 8, 9]);
+
+let result = in_contract(&env, &contract, |env| {
+
+dispute::check_and_rollback_disputes(env, &dispute_ids, 0)
+
+});
+
+assert_eq!(
+    result,
+
+    0,
+
+    "a zero limit must roll back nothing"
+
+);
+}
+
+#[test]
+fn check_and_rollback_disputes_is_deterministic() {
+
+let (env, contract) = setup();
+
+let dispute_ids = soroban_sdk::Vec::from_array(&env, [11, 22, 33]);
+
+let first = in_contract(&env, &contract, |env| {
+
+dispute::check_and_rollback_disputes(env, &dispute_ids, 3)
+
+});
+
+let second = in_contract(&env, &contract, |env| {
+
+dispute::check_and_rollback_disputes(env, &dispute_ids, 3)
+
+});
+
+assert_eq!(first, 3, "first call must report the clamped count");
+assert_eq!(second, 3, "repeated calls must be deterministic");
+}
+
+#[test]
+fn check_and_rollback_disputes_does_not_mutate_revocation_state() {
+
+let (env, contract) = setup();
+
+let business = Address::generate(&env);
+
+let period = String::from_str(&env, "2026-09");
+
+let reason = String::from_str(&env, "adversarial test revocation");
+
+let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
+
+in_contract(&env, &contract, |env| {
+
+dispute::record_revocation(env, &business, &period, &revocation)
+
+});
+
+let dispute_ids = soroban_sdk::Vec::from_array(&env, [1, 2, 3]);
+
+let result = in_contract(&env, &contract, |env| {
+
+dispute::check_and_rollback_disputes(env, &dispute_ids, 2)
+
+});
+
+assert_eq!(result, 2);
+
+assert!(in_contract(&env, &contract, |env| {
+
+dispute::is_attestation_revoked(env, &business, &period)
+
+}), "rollback checks must not mutate revocation state");
+}
+
+// -----------------------------------------------------------------------------
+// Existing revocation guard coverage
+// -----------------------------------------------------------------------------
+
+#[test]
+fn require_not_revoked_for_update_allows_active_attestation() {
+
+let (env, contract) = setup();
+
+let business = Address::generate(&env);
+
+let period = String::from_str(&env, "2026-09");
+
+let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+
+in_contract(&env, &contract, |env| {
+
+dispute::require_not_revoked_for_update(env, &business, &period);
+
+});
+
+}));
+
+assert!(
+	result.is_ok(),
+	"an active attestation must remain updatable"
+);
+assert!(in_contract(&env, &contract, |env| {
+	dispute::is_attestation_revoked(env, &business, &period)
+}));
+}
+
+#[test]
+fn require_not_revoked_for_update_rejects_revoked_attestation() {
+
+let (env, contract) = setup();
+
+let business = Address::generate(&env);
+
+let period = String::from_str(&env, "2026-09");
+
+let reason = String::from_str(&env, "adversarial test revocation");
+
+let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
+
+in_contract(&env, &contract, |env| {
+
+dispute::record_revocation(env, &business, &period, &revocation)
+
+});
+
+let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+
+in_contract(&env, &contract, |env| {
+
+dispute::require_not_revoked_for_update(env, &business, &period);
+
+});
+
+}));
+
+assert!(result.is_err(), "revoked attestations must be immutable");
+assert!(in_contract(&env, &contract, |env| {
+	dispute::is_attestation_revoked(env, &business, &period)
+}));
+}
+
+#[test]
+fn require_not_revoked_for_update_uses_business_and_period_boundaries() {
+
+let (env, contract) = setup();
+
+let business = Address::generate(&env);
+
+let other_business = Address::generate(&env);
+
+let period = String::from_str(&env, "");
+
+in_contract(&env, &contract, |env| {
+
+dispute::require_not_revoked_for_update(env, &business, &period);
+
+});
+
+let reason = String::from_str(&env, "only one key is revoked");
+
+let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
+in_contract(&env, &contract, |env| {
+
+dispute::record_revocation(env, &business, &period, &revocation)
+
+});
+
+let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+
+in_contract(&env, &contract, |env| {
+
+dispute::require_not_revoked_for_update(env, &other_business, &period);
+
+});
+
+}));
+
+assert!(
+	result.is_ok(),
+	"revocation must be scoped to business and period"
+);
+}
+
+#[test]
+fn get_revocation_sequence_returns_none_for_unrevoked_attestation() {
+    let (env, contract) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-09");
+
+    let sequence = in_contract(&env, &contract, |env| {
+        dispute::get_revocation_sequence(env, &business, &period)
+    });
+
+    assert!(sequence.is_none(), "unrevoked attestation has no sequence");
+    assert!(!in_contract(&env, &contract, |env| {
+        dispute::is_attestation_revoked(env, &business, &period)
+    }));
+}
+
+#[test]
+fn get_revocation_sequence_returns_sequence_after_revocation() {
+    let (env, contract) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-09");
+    let reason = String::from_str(&env, "adversarial test revocation");
+    let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
+
+    in_contract(&env, &contract, |env| {
+        dispute::record_revocation(env, &business, &period, &revocation);
+    });
+
+    let sequence = in_contract(&env, &contract, |env| {
+        dispute::get_revocation_sequence(env, &business, &period)
+    });
+
+    assert!(sequence.is_some(), "revoked attestation must have a sequence");
+    assert!(in_contract(&env, &contract, |env| {
+        dispute::is_attestation_revoked(env, &business, &period)
+    }));
+}
+
+#[test]
+fn get_revocation_sequence_is_scoped_to_business_and_period() {
+    let (env, contract) = setup();
+    let business = Address::generate(&env);
+    let other_business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-09");
+    let other_period = String::from_str(&env, "2026-10");
+    let reason = String::from_str(&env, "scoped revocation");
+    let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
+
+    in_contract(&env, &contract, |env| {
+        dispute::record_revocation(env, &business, &period, &revocation);
+    });
+
+    assert!(in_contract(&env, &contract, |env| {
+        dispute::get_revocation_sequence(env, &business, &period)
+    }).is_some());
+    assert!(in_contract(&env, &contract, |env| {
+        dispute::get_revocation_sequence(env, &other_business, &period)
+    }).is_none());
+    assert!(in_contract(&env, &contract, |env| {
+        dispute::get_revocation_sequence(env, &business, &other_period)
+    }).is_none());
+}
+
+#[test]
+fn get_revocation_sequence_is_stable_and_deterministic() {
+    let (env, contract) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-09");
+    let reason = String::from_str(&env, "deterministic revocation");
+    let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
+
+    in_contract(&env, &contract, |env| {
+        dispute::record_revocation(env, &business, &period, &revocation);
+    });
+
+    let first = in_contract(&env, &contract, |env| {
+        dispute::get_revocation_sequence(env, &business, &period)
+    });
+    let second = in_contract(&env, &contract, |env| {
+        dispute::get_revocation_sequence(env, &business, &period)
+    });
+
+    assert_eq!(first, second, "sequence must be stable across calls");
+    assert!(first.is_some());
+}
+
+#[test]
+fn get_revocation_sequence_is_unchanged_after_rejected_update() {
+    let (env, contract) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-09");
+    let reason = String::from_str(&env, "unchanged after rejection");
+    let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
+
+    in_contract(&env, &contract, |env| {
+        dispute::record_revocation(env, &business, &period, &revocation);
+    });
+
+    let before = in_contract(&env, &contract, |env| {
+        dispute::get_revocation_sequence(env, &business, &period)
+    });
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        in_contract(&env, &contract, |env| {
+            dispute::require_not_revoked_for_update(env, &business, &period);
+        });
+    }));
+    assert!(result.is_err());
+
+    let after = in_contract(&env, &contract, |env| {
+        dispute::get_revocation_sequence(env, &business, &period)
+    });
+
+    assert_eq!(before, after, "rejected update must not mutate the sequence");
+}

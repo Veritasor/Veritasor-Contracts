@@ -77,8 +77,6 @@ pub enum FlatFeeDataKey {
     EpochHistory,
 }
 
-
-
 /// Retrieve the current flat fee configuration from instance storage.
 pub fn get_flat_fee_config(env: &Env) -> Option<FlatFeeConfig> {
     env.storage().instance().get(&FlatFeeDataKey::FlatFeeConfig)

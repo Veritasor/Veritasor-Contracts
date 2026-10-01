@@ -66,7 +66,10 @@ fn set_paused_true_reflects_in_is_paused() {
     });
 
     let paused = in_contract(&env, &client.address, |e| access_control::is_paused(e));
-    assert!(paused, "is_paused should return true after set_paused(true)");
+    assert!(
+        paused,
+        "is_paused should return true after set_paused(true)"
+    );
 }
 
 /// `set_paused(false)` causes `is_paused()` to return `false`.
@@ -83,7 +86,10 @@ fn set_paused_false_reflects_in_is_paused() {
     });
 
     let paused = in_contract(&env, &client.address, |e| access_control::is_paused(e));
-    assert!(!paused, "is_paused should return false after set_paused(false)");
+    assert!(
+        !paused,
+        "is_paused should return false after set_paused(false)"
+    );
 }
 
 /// Calling `set_paused(true)` twice is idempotent — state remains `true`.
@@ -97,7 +103,10 @@ fn set_paused_true_is_idempotent() {
     });
 
     let paused = in_contract(&env, &client.address, |e| access_control::is_paused(e));
-    assert!(paused, "state must remain true after two set_paused(true) calls");
+    assert!(
+        paused,
+        "state must remain true after two set_paused(true) calls"
+    );
 }
 
 /// Calling `set_paused(false)` twice is idempotent — state remains `false`.
@@ -111,7 +120,10 @@ fn set_paused_false_is_idempotent() {
     });
 
     let paused = in_contract(&env, &client.address, |e| access_control::is_paused(e));
-    assert!(!paused, "state must remain false after two set_paused(false) calls");
+    assert!(
+        !paused,
+        "state must remain false after two set_paused(false) calls"
+    );
 }
 
 /// `false → true → false` round-trip preserves correct state at every step.

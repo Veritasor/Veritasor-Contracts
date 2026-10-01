@@ -772,7 +772,11 @@ mod revoke_role_adversarial_tests {
     }
 
     /// Give `admin` two more admins so `admin_count > MIN_ADMIN_COUNT`.
-    fn seed_admins(env: &Env, client: &AttestationContractClient, admin: &Address) -> (Address, Address) {
+    fn seed_admins(
+        env: &Env,
+        client: &AttestationContractClient,
+        admin: &Address,
+    ) -> (Address, Address) {
         let first = Address::generate(env);
         let second = Address::generate(env);
         client.grant_role(admin, &first, &ROLE_ADMIN);
@@ -927,7 +931,10 @@ mod revoke_role_adversarial_tests {
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             client.revoke_role(&admin, &second, &ROLE_ADMIN);
         }));
-        assert!(outcome.is_err(), "cooldown must block a removal that is 1s early");
+        assert!(
+            outcome.is_err(),
+            "cooldown must block a removal that is 1s early"
+        );
         assert!(client.has_role(&second, &ROLE_ADMIN));
         assert_eq!(last_admin_removed_at(&env, &client), Some(1_000_000));
 
@@ -952,7 +959,11 @@ mod revoke_role_adversarial_tests {
 
         client.revoke_role(&admin, &user, &ROLE_BUSINESS);
 
-        let (_cid, topics, data) = env.events().all().last().expect("revoke must emit an event");
+        let (_cid, topics, data) = env
+            .events()
+            .all()
+            .last()
+            .expect("revoke must emit an event");
 
         assert_eq!(topics.len(), 2);
         assert_eq!(
@@ -966,7 +977,10 @@ mod revoke_role_adversarial_tests {
 
         let ev = RoleChangedEvent::try_from_val(&env, &data).unwrap();
         assert_eq!(ev.account, user);
-        assert_eq!(ev.role, ROLE_BUSINESS, "the event must carry the revoked mask");
+        assert_eq!(
+            ev.role, ROLE_BUSINESS,
+            "the event must carry the revoked mask"
+        );
         assert_eq!(ev.changed_by, admin);
         // Only the named bit was cleared.
         assert!(client.has_role(&user, &ROLE_ATTESTOR));

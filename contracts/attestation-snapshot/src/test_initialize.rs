@@ -121,7 +121,9 @@ fn second_initialize_cannot_replace_the_admin_with_an_identical_contract_link() 
 
     // Same link, different admin — still rejected, admin unchanged.
     let hijacker = Address::generate(&env);
-    assert!(client.try_initialize(&hijacker, &Some(link.clone())).is_err());
+    assert!(client
+        .try_initialize(&hijacker, &Some(link.clone()))
+        .is_err());
     assert_eq!(client.get_admin(), first_admin);
     assert_eq!(client.get_attestation_contract(), Some(link));
 }
@@ -165,7 +167,9 @@ fn repeated_rejected_initializations_are_stable() {
 
     for _ in 0..5 {
         let intruder = Address::generate(&env);
-        assert!(client.try_initialize(&intruder, &Some(intruder.clone())).is_err());
+        assert!(client
+            .try_initialize(&intruder, &Some(intruder.clone()))
+            .is_err());
         assert_eq!(client.get_admin(), admin);
         assert_eq!(client.get_attestation_contract(), Some(link.clone()));
     }

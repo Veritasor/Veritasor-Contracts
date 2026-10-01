@@ -155,7 +155,10 @@ fn test_last_restore_id_unchanged_after_second_commit_without_dry_run() {
     let replay = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.restore_commit(&admin, &batch);
     }));
-    assert!(replay.is_err(), "a consumed token must not authorise a replay");
+    assert!(
+        replay.is_err(),
+        "a consumed token must not authorise a replay"
+    );
     assert_eq!(client.get_last_restore_id(), fingerprint);
 }
 

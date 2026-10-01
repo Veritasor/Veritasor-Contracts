@@ -41,16 +41,27 @@ fn test_require_valid_nonce_tracks_account_and_channel_sequences() {
     });
 
     in_contract(&env, &client.address, |e| {
-        let default_channel = e
-            .storage()
-            .instance()
-            .get::<_, u64>(&access_control::AccessControlKey::LastNonce((account.clone(), 0)));
-        let separate_channel = e.storage().instance().get::<_, u64>(
-            &access_control::AccessControlKey::LastNonce((account.clone(), 7)),
-        );
-        let separate_account = e.storage().instance().get::<_, u64>(
-            &access_control::AccessControlKey::LastNonce((other_account.clone(), 0)),
-        );
+        let default_channel =
+            e.storage()
+                .instance()
+                .get::<_, u64>(&access_control::AccessControlKey::LastNonce((
+                    account.clone(),
+                    0,
+                )));
+        let separate_channel =
+            e.storage()
+                .instance()
+                .get::<_, u64>(&access_control::AccessControlKey::LastNonce((
+                    account.clone(),
+                    7,
+                )));
+        let separate_account =
+            e.storage()
+                .instance()
+                .get::<_, u64>(&access_control::AccessControlKey::LastNonce((
+                    other_account.clone(),
+                    0,
+                )));
 
         assert_eq!(default_channel, Some(2));
         assert_eq!(separate_channel, Some(1));
@@ -70,9 +81,13 @@ fn test_require_valid_nonce_rejections_leave_storage_unchanged() {
     assert!(zero_result.is_err(), "zero nonce must be rejected");
 
     in_contract(&env, &client.address, |e| {
-        let value = e.storage().instance().get::<_, u64>(
-            &access_control::AccessControlKey::LastNonce((account.clone(), 4)),
-        );
+        let value =
+            e.storage()
+                .instance()
+                .get::<_, u64>(&access_control::AccessControlKey::LastNonce((
+                    account.clone(),
+                    4,
+                )));
         assert_eq!(value, None, "zero nonce must not create a stored value");
         access_control::require_valid_nonce(e, &account, 3, Some(4));
     });
@@ -86,9 +101,13 @@ fn test_require_valid_nonce_rejections_leave_storage_unchanged() {
         assert!(result.is_err(), "nonce {rejected_nonce} must be rejected");
 
         in_contract(&env, &client.address, |e| {
-            let value = e.storage().instance().get::<_, u64>(
-                &access_control::AccessControlKey::LastNonce((account.clone(), 4)),
-            );
+            let value =
+                e.storage()
+                    .instance()
+                    .get::<_, u64>(&access_control::AccessControlKey::LastNonce((
+                        account.clone(),
+                        4,
+                    )));
             assert_eq!(value, Some(3), "rejection must preserve the prior nonce");
         });
     }
@@ -100,9 +119,13 @@ fn test_require_valid_nonce_rejections_leave_storage_unchanged() {
     }));
     assert!(default_channel_replay.is_err());
     in_contract(&env, &client.address, |e| {
-        let value = e.storage().instance().get::<_, u64>(
-            &access_control::AccessControlKey::LastNonce((account.clone(), 0)),
-        );
+        let value =
+            e.storage()
+                .instance()
+                .get::<_, u64>(&access_control::AccessControlKey::LastNonce((
+                    account.clone(),
+                    0,
+                )));
         assert_eq!(value, Some(2), "Some(0) must share the default channel");
     });
 }
@@ -113,9 +136,13 @@ fn test_require_valid_nonce_accepts_u64_max_without_wrapping() {
 
     in_contract(&env, &client.address, |e| {
         access_control::require_valid_nonce(e, &account, u64::MAX, Some(9));
-        let value = e.storage().instance().get::<_, u64>(
-            &access_control::AccessControlKey::LastNonce((account.clone(), 9)),
-        );
+        let value =
+            e.storage()
+                .instance()
+                .get::<_, u64>(&access_control::AccessControlKey::LastNonce((
+                    account.clone(),
+                    9,
+                )));
         assert_eq!(value, Some(u64::MAX));
     });
 
@@ -124,11 +151,18 @@ fn test_require_valid_nonce_accepts_u64_max_without_wrapping() {
             access_control::require_valid_nonce(e, &account, u64::MAX, Some(9));
         });
     }));
-    assert!(replay_result.is_err(), "the maximum nonce cannot be replayed");
+    assert!(
+        replay_result.is_err(),
+        "the maximum nonce cannot be replayed"
+    );
     in_contract(&env, &client.address, |e| {
-        let value = e.storage().instance().get::<_, u64>(
-            &access_control::AccessControlKey::LastNonce((account.clone(), 9)),
-        );
+        let value =
+            e.storage()
+                .instance()
+                .get::<_, u64>(&access_control::AccessControlKey::LastNonce((
+                    account.clone(),
+                    9,
+                )));
         assert_eq!(value, Some(u64::MAX), "rejection must preserve u64::MAX");
     });
 }
@@ -241,15 +275,21 @@ fn test_get_role_holders() {
 
     // Reading the list does not alter the associated role state or enumeration.
     assert_eq!(
-        in_contract(&env, &client.address, |e| access_control::get_roles(e, &admin)),
+        in_contract(&env, &client.address, |e| access_control::get_roles(
+            e, &admin
+        )),
         ROLE_ADMIN
     );
     assert_eq!(
-        in_contract(&env, &client.address, |e| access_control::get_roles(e, &user1)),
+        in_contract(&env, &client.address, |e| access_control::get_roles(
+            e, &user1
+        )),
         ROLE_ATTESTOR
     );
     assert_eq!(
-        in_contract(&env, &client.address, |e| access_control::get_roles(e, &user2)),
+        in_contract(&env, &client.address, |e| access_control::get_roles(
+            e, &user2
+        )),
         ROLE_BUSINESS
     );
 }

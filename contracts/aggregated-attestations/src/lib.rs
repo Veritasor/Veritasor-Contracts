@@ -29,9 +29,9 @@ use core::cmp::Ordering;
 use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, String, Vec};
 
 #[cfg(test)]
-mod admin_rotation_test;
-#[cfg(test)]
 mod activate_admin_test;
+#[cfg(test)]
+mod admin_rotation_test;
 #[cfg(test)]
 mod event_ingestion_test;
 #[cfg(test)]
@@ -529,7 +529,10 @@ mod get_max_portfolio_businesses_test {
         let contract_id = env.register_contract(None, AggregatedAttestationsContract);
         let client = AggregatedAttestationsContractClient::new(&env, &contract_id);
 
-        assert_eq!(client.get_max_portfolio_businesses(), MAX_PORTFOLIO_BUSINESSES);
+        assert_eq!(
+            client.get_max_portfolio_businesses(),
+            MAX_PORTFOLIO_BUSINESSES
+        );
     }
 
     #[test]
@@ -547,7 +550,10 @@ mod get_max_portfolio_businesses_test {
         let admin_before = client.get_admin();
         let portfolio_before = client.get_portfolio(&portfolio_id);
 
-        assert_eq!(client.get_max_portfolio_businesses(), MAX_PORTFOLIO_BUSINESSES);
+        assert_eq!(
+            client.get_max_portfolio_businesses(),
+            MAX_PORTFOLIO_BUSINESSES
+        );
         assert_eq!(client.get_admin(), admin_before);
         assert_eq!(client.get_portfolio(&portfolio_id), portfolio_before);
     }
