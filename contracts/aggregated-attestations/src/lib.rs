@@ -29,9 +29,13 @@ use core::cmp::Ordering;
 use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, String, Vec};
 
 #[cfg(test)]
+mod activate_admin_test;
+#[cfg(test)]
 mod admin_rotation_test;
 #[cfg(test)]
 mod event_ingestion_test;
+#[cfg(test)]
+mod initialize_test;
 #[cfg(test)]
 mod submit_aggregated_root_adversarial_test;
 
@@ -511,5 +515,48 @@ impl AggregatedAttestationsContract {
                 assert!(a != b, "duplicate business in portfolio");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod get_max_portfolio_businesses_test {
+    extern crate std;
+
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+
+    #[test]
+    fn returns_limit_without_initialization_or_authorization() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, AggregatedAttestationsContract);
+        let client = AggregatedAttestationsContractClient::new(&env, &contract_id);
+
+        assert_eq!(
+            client.get_max_portfolio_businesses(),
+            MAX_PORTFOLIO_BUSINESSES
+        );
+    }
+
+    #[test]
+    fn returns_limit_without_changing_initialized_contract_state() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, AggregatedAttestationsContract);
+        let client = AggregatedAttestationsContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let portfolio_id = String::from_str(&env, "portfolio");
+        let businesses = Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
+
+        client.initialize(&admin, &0u64);
+        client.register_portfolio(&admin, &1u64, &portfolio_id, &businesses);
+        let admin_before = client.get_admin();
+        let portfolio_before = client.get_portfolio(&portfolio_id);
+
+        assert_eq!(
+            client.get_max_portfolio_businesses(),
+            MAX_PORTFOLIO_BUSINESSES
+        );
+        assert_eq!(client.get_admin(), admin_before);
+        assert_eq!(client.get_portfolio(&portfolio_id), portfolio_before);
     }
 }
