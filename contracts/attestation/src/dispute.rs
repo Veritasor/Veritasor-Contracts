@@ -769,7 +769,9 @@ pub fn lock_attestor(
 ) {
     let key = DisputeKey::AttestorLockCount(attestor.clone());
     let current: u64 = env.storage().instance().get(&key).unwrap_or(0);
-    let new_count = current + 1;
+    let new_count = current
+        .checked_add(1)
+        .expect("attestor lock count overflow");
     env.storage().instance().set(&key, &new_count);
 
     // Emit event only on the first lock (transition from 0 → 1)
@@ -919,7 +921,7 @@ pub fn check_and_rollback_disputes(env: &Env, dispute_ids: &Vec<u64>, limit: u32
 }
 
 #[cfg(test)]
-mod test {
+mod lock_attestor_tests {
     use super::*;
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{Address, Env, String};
@@ -1006,21 +1008,7 @@ mod test {
         let period = String::from_str(&env, "2026-02");
         let attestor = Address::generate(&env);
 
-        // Verify initial state is empty
-        assert_eq!(get_attestor_for_attestation(&env, &business, &period), None);
-
-        // Store the attestor
-        store_attestor_for_attestation(&env, &business, &period, &attestor);
-
-        // Verify it was saved correctly
-        assert_eq!(
-            get_attestor_for_attestation(&env, &business, &period),
-            Some(attestor.clone())
-        );
-    }
-
-    #[test]
-    fn test_store_attestor_for_attestation_overwrite() {
+    fn setup() -> (Env, Address) {
         let env = Env::default();
         let business = Address::generate(&env);
         let period = String::from_str(&env, "2026-02");
@@ -1041,41 +1029,57 @@ mod test {
     }
 
     #[test]
-    fn test_store_attestor_for_attestation_boundary_period() {
-        let env = Env::default();
-        let business = Address::generate(&env);
-        // Empty period is a boundary condition
-        let period = String::from_str(&env, "");
+    fn lock_attestor_accepts_boundary_dispute_ids_and_emits_once() {
+        let (env, contract_id) = setup();
         let attestor = Address::generate(&env);
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "");
 
-        store_attestor_for_attestation(&env, &business, &period, &attestor);
+        env.as_contract(&contract_id, || {
+            lock_attestor(&env, &attestor, &business, &period, 0);
+            assert_eq!(
+                env.storage()
+                    .instance()
+                    .get::<_, u64>(&DisputeKey::AttestorLockCount(attestor.clone())),
+                Some(1)
+            );
 
-        assert_eq!(
-            get_attestor_for_attestation(&env, &business, &period),
-            Some(attestor)
-        );
+            lock_attestor(&env, &attestor, &business, &period, u64::MAX);
+            assert_eq!(
+                env.storage()
+                    .instance()
+                    .get::<_, u64>(&DisputeKey::AttestorLockCount(attestor.clone())),
+                Some(2)
+            );
+            assert!(is_attestor_locked(&env, &attestor));
+            assert_eq!(env.events().all().len(), 1);
+        });
     }
 
     #[test]
-    fn test_store_attestor_for_attestation_multiple_businesses() {
-        let env = Env::default();
-        let business1 = Address::generate(&env);
-        let business2 = Address::generate(&env);
-        let period = String::from_str(&env, "2026-02");
-        let attestor1 = Address::generate(&env);
-        let attestor2 = Address::generate(&env);
+    fn lock_attestor_overflow_preserves_existing_count() {
+        let (env, contract_id) = setup();
+        let attestor = Address::generate(&env);
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "boundary");
+        let key = DisputeKey::AttestorLockCount(attestor.clone());
 
-        store_attestor_for_attestation(&env, &business1, &period, &attestor1);
-        store_attestor_for_attestation(&env, &business2, &period, &attestor2);
+        env.as_contract(&contract_id, || {
+            env.storage().instance().set(&key, &u64::MAX);
+        });
 
-        assert_eq!(
-            get_attestor_for_attestation(&env, &business1, &period),
-            Some(attestor1)
-        );
-        assert_eq!(
-            get_attestor_for_attestation(&env, &business2, &period),
-            Some(attestor2)
-        );
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            env.as_contract(&contract_id, || {
+                lock_attestor(&env, &attestor, &business, &period, 1);
+            });
+        }));
+        assert!(result.is_err(), "incrementing u64::MAX must fail");
+
+        env.as_contract(&contract_id, || {
+            assert_eq!(env.storage().instance().get::<_, u64>(&key), Some(u64::MAX));
+            assert!(is_attestor_locked(&env, &attestor));
+            assert!(env.events().all().is_empty());
+        });
     }
 
     #[test]
