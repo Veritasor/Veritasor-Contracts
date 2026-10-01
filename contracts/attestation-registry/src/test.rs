@@ -761,7 +761,7 @@ fn has_attestation_key_is_read_only() {
 fn query_functions_do_not_require_auth() {
     // Query functions should be callable without authorization.
     let env = Env::default();
-    // Do NOT mock auths — queries should work regardless
+    // Do NOT mock auths �?" queries should work regardless
     let registry_id = env.register(AttestationRegistry, ());
     let client = AttestationRegistryClient::new(&env, &registry_id);
 
@@ -895,4 +895,78 @@ fn transfer_admin_is_a_noop_on_version_info() {
     let after = client.get_version_info().unwrap().version;
     assert_eq!(after, before);
     assert_eq!(client.get_admin(), Some(new_admin));
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  register_attestation_key — adversarial coverage (#852)
+// ════════════════════════════════════════════════════════════════════
+
+/// Missing authorization for the `attester` must be rejected and leave no key.
+#[test]
+fn register_key_requires_attester_authorization() {
+    let (env, client, _admin, _impl) = setup();
+    let attester = Address::generate(&env);
+    let key = soroban_sdk::String::from_str(&env, "2024-Q1");
+
+    // Replace the blanket auth mock with none so `require_auth` is enforced.
+    env.mock_auths(&[]);
+
+    let result = client.try_register_attestation_key(&attester, &key);
+    assert!(
+        result.is_err(),
+        "unauthenticated registration must be rejected"
+    );
+    assert!(!client.has_attestation_key(&attester, &key));
+}
+
+/// A rejected duplicate must not overwrite or clear the existing registration.
+#[test]
+fn rejected_duplicate_keeps_existing_registration() {
+    let (env, client, _admin, _impl) = setup();
+    let attester = Address::generate(&env);
+    let key = soroban_sdk::String::from_str(&env, "2024-Q1");
+
+    client.register_attestation_key(&attester, &key);
+    let duplicate = client.try_register_attestation_key(&attester, &key);
+    assert!(
+        duplicate.is_err(),
+        "duplicate registration must be rejected"
+    );
+
+    // The initial registration is untouched by the rejected call.
+    assert!(client.has_attestation_key(&attester, &key));
+}
+
+/// Empty key is a valid boundary value: accepted once, then guarded as a key.
+#[test]
+fn empty_key_is_a_valid_boundary_and_guarded() {
+    let (env, client, _admin, _initial_impl) = setup();
+    let attester = Address::generate(&env);
+    let empty = soroban_sdk::String::from_str(&env, "");
+
+    client.register_attestation_key(&attester, &empty);
+    assert!(client.has_attestation_key(&attester, &empty));
+
+    let duplicate = client.try_register_attestation_key(&attester, &empty);
+    assert!(duplicate.is_err(), "empty key must still be un-reusable");
+}
+
+/// Registrations are namespaced by both `attester` and `key`.
+#[test]
+fn registrations_are_isolated_per_attester_and_key() {
+    let (env, client, _admin, _initial_impl) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let key_x = soroban_sdk::String::from_str(&env, "X");
+    let key_y = soroban_sdk::String::from_str(&env, "Y");
+
+    client.register_attestation_key(&alice, &key_x);
+    client.register_attestation_key(&bob, &key_x);
+    client.register_attestation_key(&alice, &key_y);
+
+    assert!(client.has_attestation_key(&alice, &key_x));
+    assert!(client.has_attestation_key(&bob, &key_x));
+    assert!(client.has_attestation_key(&alice, &key_y));
+    // A pair that was never registered stays absent.
+    assert!(!client.has_attestation_key(&bob, &key_y));
 }
