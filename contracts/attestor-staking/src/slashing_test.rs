@@ -1183,9 +1183,7 @@ fn test_condition_catalog_slashes_apply_once_per_condition() {
     );
 
     // Repeating the same condition id is deduplicated (no further deduction).
-    let result = env.as_contract(&dispute_contract, || {
-        client.try_slash(&attestor, &1000, &2)
-    });
+    let result = env.as_contract(&dispute_contract, || client.try_slash(&attestor, &1000, &2));
     assert!(result.is_err());
     let stake = client.get_stake(&attestor).unwrap();
     assert_eq!(stake.amount, 3000);
