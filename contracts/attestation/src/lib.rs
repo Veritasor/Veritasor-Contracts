@@ -3976,6 +3976,18 @@ mod verify_attestation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod verify_attestations_batch_test;
 
+/// Adversarial tests for `dispute::is_attestor_locked` (issue #943).
+#[cfg(test)]
+mod is_attestor_locked_test;
+
+/// Adversarial tests for `dispute::has_existing_dispute` (issue #927).
+#[cfg(test)]
+mod has_existing_dispute_test;
+
+/// Adversarial tests for `dispute::has_open_dispute` (issue #932).
+#[cfg(test)]
+mod has_open_dispute_test;
+
 #[cfg(test)]
 mod relayer_gas_attribution_test {
     use super::*;
@@ -4357,11 +4369,3 @@ mod relayer_gas_attribution_test {
         );
     }
 }
-
-/// Adversarial tests for `dispute::has_existing_dispute` (issue #927).
-#[cfg(test)]
-mod has_existing_dispute_test;
-
-/// Adversarial tests for `dispute::has_open_dispute` (issue #932).
-#[cfg(test)]
-mod has_open_dispute_test;
