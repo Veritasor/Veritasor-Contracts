@@ -38,6 +38,22 @@ fn setup_env() -> (
     (env, admin, core_client, access_list_client, consumer_client)
 }
 
+fn register_business(
+    env: &Env,
+    client: &AttestationContractClient,
+    admin: &Address,
+    business: &Address,
+) {
+    client.grant_role(admin, business, &4u32);
+    client.register_business(
+        business,
+        &BytesN::from_array(env, &[1u8; 32]),
+        &soroban_sdk::Symbol::new(env, "US"),
+        &Vec::new(env),
+    );
+    client.approve_business(admin, business);
+}
+
 fn setup_lender(
     env: &Env,
     client: &LenderAccessListContractClient,
@@ -59,6 +75,7 @@ fn test_lender_consumer_observes_revocation_state() {
 
     let lender = Address::generate(&env);
     let business = Address::generate(&env);
+    register_business(&env, &core_client, &_admin, &business);
     let period = String::from_str(&env, "2023-Q3");
 
     // Add lender to access list (Tier 1)
@@ -108,6 +125,7 @@ fn test_lender_consumer_observes_revocation_state_multi_period() {
 
     let lender = Address::generate(&env);
     let business = Address::generate(&env);
+    register_business(&env, &core_client, &_admin, &business);
     let period1 = String::from_str(&env, "2023-Q1");
     let period2 = String::from_str(&env, "2023-Q2");
 

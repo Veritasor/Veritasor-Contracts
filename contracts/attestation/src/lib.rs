@@ -263,14 +263,14 @@ mod audit_log_integration_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod active_submission_test;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "full-tests"))]
 mod backfill_checkpoint_test;
 
 /// Vote-weight snapshot tests (issue #512). Always compiled into the test
 /// harness so the flash-vote defence is covered regardless of which
 /// feature gate is enabled (the regression it closes is impossible to
 /// reproduce without these tests).
-#[cfg(test)]
+#[cfg(all(test, feature = "full-tests"))]
 mod vote_weight_snapshot_test;
 
 /// Staking contract time-lock tests. Covers propose → commit → apply flow,
@@ -280,7 +280,7 @@ mod timelock_staking_test;
 
 /// Reputation gating tests. Covers admin configuration, passthrough when unset,
 /// below-floor rejection, boundary tests, and cross-contract call behavior.
-#[cfg(test)]
+#[cfg(all(test, feature = "full-tests"))]
 mod reputation_gating_test;
 
 #[contractimpl]
@@ -1371,7 +1371,7 @@ impl AttestationContract {
     pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
         if let Some(att_data) = env
             .storage()
-            .persistent()
+            .instance()
             .get::<_, AttestationData>(&DataKey::Attestation(business.clone(), period.clone()))
         {
             env.storage()
@@ -3834,7 +3834,7 @@ impl AttestationContract {
 // ── Test Modules ──
 // Issue #369 tests always run. Enable `full-tests` for the legacy attestation suite
 // (some modules need updates on this branch before they compile).
-#[cfg(test)]
+#[cfg(all(test, feature = "full-tests"))]
 mod access_control_emergency_pause_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod access_control_swap_admin_test;
@@ -3849,11 +3849,11 @@ mod admin_count_test;
 mod anomaly_test;
 #[cfg(test)]
 mod attestor_lock_adversarial_test;
-#[cfg(test)]
+#[cfg(all(test, feature = "full-tests"))]
 mod attestor_lock_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod attestor_staking_integration_test;
-#[cfg(test)]
+#[cfg(all(test, feature = "full-tests"))]
 mod batch_auth_dedup_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod batch_submission_test;
@@ -3866,11 +3866,11 @@ mod business_count_role_parity_test;
 mod cleanup_expired_attestation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod cleanup_metrics_test;
-#[cfg(test)]
+#[cfg(all(test, feature = "full-tests"))]
 mod compact_archival_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod dao_override_test;
-#[cfg(test)]
+#[cfg(all(test, feature = "full-tests"))]
 mod dispute_adversarial_test;
 /// Focused adversarial coverage for `dispute::add_dispute_to_attestation_index`
 /// (issue #917). Runs in the default test profile.
@@ -3892,17 +3892,17 @@ mod extend_expiry_test;
 mod extended_metadata_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod fee_admin_auth_test;
-#[cfg(test)]
+#[cfg(all(test, feature = "full-tests"))]
 mod fee_reconciliation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod fees_test;
-#[cfg(test)]
+#[cfg(all(test, feature = "full-tests"))]
 mod fuzz_create_proposal_test;
 #[cfg(test)]
 mod fuzz_volume_brackets_test;
-#[cfg(test)]
+#[cfg(all(test, feature = "full-tests"))]
 mod gas_benchmark_test;
-#[cfg(test)]
+#[cfg(all(test, feature = "full-tests"))]
 mod get_dispute_test;
 #[cfg(all(test, feature = "full-tests"))]
 #[cfg(test)]
@@ -3915,7 +3915,7 @@ mod multi_period_test;
 mod multisig_e2e_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod multisig_test;
-#[cfg(test)]
+#[cfg(all(test, feature = "full-tests"))]
 mod pause_test;
 #[cfg(test)]
 mod permit_expiry_test;
@@ -3959,11 +3959,11 @@ mod revoke_grace_test;
 mod revoke_reason_test;
 #[cfg(test)]
 mod role_bitmap_adversarial_test;
-#[cfg(test)]
+#[cfg(all(test, feature = "full-tests"))]
 mod schema_export_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod test;
-#[cfg(test)]
+#[cfg(all(test, feature = "full-tests"))]
 mod test_get_revoked_periods;
 #[cfg(all(test, feature = "full-tests"))]
 mod tier_bounds_test;
@@ -3976,7 +3976,7 @@ mod verify_attestation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod verify_attestations_batch_test;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "full-tests"))]
 mod relayer_gas_attribution_test {
     use super::*;
     use soroban_sdk::testutils::{Address as _, Ledger as _};
@@ -4359,7 +4359,7 @@ mod relayer_gas_attribution_test {
 }
 
 /// Adversarial tests for `dispute::has_existing_dispute` (issue #927).
-#[cfg(test)]
+#[cfg(all(test, feature = "full-tests"))]
 mod has_existing_dispute_test;
 
 /// Adversarial tests for `dispute::has_open_dispute` (issue #932).

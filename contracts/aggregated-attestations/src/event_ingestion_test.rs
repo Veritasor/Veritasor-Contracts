@@ -98,6 +98,24 @@ fn setup_harness() -> Harness<'static> {
     }
 }
 
+impl Harness<'_> {
+    /// Register `business` with the attestation contract and approve it so it
+    /// passes the active-business gate enforced by `submit_attestation`.
+    fn ensure_business(&self, business: &Address) {
+        if self.att_client.is_business_active(business) {
+            return;
+        }
+        self.att_client.grant_role(&self.admin, business, &4u32);
+        self.att_client.register_business(
+            business,
+            &BytesN::from_array(&self.env, &[1u8; 32]),
+            &symbol_short!("US"),
+            &Vec::new(&self.env),
+        );
+        self.att_client.approve_business(&self.admin, business);
+    }
+}
+
 /// Simulate the off-chain indexer: assert the `att_sub` event was emitted for
 /// `(business, period)` and then drive `record_snapshot` on the snapshot contract.
 ///
@@ -171,6 +189,7 @@ fn test_n_submissions_produce_n_window_counts() {
 
     // Submit one attestation per business and simulate indexer ingestion.
     for biz in &businesses {
+        h.ensure_business(biz);
         h.att_client.submit_attestation(
             biz,
             &String::from_str(&h.env, period),
@@ -223,6 +242,8 @@ fn test_two_window_per_window_counters() {
     let portfolio_id = String::from_str(&h.env, "portfolio-2w");
     h.agg_client
         .register_portfolio(&h.admin, &1u64, &portfolio_id, &biz_vec);
+
+    h.ensure_business(&biz);
 
     let root1 = BytesN::from_array(&h.env, &[0x11u8; 32]);
     let root2 = BytesN::from_array(&h.env, &[0x22u8; 32]);
@@ -320,6 +341,7 @@ fn test_duplicate_snapshot_delivery_does_not_double_count() {
     let root = BytesN::from_array(&h.env, &[0xCCu8; 32]);
     let ts = h.env.ledger().timestamp();
 
+    h.ensure_business(&biz);
     h.att_client
         .submit_attestation(&biz, &period_str, &root, &ts, &1u32, &0i128, &None, &None);
 
@@ -416,6 +438,7 @@ fn test_business_without_snapshot_contributes_zero() {
     let period_str = String::from_str(&h.env, "2026-04");
 
     for biz in [&biz_with, &biz_with2] {
+        h.ensure_business(biz);
         h.att_client
             .submit_attestation(biz, &period_str, &root, &ts, &1u32, &0i128, &None, &None);
         assert!(assert_event_and_record_snapshot(
@@ -478,6 +501,7 @@ fn test_attestation_submitted_event_topic_is_stable() {
     let root = BytesN::from_array(&h.env, &[0xEEu8; 32]);
     let ts = h.env.ledger().timestamp();
 
+    h.ensure_business(&biz);
     h.att_client
         .submit_attestation(&biz, &period, &root, &ts, &1u32, &0i128, &None, &None);
 
@@ -536,6 +560,7 @@ fn test_csv_row_of_window_totals() {
     let period = "2026-06";
 
     for (biz, rev) in businesses.iter().zip(revenues.iter()) {
+        h.ensure_business(biz);
         h.att_client.submit_attestation(
             biz,
             &String::from_str(&h.env, period),
