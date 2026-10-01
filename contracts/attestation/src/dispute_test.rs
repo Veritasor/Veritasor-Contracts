@@ -1176,6 +1176,164 @@ fn test_submit_dispute_witness_dispute_not_open_rejected() {
 }
 
 // ════════════════════════════════════════════════════════════════════
+//  submit_dispute_witness — adversarial / boundary coverage
+// ════════════════════════════════════════════════════════════════════
+//
+// `submit_dispute_witness` has three state-dependent early returns before it
+// verifies anything: unknown dispute id, dispute not Open, and a missing
+// attestation. Its proof check is also boundary-sensitive: an empty proof is a
+// valid membership proof ONLY when the leaf is the root (single-leaf tree).
+
+#[test]
+fn test_submit_dispute_witness_unknown_dispute_rejected() {
+    let (env, client) = setup();
+
+    let leaf = BytesN::from_array(&env, &[10u8; 32]);
+    let proof = soroban_sdk::Vec::<BytesN<32>>::new(&env);
+
+    // No dispute with this id has ever been stored.
+    let res = client.try_submit_dispute_witness(&9_999u64, &leaf, &proof);
+    assert!(res.is_err());
+
+    // Rejection must not create a dispute record.
+    assert!(client.get_dispute(&9_999u64).is_none());
+}
+
+#[test]
+fn test_submit_dispute_witness_single_leaf_empty_proof_resolves() {
+    let (env, client) = setup();
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-04");
+    let leaf = BytesN::from_array(&env, &[7u8; 32]);
+    // Single-leaf tree: the leaf *is* the root, so an empty proof is valid.
+    let root = leaf.clone();
+
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    let challenger = Address::generate(&env);
+    let dispute_id = client.open_dispute(
+        &challenger,
+        &business,
+        &period,
+        &DisputeType::DataIntegrity,
+        &String::from_str(&env, "single-leaf witness"),
+    );
+
+    let proof = soroban_sdk::Vec::<BytesN<32>>::new(&env);
+    client.submit_dispute_witness(&dispute_id, &leaf, &proof);
+
+    let dispute = client.get_dispute(&dispute_id).unwrap();
+    assert_eq!(dispute.status, DisputeStatus::Resolved);
+    match dispute.resolution {
+        OptionalResolution::Some(resolution) => {
+            assert_eq!(resolution.outcome, DisputeOutcome::Upheld);
+            assert_eq!(resolution.resolver, challenger);
+        }
+        OptionalResolution::None => panic!("expected resolution to be recorded"),
+    }
+}
+
+#[test]
+fn test_submit_dispute_witness_empty_proof_rejected_for_multi_leaf_root() {
+    let (env, client) = setup();
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-04");
+
+    let leaf0 = BytesN::from_array(&env, &[10u8; 32]);
+    let leaf1 = BytesN::from_array(&env, &[20u8; 32]);
+    let mut combined = soroban_sdk::Bytes::new(&env);
+    if leaf0 < leaf1 {
+        combined.append(&leaf0.clone().into());
+        combined.append(&leaf1.clone().into());
+    } else {
+        combined.append(&leaf1.clone().into());
+        combined.append(&leaf0.clone().into());
+    }
+    let root: BytesN<32> = env.crypto().sha256(&combined).into();
+
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    let challenger = Address::generate(&env);
+    let dispute_id = client.open_dispute(
+        &challenger,
+        &business,
+        &period,
+        &DisputeType::DataIntegrity,
+        &String::from_str(&env, "empty proof"),
+    );
+
+    // An empty proof only proves membership when the leaf equals the root; for
+    // a two-leaf root it must be rejected with the dispute left untouched.
+    let proof = soroban_sdk::Vec::<BytesN<32>>::new(&env);
+    let res = client.try_submit_dispute_witness(&dispute_id, &leaf0, &proof);
+    assert!(res.is_err());
+
+    let dispute = client.get_dispute(&dispute_id).unwrap();
+    assert_eq!(dispute.status, DisputeStatus::Open);
+    assert_eq!(dispute.resolution, OptionalResolution::None);
+}
+
+#[test]
+fn test_submit_dispute_witness_missing_attestation_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &0u64);
+
+    // Store an Open dispute that points at a business/period with no
+    // attestation, exercising the defensive `attestation not found` branch.
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-05");
+    let orphan = Dispute {
+        id: 4242,
+        challenger: Address::generate(&env),
+        business: business.clone(),
+        attestor: Address::generate(&env),
+        period: period.clone(),
+        status: DisputeStatus::Open,
+        dispute_type: DisputeType::DataIntegrity,
+        evidence: String::from_str(&env, "orphan dispute"),
+        timestamp: 0,
+        resolution: OptionalResolution::None,
+    };
+    env.as_contract(&contract_id, || {
+        dispute::store_dispute(&env, &orphan);
+    });
+
+    let leaf = BytesN::from_array(&env, &[3u8; 32]);
+    let proof = soroban_sdk::Vec::<BytesN<32>>::new(&env);
+    let res = client.try_submit_dispute_witness(&4242u64, &leaf, &proof);
+    assert!(res.is_err());
+
+    // The orphan dispute stays Open and unresolved.
+    let stored = client.get_dispute(&4242u64).unwrap();
+    assert_eq!(stored.status, DisputeStatus::Open);
+    assert_eq!(stored.resolution, OptionalResolution::None);
+}
+
+// ════════════════════════════════════════════════════════════════════
 //  Adversarial coverage: dispute::set_revoked_periods
 //
 //  `set_revoked_periods` is the single raw writer for the per-business
