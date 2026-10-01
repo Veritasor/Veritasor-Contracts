@@ -36,6 +36,8 @@ mod admin_rotation_test;
 mod event_ingestion_test;
 #[cfg(test)]
 mod initialize_test;
+#[cfg(test)]
+mod pending_admin_test;
 
 use veritasor_common::{governance_gating, replay_protection};
 
