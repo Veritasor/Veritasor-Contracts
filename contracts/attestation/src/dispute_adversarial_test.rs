@@ -288,3 +288,119 @@ assert!(
 	"revocation must be scoped to business and period"
 );
 }
+
+#[test]
+fn get_revocation_sequence_returns_none_for_unrevoked_attestation() {
+    let (env, contract) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-09");
+
+    let sequence = in_contract(&env, &contract, |env| {
+        dispute::get_revocation_sequence(env, &business, &period)
+    });
+
+    assert!(sequence.is_none(), "unrevoked attestation has no sequence");
+    assert!(!in_contract(&env, &contract, |env| {
+        dispute::is_attestation_revoked(env, &business, &period)
+    }));
+}
+
+#[test]
+fn get_revocation_sequence_returns_sequence_after_revocation() {
+    let (env, contract) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-09");
+    let reason = String::from_str(&env, "adversarial test revocation");
+    let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
+
+    in_contract(&env, &contract, |env| {
+        dispute::record_revocation(env, &business, &period, &revocation);
+    });
+
+    let sequence = in_contract(&env, &contract, |env| {
+        dispute::get_revocation_sequence(env, &business, &period)
+    });
+
+    assert!(sequence.is_some(), "revoked attestation must have a sequence");
+    assert!(in_contract(&env, &contract, |env| {
+        dispute::is_attestation_revoked(env, &business, &period)
+    }));
+}
+
+#[test]
+fn get_revocation_sequence_is_scoped_to_business_and_period() {
+    let (env, contract) = setup();
+    let business = Address::generate(&env);
+    let other_business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-09");
+    let other_period = String::from_str(&env, "2026-10");
+    let reason = String::from_str(&env, "scoped revocation");
+    let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
+
+    in_contract(&env, &contract, |env| {
+        dispute::record_revocation(env, &business, &period, &revocation);
+    });
+
+    assert!(in_contract(&env, &contract, |env| {
+        dispute::get_revocation_sequence(env, &business, &period)
+    }).is_some());
+    assert!(in_contract(&env, &contract, |env| {
+        dispute::get_revocation_sequence(env, &other_business, &period)
+    }).is_none());
+    assert!(in_contract(&env, &contract, |env| {
+        dispute::get_revocation_sequence(env, &business, &other_period)
+    }).is_none());
+}
+
+#[test]
+fn get_revocation_sequence_is_stable_and_deterministic() {
+    let (env, contract) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-09");
+    let reason = String::from_str(&env, "deterministic revocation");
+    let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
+
+    in_contract(&env, &contract, |env| {
+        dispute::record_revocation(env, &business, &period, &revocation);
+    });
+
+    let first = in_contract(&env, &contract, |env| {
+        dispute::get_revocation_sequence(env, &business, &period)
+    });
+    let second = in_contract(&env, &contract, |env| {
+        dispute::get_revocation_sequence(env, &business, &period)
+    });
+
+    assert_eq!(first, second, "sequence must be stable across calls");
+    assert!(first.is_some());
+}
+
+#[test]
+fn get_revocation_sequence_is_unchanged_after_rejected_update() {
+    let (env, contract) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-09");
+    let reason = String::from_str(&env, "unchanged after rejection");
+    let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
+
+    in_contract(&env, &contract, |env| {
+        dispute::record_revocation(env, &business, &period, &revocation);
+    });
+
+    let before = in_contract(&env, &contract, |env| {
+        dispute::get_revocation_sequence(env, &business, &period)
+    });
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        in_contract(&env, &contract, |env| {
+            dispute::require_not_revoked_for_update(env, &business, &period);
+        });
+    }));
+    assert!(result.is_err());
+
+    let after = in_contract(&env, &contract, |env| {
+        dispute::get_revocation_sequence(env, &business, &period)
+    });
+
+    assert_eq!(before, after, "rejected update must not mutate the sequence");
+}
