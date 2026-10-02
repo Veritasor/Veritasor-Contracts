@@ -1371,7 +1371,7 @@ impl AttestationContract {
     pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
         if let Some(att_data) = env
             .storage()
-            .persistent()
+            .instance()
             .get::<_, AttestationData>(&DataKey::Attestation(business.clone(), period.clone()))
         {
             env.storage()
@@ -1381,24 +1381,20 @@ impl AttestationContract {
         }
 
         // Try reading from archive
-        let archive_key = DataKey::AttestationSnapshot(business.clone(), period.clone());
+        let archive_key = DataKey::ArchivedAttestation(business.clone(), period.clone());
         if let Some(archived_att_data) = env
             .storage()
-            .persistent()
+            .instance()
             .get::<_, AttestationData>(&archive_key)
         {
-            let current_config = network_config::get_config(&env);
-
             // Rehydrate back to active storage
             let active_key = DataKey::Attestation(business.clone(), period.clone());
             env.storage()
-                .persistent()
+                .instance()
                 .set(&active_key, &archived_att_data);
-            env.storage().persistent().extend_ttl(
-                &active_key,
-                current_config.min_persistent_entry_ttl,
-                current_config.max_entry_ttl,
-            );
+            env.storage()
+                .instance()
+                .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
 
             // Emit rehydrate event
             events::emit_rehydrated_from_archive(&env, &business, &period, archived_att_data.3);
@@ -1861,12 +1857,9 @@ impl AttestationContract {
                 .instance()
                 .get::<_, AttestationData>(&DataKey::Attestation(business.clone(), period.clone()))
             {
-                let current_config = network_config::get_config(&env);
-                env.storage().persistent().extend_ttl(
-                    &DataKey::Attestation(business.clone(), period.clone()),
-                    current_config.min_persistent_entry_ttl,
-                    current_config.max_entry_ttl,
-                );
+                env.storage()
+                    .instance()
+                    .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
                 result.push_back((
                     period.clone(),
                     Some(att_data.clone()),
@@ -1876,23 +1869,19 @@ impl AttestationContract {
             }
 
             if !found {
-                let archive_key = DataKey::AttestationSnapshot(business.clone(), period.clone());
+                let archive_key = DataKey::ArchivedAttestation(business.clone(), period.clone());
                 if let Some(archived_att_data) = env
                     .storage()
-                    .persistent()
+                    .instance()
                     .get::<_, AttestationData>(&archive_key)
                 {
-                    let current_config = network_config::get_config(&env);
-
                     let active_key = DataKey::Attestation(business.clone(), period.clone());
                     env.storage()
-                        .persistent()
+                        .instance()
                         .set(&active_key, &archived_att_data);
-                    env.storage().persistent().extend_ttl(
-                        &active_key,
-                        current_config.min_persistent_entry_ttl,
-                        current_config.max_entry_ttl,
-                    );
+                    env.storage()
+                        .instance()
+                        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
 
                     events::emit_rehydrated_from_archive(
                         &env,
@@ -1900,7 +1889,7 @@ impl AttestationContract {
                         &period,
                         archived_att_data.3,
                     );
-                    env.storage().persistent().remove(&archive_key);
+                    env.storage().instance().remove(&archive_key);
 
                     result.push_back((
                         period.clone(),
