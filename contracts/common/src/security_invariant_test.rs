@@ -15,7 +15,7 @@
 
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, Env, String};
-use veritasor_attestation::{AttestationContract, AttestationContractClient};
+use veritasor_attestation::{AttestationContract, AttestationContractClient, ROLE_BUSINESS};
 use veritasor_integration_registry::{
     IntegrationRegistryContract, IntegrationRegistryContractClient, ProviderMetadata,
 };
@@ -40,6 +40,22 @@ fn setup_registry(env: &Env) -> (IntegrationRegistryContractClient<'_>, Address)
     let admin = Address::generate(env);
     client.initialize(&admin, &0u64);
     (client, admin)
+}
+
+/// Register and approve `business` so it is permitted to submit attestations.
+fn register_business(
+    client: &AttestationContractClient<'_>,
+    admin: &Address,
+    business: &Address,
+) {
+    client.grant_role(admin, business, &ROLE_BUSINESS);
+    client.register_business(
+        business,
+        &soroban_sdk::BytesN::from_array(&client.env, &[1u8; 32]),
+        &soroban_sdk::Symbol::new(&client.env, "US"),
+        &soroban_sdk::Vec::new(&client.env),
+    );
+    client.approve_business(admin, business);
 }
 
 fn dummy_provider_meta(env: &Env) -> ProviderMetadata {
@@ -159,10 +175,11 @@ fn invariant_attestation_grant_invalid_role_bitmap_panics() {
 fn invariant_attestation_no_duplicate_submission() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _admin) = setup_attestation(&env);
+    let (client, admin) = setup_attestation(&env);
     let business = Address::generate(&env);
     let period = String::from_str(&env, "202401");
     let root = soroban_sdk::BytesN::from_array(&env, &[1u8; 32]);
+    register_business(&client, &admin, &business);
     client.submit_attestation(
         &business, &period, &root, &1000u64, &1u32, &0i128, &None, &None,
     );
@@ -178,9 +195,10 @@ fn invariant_attestation_no_duplicate_submission() {
 fn invariant_attestation_different_periods_both_succeed() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _admin) = setup_attestation(&env);
+    let (client, admin) = setup_attestation(&env);
     let business = Address::generate(&env);
     let root = soroban_sdk::BytesN::from_array(&env, &[2u8; 32]);
+    register_business(&client, &admin, &business);
     client.submit_attestation(
         &business,
         &String::from_str(&env, "202401"),
@@ -209,11 +227,13 @@ fn invariant_attestation_different_periods_both_succeed() {
 fn invariant_attestation_different_businesses_same_period_both_succeed() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _admin) = setup_attestation(&env);
+    let (client, admin) = setup_attestation(&env);
     let biz_a = Address::generate(&env);
     let biz_b = Address::generate(&env);
     let period = String::from_str(&env, "202401");
     let root = soroban_sdk::BytesN::from_array(&env, &[3u8; 32]);
+    register_business(&client, &admin, &biz_a);
+    register_business(&client, &admin, &biz_b);
     client.submit_attestation(
         &biz_a, &period, &root, &1000u64, &1u32, &0i128, &None, &None,
     );
@@ -317,6 +337,7 @@ fn invariant_attestation_submit_restored_after_unpause() {
     client.unpause(&admin, &2u64);
     let business = Address::generate(&env);
     let root = soroban_sdk::BytesN::from_array(&env, &[6u8; 32]);
+    register_business(&client, &admin, &business);
     // Must not panic after unpause.
     client.submit_attestation(
         &business,
