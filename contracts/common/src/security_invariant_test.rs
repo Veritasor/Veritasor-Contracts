@@ -43,11 +43,7 @@ fn setup_registry(env: &Env) -> (IntegrationRegistryContractClient<'_>, Address)
 }
 
 /// Register and approve `business` so it is permitted to submit attestations.
-fn register_business(
-    client: &AttestationContractClient<'_>,
-    admin: &Address,
-    business: &Address,
-) {
+fn register_business(client: &AttestationContractClient<'_>, admin: &Address, business: &Address) {
     client.grant_role(admin, business, &ROLE_BUSINESS);
     client.register_business(
         business,
