@@ -18,7 +18,7 @@ use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{Address, Env, String, Vec};
 
 /// Fresh contract initialised with `admin` and a zero replay nonce.
-fn new_client(env: &Env, admin: &Address) -> AggregatedAttestationsContractClient<'_> {
+fn new_client<'a>(env: &'a Env, admin: &Address) -> AggregatedAttestationsContractClient<'a> {
     let contract_address = env.register_contract(None, AggregatedAttestationsContract);
     let client = AggregatedAttestationsContractClient::new(env, &contract_address);
     client.initialize(admin, &0u64);

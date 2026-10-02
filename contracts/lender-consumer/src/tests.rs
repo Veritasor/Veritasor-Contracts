@@ -4,7 +4,9 @@ use crate::{LenderConsumerContract, LenderConsumerContractClient, REJECTION_REVO
 use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String, Vec};
 use veritasor_attestation::AttestationContract;
 use veritasor_attestation::AttestationContractClient;
-use veritasor_lender_access_list::{LenderAccessListClient, LenderAccessListContract};
+use veritasor_lender_access_list::{
+    LenderAccessListContract, LenderAccessListContractClient, LenderMetadata,
+};
 
 fn setup_env() -> (
     Env,
@@ -34,6 +36,21 @@ fn setup_env() -> (
     consumer_client.initialize(&admin, &core_id, &access_list_id);
 
     (env, admin, core_client, access_list_client, consumer_client)
+}
+
+/// Enroll `lender` in the access list at `tier` using the contract's admin.
+fn setup_lender(
+    client: &LenderAccessListContractClient<'_>,
+    admin: &Address,
+    lender: &Address,
+    tier: u32,
+) {
+    let metadata = LenderMetadata {
+        name: String::from_str(&client.env, "Test Lender"),
+        url: String::from_str(&client.env, "https://example.com"),
+        notes: String::from_str(&client.env, ""),
+    };
+    client.set_lender(admin, lender, &tier, &metadata);
 }
 
 #[test]
