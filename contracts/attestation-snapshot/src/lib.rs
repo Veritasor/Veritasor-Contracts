@@ -1000,12 +1000,64 @@ impl AttestationSnapshotContract {
     pub fn get_max_period_bytes(_env: Env) -> u32 {
         MAX_PERIOD_BYTES
     }
+
+    #[cfg(test)]
+    pub fn test_get_max_period_bytes(env: Env) -> u32 {
+        Self::get_max_period_bytes(env)
+    }
+
+    #[cfg(test)]
+    pub fn test_get_max_business_periods(env: Env) -> u32 {
+        Self::get_max_business_periods(env)
+    }
+
+    #[cfg(test)]
+    pub fn test_get_max_epoch_businesses(env: Env) -> u32 {
+        Self::get_max_epoch_businesses(env)
+    }
+
     pub fn get_max_business_periods(_env: Env) -> u32 {
         MAX_BUSINESS_PERIODS
     }
     pub fn get_max_epoch_businesses(_env: Env) -> u32 {
         MAX_EPOCH_BUSINESSES
     }
+
+    #[cfg(test)]
+    pub fn test_record_snapshot(
+        env: Env,
+        caller: Address,
+        business: Address,
+        period: String,
+        trailing_revenue: i128,
+        anomaly_count: u32,
+        attestation_count: u64,
+    ) {
+        Self::record_snapshot(
+            env,
+            caller,
+            business,
+            period,
+            trailing_revenue,
+            anomaly_count,
+            attestation_count,
+        );
+    }
+
+    #[cfg(test)]
+    pub fn test_get_snapshot(
+        env: Env,
+        business: Address,
+        period: String,
+    ) -> Option<SnapshotRecord> {
+        Self::get_snapshot(env, business, period)
+    }
+
+    #[cfg(test)]
+    pub fn test_get_snapshots_for_business(env: Env, business: Address) -> Vec<SnapshotRecord> {
+        Self::get_snapshots_for_business(env, business)
+    }
+
 
     // ── Snapshot commitment ───────────────────────────────────────────
 
@@ -1644,6 +1696,257 @@ mod get_pending_restore_adversarial_tests {
 
 #[cfg(test)]
 mod finalize_epoch_test;
+#[cfg(test)]
+mod get_max_period_bytes_test;
+
+        if page_size == 0 {
+            return all;
+        }
+
+        let start: u32 = page * page_size;
+        let mut result = Vec::new(&env);
+        let mut i = start;
+        while i < all.len() && (i - start) < page_size {
+            result.push_back(all.get(i).unwrap());
+            i += 1;
+        }
+        result
+    }
+
+    /// Total number of unique epoch identifiers tracked.
+    pub fn get_total_epoch_count(env: Env) -> u32 {
+        let all: Vec<String> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AllEpochs)
+            .unwrap_or_else(|| Vec::new(&env));
+        all.len()
+    }
+
+    /// Export a deterministic commitment over all snapshot data stored in this
+    /// contract. An auditor can independently page through all data, recompute the
+    /// same hash, and verify integrity: trust nothing beyond published wasm and
+    /// public RPC.
+    ///
+    /// # Algorithm
+    ///
+    /// 1. Collect all live snapshot records from contract storage.
+    /// 2. Canonicalize each record into a stable byte encoding.
+    /// 3. Sort the canonical entries by their encoded bytes.
+    /// 4. Hash the sorted entries with SHA-256.
+    ///
+    /// The resulting commitment is order-independent, so the same snapshot set
+    /// produces the same hash even when records were inserted in different orders.
+    pub fn export_snapshot_commitment(env: Env) -> BytesN<32> {
+        let (commitment, _) = Self::export_commitment_with_count(env);
+        commitment
+    }
+
+    /// Export a deterministic commitment and the number of live snapshot entries.
+    pub fn export_commitment_with_count(env: Env) -> (BytesN<32>, u64) {
+        let mut entries = Vec::new(&env);
+        let all_epochs: Vec<String> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AllEpochs)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        for i in 0..all_epochs.len() {
+            let epoch = all_epochs.get(i).unwrap();
+            let businesses: Vec<Address> = Self::read_epoch_businesses(&env, &epoch);
+
+            for j in 0..businesses.len() {
+                let business = businesses.get(j).unwrap();
+                let periods_key = DataKey::BusinessPeriods(business.clone());
+                let periods: Vec<String> = env
+                    .storage()
+                    .instance()
+                    .get(&periods_key)
+                    .unwrap_or_else(|| Vec::new(&env));
+
+                for k in 0..periods.len() {
+                    let period = periods.get(k).unwrap();
+                    let snap_key = DataKey::Snapshot(business.clone(), period.clone());
+                    if let Some(record) =
+                        env.storage().instance().get::<_, SnapshotRecord>(&snap_key)
+                    {
+                        entries.push_back(Self::canonicalize_snapshot_record(&env, &record));
+                    }
+                }
+            }
+        }
+
+        // Deterministic canonical ordering. `soroban_sdk::Vec` has no sort in
+        // this SDK version, so insertion-sort in place; snapshot counts are
+        // bounded by the export caps above.
+        for i in 1..entries.len() {
+            let mut j = i;
+            while j > 0 {
+                let prev = entries.get(j - 1).unwrap();
+                let cur = entries.get(j).unwrap();
+                if prev.partial_cmp(&cur).unwrap_or(core::cmp::Ordering::Equal)
+                    != core::cmp::Ordering::Greater
+                {
+                    break;
+                }
+                entries.set(j, prev);
+                entries.set(j - 1, cur);
+                j -= 1;
+            }
+        }
+
+        let mut body = Bytes::new(&env);
+        for i in 0..entries.len() {
+            let entry = entries.get(i).unwrap();
+            body.append(&entry);
+        }
+
+        let commitment: BytesN<32> = env.crypto().sha256(&body).into();
+        (commitment, entries.len() as u64)
+    }
+
+    fn canonicalize_snapshot_record(env: &Env, record: &SnapshotRecord) -> Bytes {
+        let mut bytes = Bytes::new(env);
+        bytes.append(&record.period.clone().to_xdr(env));
+        bytes.append(&record.trailing_revenue.to_le_bytes().as_slice().to_xdr(env));
+        bytes.append(&record.anomaly_count.to_le_bytes().as_slice().to_xdr(env));
+        bytes.append(
+            &record
+                .attestation_count
+                .to_le_bytes()
+                .as_slice()
+                .to_xdr(env),
+        );
+        bytes.append(&record.recorded_at.to_le_bytes().as_slice().to_xdr(env));
+        bytes
+    }
+
+    // ── Internal ────────────────────────────────────────────────────
+
+    fn require_admin(env: &Env, caller: &Address) {
+        caller.require_auth();
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("contract not initialized");
+        assert!(*caller == admin, "caller is not admin");
+    }
+
+    fn require_admin_or_writer(env: &Env, caller: &Address) {
+        caller.require_auth();
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("contract not initialized");
+        let is_writer: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::Writer(caller.clone()))
+            .unwrap_or(false);
+        assert!(
+            *caller == admin || is_writer,
+            "caller must be admin or writer"
+        );
+    }
+
+    fn has_epoch_finalization(env: &Env, epoch: &String) -> bool {
+        env.storage()
+            .instance()
+            .has(&DataKey::EpochFinalization(epoch.clone()))
+    }
+
+    fn read_epoch_businesses(env: &Env, epoch: &String) -> Vec<Address> {
+        env.storage()
+            .instance()
+            .get(&DataKey::EpochBusinesses(epoch.clone()))
+            .unwrap_or_else(|| Vec::new(env))
+    }
+
+    fn index_period_for_business(env: &Env, business: &Address, period: &String) {
+        let key = DataKey::BusinessPeriods(business.clone());
+        let mut periods: Vec<String> = env
+            .storage()
+            .instance()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(env));
+        for i in 0..periods.len() {
+            if periods.get(i).unwrap() == *period {
+                return;
+            }
+        }
+        assert!(
+            periods.len() < MAX_BUSINESS_PERIODS,
+            "business period index limit reached"
+        );
+        periods.push_back(period.clone());
+        env.storage().instance().set(&key, &periods);
+    }
+
+    fn index_business_for_epoch(env: &Env, epoch: &String, business: &Address) {
+        let key = DataKey::EpochBusinesses(epoch.clone());
+        let mut businesses: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(env));
+        for i in 0..businesses.len() {
+            if businesses.get(i).unwrap() == *business {
+                return;
+            }
+        }
+        assert!(
+            businesses.len() < MAX_EPOCH_BUSINESSES,
+            "epoch business index limit reached"
+        );
+        businesses.push_back(business.clone());
+        env.storage().instance().set(&key, &businesses);
+    }
+
+    fn assert_period_within_limit(period: &String) {
+        assert!(period.len() <= MAX_PERIOD_BYTES, "period exceeds max bytes");
+    }
+
+    fn index_epoch_globally(env: &Env, epoch: &String) {
+        let key = DataKey::AllEpochs;
+        let mut epochs: Vec<String> = env
+            .storage()
+            .instance()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(env));
+
+        for i in 0..epochs.len() {
+            if epochs.get(i).unwrap() == *epoch {
+                return;
+            }
+        }
+
+        epochs.push_back(epoch.clone());
+        env.storage().instance().set(&key, &epochs);
+    }
+
+    /// Compute a SHA-256 hash of the canonical restore batch data.
+    ///
+    /// The hash covers the ordered sequence of (business, period, schema_version)
+    /// tuples to bind the commit to the exact entries validated by dry-run.
+    fn compute_batch_hash(env: &Env, entries: &Vec<RestoreEntry>) -> soroban_sdk::BytesN<32> {
+        let mut buffer = Bytes::new(env);
+        for i in 0..entries.len() {
+            let entry = entries.get(i).unwrap();
+            buffer.append(&entry.business.to_xdr(env));
+            buffer.append(&entry.period.clone().to_xdr(env));
+            buffer.append(&entry.schema_version.to_xdr(env));
+        }
+        env.crypto().sha256(&buffer).into()
+    }
+}
+
+#[cfg(test)]
+mod snapshot_ttl_test;
 
 #[cfg(test)]
 mod restore_commit_adversarial_test;
+
+#[cfg(test)]
+mod finalize_epoch_test;

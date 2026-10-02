@@ -926,6 +926,185 @@ fn test_restore_version_mismatch_event_emitted() {
     assert_eq!(evt.expected_version, SNAPSHOT_SCHEMA_VERSION);
     assert_eq!(evt.detected_at, 5_000_000);
 }
+// ── get_max_period_bytes ──────────────────────────────────────────────
+
+#[test]
+fn test_get_max_period_bytes_returns_configured_default() {
+    let (_env, client, _admin) = setup_snapshot_only();
+    // The default maximum period length is 64 bytes.
+    assert_eq!(client.get_max_period_bytes(), 64u32);
+}
+
+#[test]
+fn test_get_max_period_bytes_is_deterministic() {
+    let (_env, client, _admin) = setup_snapshot_only();
+    let first = client.get_max_period_bytes();
+    let second = client.get_max_period_bytes();
+    assert_eq!(first, second);
+}
+
+#[test]
+fn test_get_max_period_bytes_unchanged_after_record() {
+    let (env, client, admin) = setup_snapshot_only();
+    let before = client.get_max_period_bytes();
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-01");
+    client.record_snapshot(&admin, &business, &period, &100_000i128, &0u32, &1u64);
+
+    // Recording a snapshot must not mutate the configured limit.
+    assert_eq!(client.get_max_period_bytes(), before);
+}
+
+#[test]
+fn test_get_max_period_bytes_unchanged_after_finalize_epoch() {
+    let (env, client, admin) = setup_snapshot_only();
+    let before = client.get_max_period_bytes();
+
+    let business = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-01");
+    client.record_snapshot(&admin, &business, &epoch, &100_000i128, &0u32, &1u64);
+    client.finalize_epoch(&admin, &epoch);
+
+    assert_eq!(client.get_max_period_bytes(), before);
+}
+
+#[test]
+fn test_get_max_period_bytes_unchanged_after_writer_mutations() {
+    let (env, client, admin) = setup_snapshot_only();
+    let before = client.get_max_period_bytes();
+
+    let writer = Address::generate(&env);
+    client.add_writer(&admin, &writer);
+    client.remove_writer(&admin, &writer);
+
+    assert_eq!(client.get_max_period_bytes(), before);
+}
+
+#[test]
+fn test_get_max_period_bytes_unchanged_after_rejected_record() {
+    let (env, client, _admin) = setup_snapshot_only();
+    let before = client.get_max_period_bytes();
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-01");
+    let outsider = Address::generate(&env);
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.record_snapshot(&outsider, &business, &period, &100_000i128, &0u32, &1u64);
+    }));
+    assert!(rejected.is_err(), "unauthorized record must panic");
+
+    // A rejected operation must leave the limit untouched.
+    assert_eq!(client.get_max_period_bytes(), before);
+}
+
+#[test]
+fn test_get_max_period_bytes_unchanged_after_rejected_finalize() {
+    let (env, client, _admin) = setup_snapshot_only();
+    let before = client.get_max_period_bytes();
+
+    let outsider = Address::generate(&env);
+    let epoch = String::from_str(&env, "2026-01");
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.finalize_epoch(&outsider, &epoch);
+    }));
+    assert!(rejected.is_err(), "unauthorized finalize must panic");
+
+    assert_eq!(client.get_max_period_bytes(), before);
+}
+
+#[test]
+fn test_get_max_period_bytes_unchanged_after_rejected_set_attestation_contract() {
+    let (env, client, _admin) = setup_snapshot_only();
+    let before = client.get_max_period_bytes();
+
+    let outsider = Address::generate(&env);
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.set_attestation_contract(&outsider, &None::<Address>);
+    }));
+    assert!(rejected.is_err(), "non-admin set must panic");
+
+    assert_eq!(client.get_max_period_bytes(), before);
+}
+
+#[test]
+fn test_get_max_period_bytes_boundary_period_length_accepted() {
+    let (env, client, admin) = setup_snapshot_only();
+    let max = client.get_max_period_bytes();
+
+    // Build a period string whose byte length is exactly the configured max.
+    let mut buf = std::vec::Vec::new();
+    for _ in 0..max {
+        buf.push(b'a');
+    }
+    let period_str = std::str::from_utf8(&buf).unwrap();
+    let period = String::from_str(&env, period_str);
+    assert_eq!(period.len(), max);
+
+    let business = Address::generate(&env);
+    client.record_snapshot(&admin, &business, &period, &100_000i128, &0u32, &1u64);
+    assert!(client.get_snapshot(&business, &period).is_some());
+
+    // The limit itself is unchanged by a boundary-length record.
+    assert_eq!(client.get_max_period_bytes(), max);
+}
+
+#[test]
+fn test_get_max_period_bytes_boundary_period_length_plus_one_rejected() {
+    let (env, client, admin) = setup_snapshot_only();
+    let max = client.get_max_period_bytes();
+
+    // Build a period string whose byte length is exactly one over the max.
+    let mut buf = std::vec::Vec::new();
+    for _ in 0..(max + 1) {
+        buf.push(b'a');
+    }
+    let period_str = std::str::from_utf8(&buf).unwrap();
+    let period = String::from_str(&env, period_str);
+    assert_eq!(period.len(), max + 1);
+
+    let business = Address::generate(&env);
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.record_snapshot(&admin, &business, &period, &100_000i128, &0u32, &1u64);
+    }));
+    assert!(
+        rejected.is_err(),
+        "period longer than max must be rejected"
+    );
+
+    // No snapshot was stored, and the limit is unchanged.
+    assert!(client.get_snapshot(&business, &period).is_none());
+    assert_eq!(client.get_max_period_bytes(), max);
+}
+
+#[test]
+fn test_get_max_period_bytes_empty_period_rejected() {
+    let (env, client, admin) = setup_snapshot_only();
+    let before = client.get_max_period_bytes();
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "");
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.record_snapshot(&admin, &business, &period, &100_000i128, &0u32, &1u64);
+    }));
+    assert!(rejected.is_err(), "empty period must be rejected");
+
+    assert!(client.get_snapshot(&business, &period).is_none());
+    assert_eq!(client.get_max_period_bytes(), before);
+}
+
+#[test]
+fn test_get_max_period_bytes_stable_across_multiple_contracts() {
+    let (_env1, client1, _admin1) = setup_snapshot_only();
+    let (_env2, client2, _admin2) = setup_snapshot_only();
+
+    // The configured limit is a compile-time constant, so it must be identical
+    // across independently initialized contract instances.
+    assert_eq!(client1.get_max_period_bytes(), client2.get_max_period_bytes());
+}
 
 // ── get_max_business_periods (#875) ──────────────────────────────────
 
