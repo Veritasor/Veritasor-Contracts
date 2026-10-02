@@ -926,6 +926,202 @@ fn test_restore_version_mismatch_event_emitted() {
     assert_eq!(evt.expected_version, SNAPSHOT_SCHEMA_VERSION);
     assert_eq!(evt.detected_at, 5_000_000);
 }
+// ── add_writer adversarial coverage ───────────────────────────────────
+
+#[test]
+fn test_add_writer_grants_writer_flag() {
+    let (env, client, admin) = setup_snapshot_only();
+    let writer = Address::generate(&env);
+    assert!(!client.is_writer(&writer));
+
+    client.add_writer(&admin, &writer);
+
+    assert!(client.is_writer(&writer));
+}
+
+#[test]
+fn test_add_writer_is_idempotent() {
+    let (env, client, admin) = setup_snapshot_only();
+    let writer = Address::generate(&env);
+
+    client.add_writer(&admin, &writer);
+    client.add_writer(&admin, &writer);
+    client.add_writer(&admin, &writer);
+
+    assert!(client.is_writer(&writer));
+}
+
+#[test]
+fn test_add_writer_multiple_writers_independent() {
+    let (env, client, admin) = setup_snapshot_only();
+    let w1 = Address::generate(&env);
+    let w2 = Address::generate(&env);
+    let w3 = Address::generate(&env);
+
+    client.add_writer(&admin, &w1);
+    client.add_writer(&admin, &w2);
+
+    assert!(client.is_writer(&w1));
+    assert!(client.is_writer(&w2));
+    assert!(!client.is_writer(&w3));
+
+    client.add_writer(&admin, &w3);
+    assert!(client.is_writer(&w3));
+}
+
+#[test]
+fn test_add_writer_does_not_grant_admin() {
+    let (env, client, admin) = setup_snapshot_only();
+    let writer = Address::generate(&env);
+    client.add_writer(&admin, &writer);
+
+    // A writer is not an admin: admin-only operations must still be rejected.
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.set_attestation_contract(&writer, &None::<Address>);
+    }));
+    assert!(
+        rejected.is_err(),
+        "a writer must not gain admin authority"
+    );
+}
+
+#[test]
+fn test_add_writer_does_not_allow_writer_to_add_writers() {
+    let (env, client, admin) = setup_snapshot_only();
+    let w1 = Address::generate(&env);
+    let w2 = Address::generate(&env);
+    client.add_writer(&admin, &w1);
+
+    // `add_writer` is admin-only; a writer cannot grant the role to others.
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.add_writer(&w1, &w2);
+    }));
+    assert!(
+        rejected.is_err(),
+        "a writer must not be able to add writers"
+    );
+
+    // The rejected call must not have mutated the target's writer flag.
+    assert!(!client.is_writer(&w2));
+}
+
+#[test]
+#[should_panic(expected = "caller is not admin")]
+fn test_add_writer_non_admin_panics() {
+    let (env, client, _admin) = setup_snapshot_only();
+    let outsider = Address::generate(&env);
+    let target = Address::generate(&env);
+    client.add_writer(&outsider, &target);
+}
+
+#[test]
+fn test_add_writer_rejected_call_leaves_flag_unchanged() {
+    let (env, client, _admin) = setup_snapshot_only();
+    let outsider = Address::generate(&env);
+    let target = Address::generate(&env);
+    assert!(!client.is_writer(&target));
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.add_writer(&outsider, &target);
+    }));
+    assert!(rejected.is_err(), "non-admin add_writer must panic");
+
+    // The rejected call must not have granted the writer role.
+    assert!(!client.is_writer(&target));
+}
+
+#[test]
+fn test_add_writer_rejected_call_does_not_affect_existing_writers() {
+    let (env, client, admin) = setup_snapshot_only();
+    let existing = Address::generate(&env);
+    let outsider = Address::generate(&env);
+    let target = Address::generate(&env);
+    client.add_writer(&admin, &existing);
+    assert!(client.is_writer(&existing));
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.add_writer(&outsider, &target);
+    }));
+    assert!(rejected.is_err(), "non-admin add_writer must panic");
+
+    // Existing writer state is untouched by the rejected call.
+    assert!(client.is_writer(&existing));
+    assert!(!client.is_writer(&target));
+}
+
+#[test]
+fn test_add_writer_then_record_then_remove_then_record_rejected() {
+    let (env, client, admin) = setup_snapshot_only();
+    let writer = Address::generate(&env);
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-05");
+
+    client.add_writer(&admin, &writer);
+    client.record_snapshot(&writer, &business, &period, &100_000i128, &0u32, &1u64);
+    assert!(client.get_snapshot(&business, &period).is_some());
+
+    client.remove_writer(&admin, &writer);
+    assert!(!client.is_writer(&writer));
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.record_snapshot(&writer, &business, &period, &200_000i128, &0u32, &2u64);
+    }));
+    assert!(rejected.is_err(), "removed writer must not record");
+
+    // The previously recorded snapshot is unchanged.
+    let record = client.get_snapshot(&business, &period).unwrap();
+    assert_eq!(record.trailing_revenue, 100_000i128);
+    assert_eq!(record.attestation_count, 1u64);
+}
+
+#[test]
+fn test_add_writer_does_not_change_commitment() {
+    let (env, client, admin) = setup_snapshot_only();
+    let writer = Address::generate(&env);
+
+    let before = client.export_snapshot_commitment();
+    client.add_writer(&admin, &writer);
+    let after = client.export_snapshot_commitment();
+
+    // Writer grants are authorization state, not snapshot data, so the
+    // commitment over recorded snapshots must not change.
+    assert_eq!(before, after);
+}
+
+#[test]
+fn test_add_writer_rejected_does_not_change_commitment() {
+    let (env, client, _admin) = setup_snapshot_only();
+    let outsider = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    let before = client.export_snapshot_commitment();
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.add_writer(&outsider, &target);
+    }));
+    assert!(rejected.is_err(), "non-admin add_writer must panic");
+    let after = client.export_snapshot_commitment();
+
+    assert_eq!(before, after);
+    assert!(!client.is_writer(&target));
+}
+
+#[test]
+fn test_add_writer_self_grant_by_admin_is_allowed() {
+    let (env, client, admin) = setup_snapshot_only();
+    // The admin granting the writer role to itself is a valid, deterministic
+    // operation and must not corrupt the admin identity.
+    client.add_writer(&admin, &admin);
+    assert!(client.is_writer(&admin));
+    assert_eq!(client.get_admin(), admin);
+}
+
+#[test]
+fn test_add_writer_does_not_alter_admin_identity() {
+    let (env, client, admin) = setup_snapshot_only();
+    let writer = Address::generate(&env);
+    client.add_writer(&admin, &writer);
+    assert_eq!(client.get_admin(), admin);
+}
 
 // ── get_max_business_periods (#875) ──────────────────────────────────
 
