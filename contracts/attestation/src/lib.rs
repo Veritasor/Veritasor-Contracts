@@ -8,8 +8,8 @@ extern crate std;
 
 use core::cmp::Ordering;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, signature, token, Address, BytesN, Env, Signature,
-    String, Symbol, TryIntoVal, Vec,
+    contract, contractimpl, contracttype, token, Address, BytesN, Env, IntoVal, String, Symbol,
+    TryIntoVal, Vec,
 };
 
 use veritasor_common::merkle;
@@ -53,7 +53,6 @@ fn current_budget_costs(env: &Env) -> (u64, u64) {
     (budget.cpu_instruction_cost(), budget.memory_bytes_cost())
 }
 
-/// Production fallback for [`current_budget_costs`]: no metering available.
 #[cfg(not(any(test, feature = "testutils")))]
 fn current_budget_costs(_env: &Env) -> (u64, u64) {
     (0, 0)
@@ -93,7 +92,10 @@ pub use access_control::{ROLE_ADMIN, ROLE_ATTESTOR, ROLE_BUSINESS, ROLE_OPERATOR
 pub use dispute::{
     Dispute, DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType, OptionalResolution,
 };
-pub use dynamic_fees::{add_relayer_gas, compute_fee, get_relayer_gas, DataKey, FeeConfig};
+pub use dynamic_fees::{
+    add_relayer_gas, compute_fee, get_relayer_gas, DataKey, FeeConfig, PendingFeeConfig,
+    FEE_TIMELOCK_SECONDS,
+};
 pub use dynamic_fees::{ArchivePointerRecord, CompactionRetentionPolicy};
 pub use dynamic_fees::{RevokeProposal, DEFAULT_REVOKE_GRACE_SECONDS};
 pub use events::{
@@ -218,10 +220,6 @@ fn compute_backfill_commitment(
 fn budget_cpu(env: &Env) -> u64 {
     env.cost_estimate().budget().cpu_instruction_cost()
 }
-#[cfg(not(any(test, feature = "testutils")))]
-fn budget_cpu(_env: &Env) -> u64 {
-    0
-}
 
 /// Read the current memory bytes for relayer gas metering.
 ///
@@ -229,10 +227,6 @@ fn budget_cpu(_env: &Env) -> u64 {
 #[cfg(any(test, feature = "testutils"))]
 fn budget_mem(env: &Env) -> u64 {
     env.cost_estimate().budget().memory_bytes_cost()
-}
-#[cfg(not(any(test, feature = "testutils")))]
-fn budget_mem(_env: &Env) -> u64 {
-    0
 }
 
 #[soroban_sdk::contractclient(name = "AttestorStakingClient")]
@@ -871,6 +865,69 @@ impl AttestationContract {
         );
     }
 
+    /// Submit an attestation on behalf of a business by an authorized attestor.
+    ///
+    /// This function allows a staked attestor to submit an attestation for a business.
+    /// The attestor must meet both staking requirements and reputation requirements (if configured).
+    ///
+    /// # Validation Flow
+    ///
+    /// 1. **Attestor Lock Check**: Verifies attestor is not currently locked
+    /// 2. **Staking Eligibility**: If an attestor-staking contract is registered,
+    ///    calls it to verify minimum stake. If none is registered, submission
+    ///    proceeds (backward-compatible passthrough for pre-staking deployments).
+    /// 3. **Reputation Gating** (if enabled): Calls configured reputation contract and:
+    ///    - Fetches attestor's reputation score (read-only cross-contract call)
+    ///    - Compares against configured minimum threshold
+    ///    - Emits `ReputationGateCheckEvent` with score, threshold, and pass/fail status
+    ///    - Rejects with panic if score is below threshold (fail-closed behavior)
+    /// 4. **Standard Submission Validation**: Duplicate check, expiry, proof hash validation
+    ///
+    /// # Reputation Gating Behavior
+    ///
+    /// Reputation gating is optional and admin-configurable:
+    /// - **Disabled (default)**: If `reputation_contract` is None, submission proceeds directly
+    ///   without reputation checks (passthrough mode)
+    /// - **Enabled**: If `reputation_contract` is set, the check is performed before submission
+    /// - **Fail-Closed**: Any error in the reputation contract call (invalid address, call failure,
+    ///   malformed response) results in submission rejection
+    /// - **Score >= Threshold**: Submission proceeds if attestor score >= min_reputation
+    /// - **Score < Threshold**: Submission is rejected with "attestor reputation below minimum threshold"
+    ///
+    /// # Cross-Contract Call
+    ///
+    /// When reputation gating is enabled, this function performs a read-only cross-contract call
+    /// to the configured reputation contract:
+    /// ```ignore
+    /// reputation_contract.get_reputation(attestor: Address) -> u64
+    /// ```
+    /// The query is read-only and does not require authentication beyond the implicit contract-to-contract
+    /// invocation. The reputation contract address must expose this function publicly.
+    ///
+    /// # Events
+    ///
+    /// Emits:
+    /// - `ReputationGateCheckEvent` if reputation gating is enabled (always, regardless of pass/fail)
+    /// - `AttestationSubmittedEvent` on successful submission
+    ///
+    /// # Panics
+    ///
+    /// - `"attestor is locked"` – Attestor has active lock on this contract
+    /// - `"attestor is not eligible"` – Attestor stake below minimum (when staking is configured)
+    /// - `"attestor reputation below minimum threshold"` – Reputation score below floor (when gating enabled)
+    /// - `"business is suspended"` – Business is in suspended status
+    /// - `"attestation already exists for this business and period"` – Duplicate attestation
+    /// - Standard submission validation panics (expiry, proof hash, rate limit, etc.)
+    ///
+    /// # Arguments
+    ///
+    /// * `attestor` – The staked attestor address (must have ROLE_ATTESTOR and meet stake requirements)
+    /// * `business` – The business whose attestation is being submitted
+    /// * `period` – Period identifier (e.g., "2026-02")
+    /// * `merkle_root` – Root hash of the attestation dataset
+    /// * `timestamp` – Submission timestamp
+    /// * `version` – Schema version
+    /// * `expiry_timestamp` – Optional expiration time (if None, attestation never expires)
     pub fn submit_attestation_as_attestor(
         env: Env,
         attestor: Address,
@@ -881,69 +938,6 @@ impl AttestationContract {
         version: u32,
         expiry_timestamp: Option<u64>,
     ) {
-        /// Submit an attestation on behalf of a business by an authorized attestor.
-        ///
-        /// This function allows a staked attestor to submit an attestation for a business.
-        /// The attestor must meet both staking requirements and reputation requirements (if configured).
-        ///
-        /// # Validation Flow
-        ///
-        /// 1. **Attestor Lock Check**: Verifies attestor is not currently locked
-        /// 2. **Staking Eligibility**: If an attestor-staking contract is registered,
-        ///    calls it to verify minimum stake. If none is registered, submission
-        ///    proceeds (backward-compatible passthrough for pre-staking deployments).
-        /// 3. **Reputation Gating** (if enabled): Calls configured reputation contract and:
-        ///    - Fetches attestor's reputation score (read-only cross-contract call)
-        ///    - Compares against configured minimum threshold
-        ///    - Emits `ReputationGateCheckEvent` with score, threshold, and pass/fail status
-        ///    - Rejects with panic if score is below threshold (fail-closed behavior)
-        /// 4. **Standard Submission Validation**: Duplicate check, expiry, proof hash validation
-        ///
-        /// # Reputation Gating Behavior
-        ///
-        /// Reputation gating is optional and admin-configurable:
-        /// - **Disabled (default)**: If `reputation_contract` is None, submission proceeds directly
-        ///   without reputation checks (passthrough mode)
-        /// - **Enabled**: If `reputation_contract` is set, the check is performed before submission
-        /// - **Fail-Closed**: Any error in the reputation contract call (invalid address, call failure,
-        ///   malformed response) results in submission rejection
-        /// - **Score >= Threshold**: Submission proceeds if attestor score >= min_reputation
-        /// - **Score < Threshold**: Submission is rejected with "attestor reputation below minimum threshold"
-        ///
-        /// # Cross-Contract Call
-        ///
-        /// When reputation gating is enabled, this function performs a read-only cross-contract call
-        /// to the configured reputation contract:
-        /// ```ignore
-        /// reputation_contract.get_reputation(attestor: Address) -> u64
-        /// ```
-        /// The query is read-only and does not require authentication beyond the implicit contract-to-contract
-        /// invocation. The reputation contract address must expose this function publicly.
-        ///
-        /// # Events
-        ///
-        /// Emits:
-        /// - `ReputationGateCheckEvent` if reputation gating is enabled (always, regardless of pass/fail)
-        /// - `AttestationSubmittedEvent` on successful submission
-        ///
-        /// # Panics
-        ///
-        /// - `"attestor is locked"` – Attestor has active lock on this contract
-        /// - `"attestor is not eligible"` – Attestor stake below minimum (when staking is configured)
-        /// - `"attestor reputation below minimum threshold"` – Reputation score below floor (when gating enabled)
-        /// - `"business is suspended"` – Business is in suspended status
-        /// - `"attestation already exists for this business and period"` – Duplicate attestation
-        /// - Standard submission validation panics (expiry, proof hash, rate limit, etc.)
-        ///
-        /// # Arguments
-        ///
-        /// * `attestor` – The staked attestor address (must have ROLE_ATTESTOR and meet stake requirements)
-        /// * `business` – The business whose attestation is being submitted
-        /// * `period` – Period identifier (e.g., "2026-02")
-        /// * `merkle_root` – Root hash of the attestation dataset
-        /// * `timestamp` – Submission timestamp
-        /// * `version` – Schema version
-        /// * `expiry_timestamp` – Optional expiration time (if None, attestation never expires)
         access_control::require_attestor_not_locked(&env, &attestor);
 
         // Staking eligibility is an admin-configured gate. When no staking
@@ -1807,10 +1801,7 @@ impl AttestationContract {
     }
 
     /// Cleanup orphaned revocation index entries for a business.
-    pub fn cleanup_revocation_index(
-        env: Env,
-        business: Address,
-    ) -> Result<u32, soroban_sdk::Error> {
+    pub fn cleanup_revocation_index(env: Env, business: Address) -> u32 {
         let mut periods = dispute::get_revoked_periods(&env, &business);
         if periods.is_empty() {
             return 0;
@@ -1862,6 +1853,7 @@ impl AttestationContract {
     ) -> AttestationStatusResult {
         let mut result = Vec::new(&env);
         for period in periods.iter() {
+            let mut found = false;
             // Active tier lives in instance storage (see `execute_submission`).
             let active_key = DataKey::Attestation(business.clone(), period.clone());
             if let Some(att_data) = env
@@ -1877,7 +1869,7 @@ impl AttestationContract {
                 );
                 result.push_back((
                     period.clone(),
-                    att_data.clone(),
+                    Some(att_data.clone()),
                     Self::get_revocation_info(env.clone(), business.clone(), period.clone()),
                 ));
                 found = true;
@@ -1912,7 +1904,7 @@ impl AttestationContract {
 
                     result.push_back((
                         period.clone(),
-                        archived_att_data,
+                        Some(archived_att_data),
                         Self::get_revocation_info(env.clone(), business.clone(), period.clone()),
                     ));
                 }
@@ -2147,12 +2139,12 @@ impl AttestationContract {
     pub fn emergency_pause(
         env: Env,
         caller: Address,
-        sig1: Signature,
-        sig2: Signature,
+        signer1: Address,
+        signer2: Address,
         nonce: u64,
     ) {
-        let admin = access_control::require_admin(&env, &caller);
-        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
+        access_control::require_admin(&env, &caller);
+        replay_protection::verify_and_increment_nonce(&env, &caller, NONCE_CHANNEL_ADMIN, nonce);
         multisig::emergency_pause(&env, &signer1, &signer2);
     }
 
@@ -3181,7 +3173,6 @@ impl AttestationContract {
             .expect("staking contract not configured");
 
         // Execute the slash
-        let staking_client = AttestorStakingClient::new(&env, &staking_addr);
         let mut args = soroban_sdk::vec![&env];
         args.push_back(attestor.into_val(&env));
         args.push_back(amount.into_val(&env));
@@ -3843,12 +3834,21 @@ impl AttestationContract {
 // ── Test Modules ──
 // Issue #369 tests always run. Enable `full-tests` for the legacy attestation suite
 // (some modules need updates on this branch before they compile).
-#[cfg(all(test, feature = "full-tests"))]
 #[cfg(test)]
-mod is_paused_test;
+mod access_control_emergency_pause_test;
+#[cfg(all(test, feature = "full-tests"))]
+mod access_control_swap_admin_test;
+#[cfg(all(test, feature = "full-tests"))]
 mod access_control_test;
+/// Focused adversarial coverage for `access_control::admin_count` (issue #886):
+/// derivation from `ROLE_ADMIN` holders, distinct-admin counting, rejected
+/// operations, and the `MIN_ADMIN_COUNT` / cooldown guard ordering.
+#[cfg(test)]
+mod admin_count_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod anomaly_test;
+#[cfg(test)]
+mod attestor_lock_adversarial_test;
 #[cfg(test)]
 mod attestor_lock_test;
 #[cfg(all(test, feature = "full-tests"))]
@@ -3870,8 +3870,17 @@ mod cleanup_metrics_test;
 mod compact_archival_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod dao_override_test;
+#[cfg(test)]
+mod dispute_adversarial_test;
+/// Focused adversarial coverage for `dispute::add_dispute_to_attestation_index`
+/// (issue #917). Runs in the default test profile.
+#[cfg(test)]
+mod dispute_attestation_index_adversarial_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod dispute_test;
+/// Focused adversarial tests for `set_dispute_deadline`.
+#[cfg(test)]
+mod test_set_dispute_deadline;
 #[cfg(all(test, feature = "full-tests"))]
 mod dynamic_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
@@ -3896,6 +3905,11 @@ mod fuzz_create_proposal_test;
 mod fuzz_volume_brackets_test;
 #[cfg(test)]
 mod gas_benchmark_test;
+#[cfg(test)]
+mod get_dispute_test;
+#[cfg(all(test, feature = "full-tests"))]
+#[cfg(test)]
+mod is_paused_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod key_rotation_test;
 #[cfg(test)]
@@ -3924,14 +3938,33 @@ mod rate_limit_test;
 mod registry_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod replay_nonce_test;
+/// Focused tests for `access_control::require_operator` (closes issue #require-operator).
+/// Runs under the default test profile — no feature flag required.
+#[cfg(test)]
+mod require_operator_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod revocation_test;
+/// Focused tests for `set_paused` in access_control.rs (issue #369).
+/// Covers direct set/read, idempotency, toggle round-trips, persistence,
+/// interaction with `require_not_paused`, and authorization boundary tests.
+#[cfg(test)]
+mod set_paused_test;
+
+#[cfg(all(test, feature = "full-tests"))]
+#[cfg(test)]
+mod grant_role_by_admin_test;
+#[cfg(test)]
+mod revoke_grace_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod revoke_reason_test;
+#[cfg(test)]
+mod role_bitmap_adversarial_test;
 #[cfg(test)]
 mod schema_export_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod test;
+#[cfg(test)]
+mod test_get_revoked_periods;
 #[cfg(all(test, feature = "full-tests"))]
 mod tier_bounds_test;
 #[cfg(test)]
@@ -4324,3 +4357,11 @@ mod relayer_gas_attribution_test {
         );
     }
 }
+
+/// Adversarial tests for `dispute::has_existing_dispute` (issue #927).
+#[cfg(test)]
+mod has_existing_dispute_test;
+
+/// Adversarial tests for `dispute::has_open_dispute` (issue #932).
+#[cfg(test)]
+mod has_open_dispute_test;
