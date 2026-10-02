@@ -925,6 +925,81 @@ mod test {
     use soroban_sdk::{Address, Env, String};
 
     #[test]
+    fn test_validate_dispute_closure_valid() {
+        let env = Env::default();
+        let dispute_id = 1;
+        let dispute = Dispute {
+            id: dispute_id,
+            challenger: Address::generate(&env),
+            business: Address::generate(&env),
+            attestor: Address::generate(&env),
+            period: String::from_str(&env, "2026-02"),
+            status: DisputeStatus::Resolved,
+            dispute_type: DisputeType::Other,
+            evidence: String::from_str(&env, "evidence"),
+            timestamp: 1000,
+            resolution: OptionalResolution::None,
+        };
+        store_dispute(&env, &dispute);
+
+        let result = validate_dispute_closure(&env, dispute_id);
+        assert_eq!(result, Ok(dispute));
+    }
+
+    #[test]
+    fn test_validate_dispute_closure_not_found() {
+        let env = Env::default();
+        let dispute_id = 999;
+
+        let result = validate_dispute_closure(&env, dispute_id);
+        assert_eq!(result, Err("dispute not found"));
+    }
+
+    #[test]
+    fn test_validate_dispute_closure_invalid_status_open() {
+        let env = Env::default();
+        let dispute_id = 2;
+        let dispute = Dispute {
+            id: dispute_id,
+            challenger: Address::generate(&env),
+            business: Address::generate(&env),
+            attestor: Address::generate(&env),
+            period: String::from_str(&env, "2026-02"),
+            status: DisputeStatus::Open,
+            dispute_type: DisputeType::Other,
+            evidence: String::from_str(&env, "evidence"),
+            timestamp: 1000,
+            resolution: OptionalResolution::None,
+        };
+        store_dispute(&env, &dispute);
+
+        let result = validate_dispute_closure(&env, dispute_id);
+        assert_eq!(result, Err("dispute is not resolved"));
+    }
+
+    #[test]
+    fn test_validate_dispute_closure_invalid_status_closed() {
+        let env = Env::default();
+        let dispute_id = 3;
+        let dispute = Dispute {
+            id: dispute_id,
+            challenger: Address::generate(&env),
+            business: Address::generate(&env),
+            attestor: Address::generate(&env),
+            period: String::from_str(&env, "2026-02"),
+            status: DisputeStatus::Closed,
+            dispute_type: DisputeType::Other,
+            evidence: String::from_str(&env, "evidence"),
+            timestamp: 1000,
+            resolution: OptionalResolution::None,
+        };
+        store_dispute(&env, &dispute);
+
+        let result = validate_dispute_closure(&env, dispute_id);
+        assert_eq!(result, Err("dispute is not resolved"));
+    }
+
+    #[test]
     fn test_store_attestor_for_attestation_valid() {
         let env = Env::default();
         let business = Address::generate(&env);
@@ -954,7 +1029,7 @@ mod test {
 
         // Store first attestor
         store_attestor_for_attestation(&env, &business, &period, &attestor1);
-        
+
         // Overwrite with second attestor
         store_attestor_for_attestation(&env, &business, &period, &attestor2);
 
@@ -1001,5 +1076,131 @@ mod test {
             get_attestor_for_attestation(&env, &business2, &period),
             Some(attestor2)
         );
+    }
+
+    #[test]
+    fn test_get_anomaly_escalation_empty() {
+        let env = Env::default();
+        let business = Address::generate(&env);
+
+        assert_eq!(get_anomaly_escalation(&env, &business), None);
+    }
+
+    #[test]
+    fn test_get_anomaly_escalation_after_update() {
+        let env = Env::default();
+        let business = Address::generate(&env);
+
+        // score < 50 => no escalation (returns None because it's not set)
+        update_anomaly_escalation(&env, &business, 40);
+        assert_eq!(get_anomaly_escalation(&env, &business), None);
+
+        // score 50..=74 => level 1
+        update_anomaly_escalation(&env, &business, 50);
+        assert_eq!(get_anomaly_escalation(&env, &business), Some(1));
+
+        // score 75..=89 => level 2
+        update_anomaly_escalation(&env, &business, 75);
+        assert_eq!(get_anomaly_escalation(&env, &business), Some(2));
+
+        // score >= 90 => level 3
+        update_anomaly_escalation(&env, &business, 95);
+        assert_eq!(get_anomaly_escalation(&env, &business), Some(3));
+    }
+
+    #[test]
+    fn test_get_anomaly_escalation_monotonic() {
+        let env = Env::default();
+        let business = Address::generate(&env);
+
+        // escalation level only increases
+        update_anomaly_escalation(&env, &business, 90); // level 3
+        assert_eq!(get_anomaly_escalation(&env, &business), Some(3));
+
+        update_anomaly_escalation(&env, &business, 50); // level 1, but should stay 3
+        assert_eq!(get_anomaly_escalation(&env, &business), Some(3));
+    }
+
+    #[test]
+    fn test_get_anomaly_escalation_after_clear() {
+        let env = Env::default();
+        let business = Address::generate(&env);
+
+        update_anomaly_escalation(&env, &business, 80); // level 2
+        assert_eq!(get_anomaly_escalation(&env, &business), Some(2));
+
+        clear_anomaly_escalation(&env, &business);
+        assert_eq!(get_anomaly_escalation(&env, &business), None);
+    }
+
+    #[test]
+    fn test_is_attestation_revoked_false_initially() {
+        let env = Env::default();
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "2026-03");
+
+        assert_eq!(is_attestation_revoked(&env, &business, &period), false);
+    }
+
+    #[test]
+    fn test_is_attestation_revoked_true_when_revoked() {
+        let env = Env::default();
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "2026-03");
+        let revoker = Address::generate(&env);
+        let reason = String::from_str(&env, "fraud");
+        let revocation: crate::RevocationData = (revoker, 1000, reason);
+
+        store_attestation_revocation(&env, &business, &period, &revocation);
+
+        assert_eq!(is_attestation_revoked(&env, &business, &period), true);
+    }
+
+    #[test]
+    fn test_is_attestation_revoked_different_period() {
+        let env = Env::default();
+        let business = Address::generate(&env);
+        let period1 = String::from_str(&env, "2026-03");
+        let period2 = String::from_str(&env, "2026-04");
+        let revoker = Address::generate(&env);
+        let reason = String::from_str(&env, "fraud");
+        let revocation: crate::RevocationData = (revoker, 1000, reason);
+
+        store_attestation_revocation(&env, &business, &period1, &revocation);
+
+        assert_eq!(is_attestation_revoked(&env, &business, &period1), true);
+        assert_eq!(is_attestation_revoked(&env, &business, &period2), false);
+    }
+
+    #[test]
+    fn test_is_attestation_revoked_different_business() {
+        let env = Env::default();
+        let business1 = Address::generate(&env);
+        let business2 = Address::generate(&env);
+        let period = String::from_str(&env, "2026-03");
+        let revoker = Address::generate(&env);
+        let reason = String::from_str(&env, "fraud");
+        let revocation: crate::RevocationData = (revoker, 1000, reason);
+
+        store_attestation_revocation(&env, &business1, &period, &revocation);
+
+        assert_eq!(is_attestation_revoked(&env, &business1, &period), true);
+        assert_eq!(is_attestation_revoked(&env, &business2, &period), false);
+    }
+
+    #[test]
+    fn test_is_attestation_revoked_empty_period() {
+        let env = Env::default();
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "");
+
+        assert_eq!(is_attestation_revoked(&env, &business, &period), false);
+
+        let revoker = Address::generate(&env);
+        let reason = String::from_str(&env, "fraud");
+        let revocation: crate::RevocationData = (revoker, 1000, reason);
+        store_attestation_revocation(&env, &business, &period, &revocation);
+
+        assert_eq!(is_attestation_revoked(&env, &business, &period), true);
     }
 }
