@@ -20,7 +20,7 @@
 //! | `0` | any | every epoch, `page` ignored |
 //! | `> 0` | `page * page_size < len` | `min(page_size, len - start)` entries from `start` |
 //! | `> 0` | `page * page_size >= len` | empty |
-//! | `> 0` | `page * page_size` overflows `u32` | empty (saturating offset — must never wrap) |
+//! | `> 0` | `page * page_size` overflows `u32` | empty (saturating offset — must never trap) |
 //!
 //! ## Coverage
 //!
@@ -42,12 +42,12 @@
 //! |14 | `page_size_u32_max_at_page_zero_returns_every_epoch` | Largest `page_size` still bounded by the index length |
 //! |15 | `page_size_u32_max_at_page_one_returns_empty` | Largest offset that does not overflow is past the end |
 //! |16 | `page_at_u32_max_with_size_one_returns_empty` | Largest `page` at `page_size = 1` is past the end |
-//! |17 | `offset_overflow_returns_an_empty_page_instead_of_aliasing_one` | Overflowing `page * page_size` saturates, never wraps to an earlier page |
+//! |17 | `offset_overflow_returns_an_empty_page_instead_of_trapping` | Overflowing `page * page_size` saturates to an empty page instead of trapping |
 //! |18 | `finalized_epoch_remains_listed_and_paged` | `finalize_epoch` does not remove the epoch from the index |
 //! |19 | `overlong_epoch_recording_is_rejected` | `period exceeds max bytes` |
 //! |20 | `non_writer_recording_is_rejected` | `caller must be admin or writer` |
 //! |21 | `recording_into_finalized_epoch_is_rejected` | `epoch already finalized` |
-//! |22 | `rejected_operations_leave_the_epoch_index_unchanged` | Listing, count, per-epoch businesses, per-business snapshots, finalization metadata and commitment are byte-identical after all three rejections |
+//! |22 | `rejected_operations_leave_the_epoch_index_unchanged` | Observable state — listing, count, per-epoch businesses, per-business snapshots, finalization metadata and commitment — is byte-identical after all three rejections |
 //! |23 | `listing_requires_no_authorization` | Read succeeds with auth mocking disabled; a write in the same environment is rejected |
 //! |24 | `repeated_reads_are_idempotent_and_emit_no_events` | 24 reads in varied page shapes: identical results, no events, commitment and index unchanged |
 //!
@@ -56,10 +56,16 @@
 //! - The reader never calls `require_auth`, so it cannot be used to mutate or
 //!   enumerate anything a caller could not already read with
 //!   `get_total_epoch_count` + `get_snapshot`.
-//! - `page` and `page_size` are fully caller-controlled. The offset is computed
-//!   with `saturating_mul`, so no input can wrap the offset and return an
-//!   earlier page as if it were the requested one — which is what would corrupt
-//!   an auditor's re-computation of `export_commitment_with_count`.
+//! - `page` and `page_size` are fully caller-controlled, so their product can
+//!   overflow `u32`. This crate is built with `overflow-checks = true`
+//!   (workspace `[profile.release]`), which means a plain multiply traps on such
+//!   an input and aborts an otherwise permissionless read. `saturating_mul`
+//!   turns that trap into a well-defined empty (out-of-range) page, which is
+//!   what every overflowing request returns.
+//! - Saturation also holds if overflow checks are ever disabled: no input can
+//!   wrap the offset and serve an earlier page as if it were the requested one,
+//!   which is what would corrupt an auditor's re-computation of
+//!   `export_commitment_with_count`.
 //! - A short page always means "last page"; a paging consumer must stop there
 //!   rather than treat it as a full page.
 
@@ -298,12 +304,11 @@ fn pagination_round_trip_reproduces_the_full_listing() {
 
     for size in 1..=(EPOCHS.len() as u32 + 3) {
         let mut collected = Vec::new(&env);
-        let mut page = 0u32;
         let mut terminated = false;
 
         // At most `len` non-empty pages exist, so the next iteration is the
         // terminating empty one; the +1 makes the bound explicit.
-        for _ in 0..=(EPOCHS.len() as u32 + 1) {
+        for page in 0..=(EPOCHS.len() as u32 + 1) {
             let got = client.get_all_epochs(&page, &size);
             let len = got.len();
             assert!(
@@ -317,7 +322,6 @@ fn pagination_round_trip_reproduces_the_full_listing() {
             for i in 0..len {
                 collected.push_back(got.get(i).unwrap());
             }
-            page += 1;
         }
 
         assert!(
@@ -564,14 +568,18 @@ fn page_at_u32_max_with_size_one_returns_empty() {
     assert_eq!(client.get_all_epochs(&0u32, &0u32), listing(&env, &EPOCHS));
 }
 
-/// `page * page_size` can exceed `u32::MAX` for caller-supplied arguments. A
-/// wrapping multiply would alias an earlier page — `(1 << 31, 2)` and
-/// `(1 << 16, 1 << 16)` both wrap to offset 0, and `(u32::MAX, u32::MAX)`
-/// wraps to offset 1 — handing a paging consumer entries it had already
-/// consumed. The offset saturates instead, so every overflowing request is an
-/// empty page and the index is untouched.
+/// `page * page_size` can exceed `u32::MAX` for caller-supplied arguments. This
+/// crate is built with `overflow-checks = true` (workspace `[profile.release]`),
+/// so a plain multiply traps on every entry in `overflowing` below and aborts an
+/// otherwise permissionless read. The offset saturates instead, so each of those
+/// requests is a well-defined empty page and the index is untouched.
+///
+/// Saturation is also what keeps the answer correct if overflow checks are ever
+/// disabled: a wrapping multiply would alias an earlier page — `(1 << 31, 2)`
+/// and `(1 << 16, 1 << 16)` wrap to offset 0, and `(u32::MAX, u32::MAX)` wraps
+/// to offset 1 — re-serving entries a paging consumer had already consumed.
 #[test]
-fn offset_overflow_returns_an_empty_page_instead_of_aliasing_one() {
+fn offset_overflow_returns_an_empty_page_instead_of_trapping() {
     let (env, _cid, client, admin) = setup();
     for period in EPOCHS {
         record_epoch(&env, &client, &admin, period);
@@ -596,7 +604,7 @@ fn offset_overflow_returns_an_empty_page_instead_of_aliasing_one() {
         assert_ne!(
             got,
             client.get_all_epochs(&0u32, &2u32),
-            "page {page} page_size {size}: offset wrapped and aliased page 0"
+            "page {page} page_size {size}: result aliased an earlier page (page 0)"
         );
         // Deterministic: the same arguments always produce the same answer.
         assert_eq!(got, client.get_all_epochs(&page, &size));
@@ -661,9 +669,13 @@ fn recording_into_finalized_epoch_is_rejected() {
     record(&env, &client, &admin, &business, "2026-02");
 }
 
-/// Every path that can grow `DataKey::AllEpochs` must be rejected *before* it
-/// touches the index. Snapshot the whole observable state, attempt all three
-/// rejections, and require byte-identical state afterwards.
+/// Every path that can grow `DataKey::AllEpochs` must leave observable state
+/// untouched when it is rejected. Snapshot the whole observable state, attempt
+/// all three rejections, and require byte-identical state afterwards.
+///
+/// Note the limit of what this pins: a failed contract invocation rolls its
+/// storage writes back at the host level, so the test establishes the observable
+/// outcome, not the point inside `record_snapshot` at which the rejection fires.
 #[test]
 fn rejected_operations_leave_the_epoch_index_unchanged() {
     let (env, cid, client, admin) = setup();
