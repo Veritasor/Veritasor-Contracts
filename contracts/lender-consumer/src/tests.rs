@@ -1,9 +1,8 @@
 #![cfg(test)]
 
 use crate::{LenderConsumerContract, LenderConsumerContractClient, REJECTION_REVOKED};
-use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String, Vec};
-use veritasor_attestation::AttestationContract;
-use veritasor_attestation::AttestationContractClient;
+use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String, Symbol, Vec};
+use veritasor_attestation::{AttestationContract, AttestationContractClient, ROLE_BUSINESS};
 use veritasor_lender_access_list::{
     LenderAccessListContract, LenderAccessListContractClient, LenderMetadata,
 };
@@ -53,6 +52,23 @@ fn setup_lender(
     client.set_lender(admin, lender, &tier, &metadata);
 }
 
+/// Register and approve `business` so `submit_attestation` will accept it.
+fn register_business(
+    env: &Env,
+    core_client: &AttestationContractClient<'_>,
+    admin: &Address,
+    business: &Address,
+) {
+    core_client.grant_role(admin, business, &ROLE_BUSINESS);
+    core_client.register_business(
+        business,
+        &BytesN::from_array(env, &[1u8; 32]),
+        &Symbol::new(env, "US"),
+        &Vec::new(env),
+    );
+    core_client.approve_business(admin, business);
+}
+
 #[test]
 fn test_lender_consumer_observes_revocation_state() {
     let (env, _admin, core_client, access_list_client, consumer_client) = setup_env();
@@ -63,6 +79,7 @@ fn test_lender_consumer_observes_revocation_state() {
 
     // Add lender to access list (Tier 1)
     setup_lender(&access_list_client, &_admin, &lender, 1);
+    register_business(&env, &core_client, &_admin, &business);
 
     // 1. Submit an attestation
     let revenue: i128 = 100_000;
@@ -113,6 +130,7 @@ fn test_lender_consumer_observes_revocation_state_multi_period() {
 
     // Add lender to access list (Tier 1)
     setup_lender(&access_list_client, &_admin, &lender, 1);
+    register_business(&env, &core_client, &_admin, &business);
 
     // 1. Submit attestations
     let revenue1: i128 = 100_000;
