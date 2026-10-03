@@ -697,10 +697,19 @@ pub fn remove_owner(env: &Env, owner: &Address) {
 /// - If signatures come from the same key
 /// - If either key is not in owner set
 /// - If contract is already paused
-pub fn emergency_pause(env: &Env, signer1: &Address, signer2: &Address) {
-    // Authenticate both signers (dual-key requirement)
-    signer1.require_auth();
-    signer2.require_auth();
+pub fn emergency_pause(env: &Env, caller: &Address, signer1: &Address, signer2: &Address) {
+    // Authenticate both signers (dual-key requirement).
+    //
+    // `caller` has already authorized this invocation frame via
+    // `require_admin` on the entry point. The host rejects a repeated
+    // `require_auth` for the same address ("frame is already authorized"), so
+    // an admin that also signs as `signer1`/`signer2` must not be asked twice.
+    if signer1 != caller {
+        signer1.require_auth();
+    }
+    if signer2 != caller {
+        signer2.require_auth();
+    }
 
     // Ensure distinct signers (different hardware keys)
     assert!(

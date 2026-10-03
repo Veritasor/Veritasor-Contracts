@@ -54,8 +54,8 @@
 //! - Only the admin who called `restore_dry_run` can call `restore_commit`.
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short,
-    xdr::ToXdr, Address, Bytes, BytesN, Env, String, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, xdr::ToXdr, Address, Bytes,
+    BytesN, Env, String, Symbol, Vec,
 };
 
 /// Maximum UTF-8 byte length for period/epoch identifiers.
@@ -206,27 +206,23 @@ pub struct RestoreAbortedEvent {
 }
 
 /// Attestation contract client: WASM import for wasm32 (avoids duplicate symbols), crate for tests.
-#[cfg(target_arch = "wasm32")]
 mod attestation_import {
-    use soroban_sdk::{Address, BytesN, String, Vec};
+    use soroban_sdk::{contractclient, Address, BytesN, Env, String};
+
     #[allow(dead_code)]
     pub type AttestationData = (BytesN<32>, u64, u32, i128, Option<BytesN<32>>, Option<u64>);
     #[allow(dead_code)]
     pub type RevocationData = (Address, u64, String);
-    #[allow(dead_code)]
-    pub type AttestationWithRevocation = (AttestationData, Option<RevocationData>);
-    #[allow(dead_code)]
-    pub type AttestationStatusResult =
-        Vec<(String, Option<AttestationData>, Option<RevocationData>)>;
 
-    soroban_sdk::contractimport!(
-        file = "../../target/wasm32-unknown-unknown/release/veritasor_attestation.wasm"
-    );
-    pub use Client as AttestationContractClient;
-}
-#[cfg(not(target_arch = "wasm32"))]
-mod attestation_import {
-    pub use veritasor_attestation::AttestationContractClient;
+    #[contractclient(name = "AttestationContractClient")]
+    pub trait AttestationContractTrait {
+        fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData>;
+        fn get_revocation_info(
+            env: Env,
+            business: Address,
+            period: String,
+        ) -> Option<RevocationData>;
+    }
 }
 
 #[cfg(test)]
@@ -1381,7 +1377,10 @@ mod get_pending_restore_adversarial_tests {
         );
         // Reading another key must not have disturbed the admin's token.
         assert_eq!(
-            client.get_pending_restore(&admin).unwrap().expires_at_ledger,
+            client
+                .get_pending_restore(&admin)
+                .unwrap()
+                .expires_at_ledger,
             100 + RESTORE_COMMIT_WINDOW_LEDGERS
         );
     }
@@ -1481,11 +1480,9 @@ mod get_pending_restore_adversarial_tests {
 
         // The reads must not have consumed the token.
         client.restore_commit(&admin, &entries);
-        assert!(
-            client
-                .get_snapshot(&business, &String::from_str(&env, "2026-01"))
-                .is_some()
-        );
+        assert!(client
+            .get_snapshot(&business, &String::from_str(&env, "2026-01"))
+            .is_some());
         assert!(client.get_last_restore_id().is_some());
     }
 
@@ -1521,7 +1518,10 @@ mod get_pending_restore_adversarial_tests {
         let entries = ready_batch(&env, &business, "2026-01");
         client.restore_dry_run(&admin, &entries);
 
-        let deadline = client.get_pending_restore(&admin).unwrap().expires_at_ledger;
+        let deadline = client
+            .get_pending_restore(&admin)
+            .unwrap()
+            .expires_at_ledger;
         env.ledger().set_sequence_number(deadline);
 
         client.restore_commit(&admin, &entries);
@@ -1540,7 +1540,10 @@ mod get_pending_restore_adversarial_tests {
         let entries = ready_batch(&env, &business, "2026-01");
         client.restore_dry_run(&admin, &entries);
 
-        let deadline = client.get_pending_restore(&admin).unwrap().expires_at_ledger;
+        let deadline = client
+            .get_pending_restore(&admin)
+            .unwrap()
+            .expires_at_ledger;
         env.ledger().set_sequence_number(deadline + 1);
 
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1576,7 +1579,10 @@ mod get_pending_restore_adversarial_tests {
             client.restore_commit(&admin, &tampered);
         }));
 
-        assert!(outcome.is_err(), "the hash binding must reject a swapped batch");
+        assert!(
+            outcome.is_err(),
+            "the hash binding must reject a swapped batch"
+        );
         assert!(client.get_last_restore_id().is_none());
         assert!(client
             .get_snapshot(&business, &String::from_str(&env, "2026-03"))
@@ -1607,7 +1613,10 @@ mod get_pending_restore_adversarial_tests {
         assert!(report.ready_to_commit);
         assert_eq!(report.entries_checked, 0);
         assert_eq!(report.entries_valid, 0);
-        assert_eq!(report.commit_deadline_ledger, 100 + RESTORE_COMMIT_WINDOW_LEDGERS);
+        assert_eq!(
+            report.commit_deadline_ledger,
+            100 + RESTORE_COMMIT_WINDOW_LEDGERS
+        );
 
         let token = client
             .get_pending_restore(&admin)

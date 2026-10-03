@@ -4,6 +4,7 @@ extern crate std;
 use super::*;
 use crate::access_control::{ROLE_ATTESTOR, ROLE_BUSINESS};
 use crate::dispute::{DisputeOutcome, DisputeType};
+use crate::test_support::register_business;
 use soroban_sdk::testutils::{Address as _, Events, Ledger};
 use soroban_sdk::{Address, BytesN, Env, String};
 
@@ -177,6 +178,7 @@ fn test_open_dispute_no_lock_when_no_attestor_recorded() {
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
     client.grant_role(&admin, &business, &ROLE_BUSINESS);
+    register_business(&client, &env, &admin, &business);
 
     client.submit_attestation(
         &business,
@@ -243,6 +245,7 @@ fn test_business_submission_not_affected_by_attestor_lock() {
 
     let business = Address::generate(&env);
     client.grant_role(&admin, &business, &ROLE_BUSINESS);
+    register_business(&client, &env, &admin, &business);
 
     let attestor_period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);

@@ -19,6 +19,7 @@
 
 use super::dispute::{DisputeStatus, DisputeType, OptionalResolution};
 use super::*;
+use crate::test_support::register_business;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, BytesN, Env, String};
 
@@ -39,6 +40,8 @@ fn submit_attestation(
     business: &Address,
     period: &str,
 ) {
+    let admin = client.get_admin();
+    register_business(client, env, &admin, business);
     let root = BytesN::from_array(env, &[7u8; 32]);
     client.submit_attestation(
         business,

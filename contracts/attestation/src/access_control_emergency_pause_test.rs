@@ -99,11 +99,14 @@ fn direct_call_pauses_and_reports_both_signers() {
     assert!(!client.is_paused());
     execute(&env, &client.address, &signer1, &signer2);
 
-    assert!(client.is_paused());
-
+    // The event must be read before any further contract invocation: SDK 22
+    // resets the test event buffer at the start of each top-level call, and
+    // `env.as_contract` events belong to the previous frame.
     let ev = emergency_pause_event(&env).expect("EmergencyPauseTriggered not emitted");
     assert_eq!(ev.signer1, signer1);
     assert_eq!(ev.signer2, signer2);
+
+    assert!(client.is_paused());
 }
 
 #[test]
@@ -154,10 +157,13 @@ fn direct_call_does_not_enforce_distinct_signers() {
 
     execute(&env, &client.address, &signer, &signer);
 
-    assert!(client.is_paused());
+    // Read the event before invoking the client again — see the note in
+    // `direct_call_pauses_and_reports_both_signers`.
     let ev = emergency_pause_event(&env).expect("EmergencyPauseTriggered not emitted");
     assert_eq!(ev.signer1, signer);
     assert_eq!(ev.signer2, ev.signer1);
+
+    assert!(client.is_paused());
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -209,10 +215,13 @@ fn public_entry_point_pauses_and_reports_the_caller_arguments() {
 
     client.emergency_pause(&admin, &admin, &owner2, &2u64);
 
-    assert!(client.is_paused());
+    // Read the event before invoking the client again — see the note in
+    // `direct_call_pauses_and_reports_both_signers`.
     let ev = emergency_pause_event(&env).expect("EmergencyPauseTriggered not emitted");
     assert_eq!(ev.signer1, admin);
     assert_eq!(ev.signer2, owner2);
+
+    assert!(client.is_paused());
 }
 
 #[test]
