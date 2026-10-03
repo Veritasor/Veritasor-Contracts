@@ -2134,7 +2134,7 @@ impl AttestationContract {
     ) {
         access_control::require_admin(&env, &caller);
         replay_protection::verify_and_increment_nonce(&env, &caller, NONCE_CHANNEL_ADMIN, nonce);
-        multisig::emergency_pause(&env, &signer1, &signer2);
+        multisig::emergency_pause(&env, &caller, &signer1, &signer2);
     }
 
     // ── Multisig governance ─────────────────────────────────────────
@@ -3938,6 +3938,9 @@ mod set_paused_test;
 /// Focused adversarial tests for `set_dispute_deadline`.
 #[cfg(test)]
 mod test_set_dispute_deadline;
+/// Shared helpers (business registration, common fixtures) for test modules.
+#[cfg(test)]
+mod test_support;
 
 #[cfg(all(test, feature = "full-tests"))]
 #[cfg(test)]
@@ -4100,6 +4103,9 @@ mod relayer_gas_attribution_test {
             &attestor,
         );
 
+        // Delegated submission still requires an active registered business.
+        crate::test_support::register_business(&client, &env, &admin, &business);
+
         // Submit attestation as attestor (delegated submission)
         client.submit_attestation_as_attestor(
             &attestor,
@@ -4127,6 +4133,9 @@ mod relayer_gas_attribution_test {
         // Mint tokens to business for fee payment
         token_client.mint(&business, &10_000_000i128);
 
+        let admin = client.get_admin();
+        crate::test_support::register_business(&client, &env, &admin, &business);
+
         // Submit attestation directly by business (not delegated)
         client.submit_attestation(
             &business,
@@ -4140,7 +4149,7 @@ mod relayer_gas_attribution_test {
         );
 
         // Check relayer gas accumulation - should be 0 for business submission
-        let relayer_gas = dynamic_fees::get_relayer_gas(&env, &business);
+        let relayer_gas = relayer_gas_of(&env, &client.address, &business);
         assert_eq!(
             relayer_gas, 0,
             "Business submission should not accumulate relayer gas"
@@ -4168,14 +4177,7 @@ mod relayer_gas_attribution_test {
         );
 
         // Batch submission requires an active (registered + approved) business.
-        client.grant_role(&admin, &business, &ROLE_BUSINESS);
-        client.register_business(
-            &business,
-            &BytesN::from_array(&env, &[1u8; 32]),
-            &Symbol::new(&env, "US"),
-            &Vec::new(&env),
-        );
-        client.approve_business(&admin, &business);
+        crate::test_support::register_business(&client, &env, &admin, &business);
 
         // Create batch items
         let mut items = Vec::new(&env);
@@ -4197,7 +4199,7 @@ mod relayer_gas_attribution_test {
         client.submit_batch_as_attestor(&attestor, &items);
 
         // Check relayer gas accumulation
-        let relayer_gas = dynamic_fees::get_relayer_gas(&env, &attestor);
+        let relayer_gas = relayer_gas_of(&env, &client.address, &attestor);
         assert!(
             relayer_gas > 0,
             "Relayer should have accumulated gas from batch submission"
@@ -4228,6 +4230,8 @@ mod relayer_gas_attribution_test {
             &attestor,
         );
 
+        crate::test_support::register_business(&client, &env, &admin, &business);
+
         // First submission
         client.submit_attestation_as_attestor(
             &attestor,
@@ -4253,7 +4257,7 @@ mod relayer_gas_attribution_test {
             &None,
         );
 
-        let gas_after_second = dynamic_fees::get_relayer_gas(&env, &attestor);
+        let gas_after_second = relayer_gas_of(&env, &client.address, &attestor);
         assert!(
             gas_after_second > gas_after_first,
             "Gas should accumulate across multiple submissions"
@@ -4267,7 +4271,7 @@ mod relayer_gas_attribution_test {
         let attestor = Address::generate(&env);
 
         // Check relayer gas for attestor with zero prior activity
-        let relayer_gas = dynamic_fees::get_relayer_gas(&env, &attestor);
+        let relayer_gas = relayer_gas_of(&env, &client.address, &attestor);
         assert_eq!(
             relayer_gas, 0,
             "New relayer should have zero gas accumulation"
@@ -4306,6 +4310,8 @@ mod relayer_gas_attribution_test {
             &admin,
             &attestor2,
         );
+
+        crate::test_support::register_business(&client, &env, &admin, &business);
 
         // First relayer submits
         client.submit_attestation_as_attestor(

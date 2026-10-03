@@ -39,13 +39,7 @@ fn batch_item(
 /// business) can succeed.
 fn register_business(client: &AttestationContractClient, admin: &Address, business: &Address) {
     client.grant_role(admin, business, &ROLE_BUSINESS);
-    client.register_business(
-        business,
-        &BytesN::from_array(&client.env, &[1u8; 32]),
-        &Symbol::new(&client.env, "US"),
-        &Vec::new(&client.env),
-    );
-    client.approve_business(admin, business);
+    crate::test_support::register_business(client, &client.env, admin, business);
 }
 
 /// Advance the ledger timestamp by `seconds`.
@@ -86,6 +80,7 @@ fn submit_attestation_succeeds_after_unpause() {
 
     client.pause(&admin, &1u64);
     client.unpause(&admin, &2u64);
+    register_business(&client, &admin, &business);
 
     client.submit_attestation(
         &business,
@@ -166,6 +161,7 @@ fn get_attestation_while_paused() {
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
+    register_business(&client, &admin, &business);
     client.submit_attestation(
         &business,
         &period,
@@ -607,11 +603,11 @@ fn emergency_pause_bypasses_multisig_time_lock() {
 #[test]
 #[should_panic(expected = "first signature not from owner")]
 fn emergency_pause_requires_two_distinct_keys() {
-    let (env, client, admin, _owner2, _owner3) = setup_with_dual_key();
+    let (env, client, admin, owner2, _owner3) = setup_with_dual_key();
     let stranger = Address::generate(&env);
 
     // Distinct but not a multisig owner: rejected by the owner-set check.
-    client.emergency_pause(&admin, &admin, &stranger, &2u64);
+    client.emergency_pause(&admin, &stranger, &owner2, &2u64);
 }
 
 // ── Direct storage-helper coverage for the scheduled-pause timestamp ──

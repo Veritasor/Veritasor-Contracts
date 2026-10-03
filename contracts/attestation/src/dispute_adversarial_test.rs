@@ -15,6 +15,25 @@ fn in_contract<R>(env: &Env, contract: &Address, f: impl FnOnce(&Env) -> R) -> R
     env.as_contract(contract, || f(env))
 }
 
+/// Seed an `Open` dispute whose opening timestamp already exceeds the rollback
+/// deadline, so `check_and_rollback_disputes` treats it as rollback-eligible.
+fn seed_rollback_eligible_dispute(env: &Env, contract: &Address, id: u64) {
+    let deadline = in_contract(env, contract, |env| dispute::get_dispute_deadline(env));
+    let dispute = dispute::Dispute {
+        id,
+        challenger: Address::generate(env),
+        business: Address::generate(env),
+        attestor: Address::generate(env),
+        period: String::from_str(env, "2026-02"),
+        status: dispute::DisputeStatus::Open,
+        dispute_type: dispute::DisputeType::Other,
+        evidence: String::from_str(env, "evidence"),
+        timestamp: env.ledger().timestamp() - deadline - 1,
+        resolution: dispute::OptionalResolution::None,
+    };
+    in_contract(env, contract, |env| dispute::store_dispute(env, &dispute));
+}
+
 // -----------------------------------------------------------------------------
 // check_and_rollback_disputes adversarial coverage
 // -----------------------------------------------------------------------------
@@ -36,6 +55,10 @@ fn check_and_rollback_disputes_empty_ids_is_no_op() {
 fn check_and_rollback_disputes_respects_limit_and_reports_count() {
     let (env, contract) = setup();
 
+    for id in [1u64, 2, 3] {
+        seed_rollback_eligible_dispute(&env, &contract, id);
+    }
+
     let dispute_ids = soroban_sdk::Vec::from_array(&env, [1, 2, 3]);
 
     let result = in_contract(&env, &contract, |env| {
@@ -51,6 +74,10 @@ fn check_and_rollback_disputes_respects_limit_and_reports_count() {
 #[test]
 fn check_and_rollback_disputes_limit_greater_than_length_is_clamped() {
     let (env, contract) = setup();
+
+    for id in [10u64, 20] {
+        seed_rollback_eligible_dispute(&env, &contract, id);
+    }
 
     let dispute_ids = soroban_sdk::Vec::from_array(&env, [10, 20]);
 
@@ -81,6 +108,10 @@ fn check_and_rollback_disputes_zero_limit_rollbacks_nothing() {
 fn check_and_rollback_disputes_is_deterministic() {
     let (env, contract) = setup();
 
+    for id in [11u64, 22, 33] {
+        seed_rollback_eligible_dispute(&env, &contract, id);
+    }
+
     let dispute_ids = soroban_sdk::Vec::from_array(&env, [11, 22, 33]);
 
     let first = in_contract(&env, &contract, |env| {
@@ -92,7 +123,10 @@ fn check_and_rollback_disputes_is_deterministic() {
     });
 
     assert_eq!(first, 3, "first call must report the clamped count");
-    assert_eq!(second, 3, "repeated calls must be deterministic");
+    assert_eq!(
+        second, 0,
+        "a repeated call must find every dispute closed and roll nothing back"
+    );
 }
 
 #[test]
@@ -110,6 +144,10 @@ fn check_and_rollback_disputes_does_not_mutate_revocation_state() {
     in_contract(&env, &contract, |env| {
         dispute::record_revocation(env, &business, &period, &revocation)
     });
+
+    for id in [1u64, 2, 3] {
+        seed_rollback_eligible_dispute(&env, &contract, id);
+    }
 
     let dispute_ids = soroban_sdk::Vec::from_array(&env, [1, 2, 3]);
 
@@ -149,7 +187,7 @@ fn require_not_revoked_for_update_allows_active_attestation() {
         result.is_ok(),
         "an active attestation must remain updatable"
     );
-    assert!(in_contract(&env, &contract, |env| {
+    assert!(!in_contract(&env, &contract, |env| {
         dispute::is_attestation_revoked(env, &business, &period)
     }));
 }
