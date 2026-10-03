@@ -142,6 +142,18 @@ fn assert_event_and_record_snapshot(
     true
 }
 
+fn activate_business(h: &Harness<'_>, business: &Address) {
+    h.att_client
+        .grant_role(&h.admin, business, &veritasor_attestation::ROLE_BUSINESS);
+    h.att_client.register_business(
+        business,
+        &BytesN::from_array(&h.env, &[7u8; 32]),
+        &symbol_short!("US"),
+        &Vec::new(&h.env),
+    );
+    h.att_client.approve_business(&h.admin, business);
+}
+
 // ────────────────────────────────────────────────────────────────────
 //  1. Basic end-to-end: N submissions → counters == N
 // ────────────────────────────────────────────────────────────────────
@@ -171,6 +183,7 @@ fn test_n_submissions_produce_n_window_counts() {
 
     // Submit one attestation per business and simulate indexer ingestion.
     for biz in &businesses {
+        activate_business(&h, biz);
         h.att_client.submit_attestation(
             biz,
             &String::from_str(&h.env, period),
@@ -217,6 +230,7 @@ fn test_two_window_per_window_counters() {
     let h = setup_harness();
 
     let biz = Address::generate(&h.env);
+    activate_business(&h, &biz);
     let mut biz_vec = Vec::new(&h.env);
     biz_vec.push_back(biz.clone());
 
@@ -309,6 +323,7 @@ fn test_duplicate_snapshot_delivery_does_not_double_count() {
     let h = setup_harness();
 
     let biz = Address::generate(&h.env);
+    activate_business(&h, &biz);
     let mut biz_vec = Vec::new(&h.env);
     biz_vec.push_back(biz.clone());
 
@@ -416,6 +431,7 @@ fn test_business_without_snapshot_contributes_zero() {
     let period_str = String::from_str(&h.env, "2026-04");
 
     for biz in [&biz_with, &biz_with2] {
+        activate_business(&h, biz);
         h.att_client
             .submit_attestation(biz, &period_str, &root, &ts, &1u32, &0i128, &None, &None);
         assert!(assert_event_and_record_snapshot(
@@ -474,6 +490,7 @@ fn test_attestation_submitted_event_topic_is_stable() {
     let h = setup_harness();
 
     let biz = Address::generate(&h.env);
+    activate_business(&h, &biz);
     let period = String::from_str(&h.env, "2026-05");
     let root = BytesN::from_array(&h.env, &[0xEEu8; 32]);
     let ts = h.env.ledger().timestamp();
@@ -536,6 +553,7 @@ fn test_csv_row_of_window_totals() {
     let period = "2026-06";
 
     for (biz, rev) in businesses.iter().zip(revenues.iter()) {
+        activate_business(&h, biz);
         h.att_client.submit_attestation(
             biz,
             &String::from_str(&h.env, period),

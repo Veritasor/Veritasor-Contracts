@@ -51,16 +51,34 @@ fn setup_lender(
     client.set_lender(admin, lender, &tier, &metadata);
 }
 
+fn activate_business(
+    env: &Env,
+    core_client: &AttestationContractClient<'static>,
+    admin: &Address,
+    business: &Address,
+) {
+    core_client.grant_role(admin, business, &veritasor_attestation::ROLE_BUSINESS);
+    core_client.register_business(
+        business,
+        &BytesN::from_array(env, &[7u8; 32]),
+        &soroban_sdk::symbol_short!("US"),
+        &Vec::new(env),
+    );
+    core_client.approve_business(admin, business);
+}
+
 #[test]
 fn test_lender_consumer_observes_revocation_state() {
-    let (env, _admin, core_client, access_list_client, consumer_client) = setup_env();
+    let (env, admin, core_client, access_list_client, consumer_client) = setup_env();
 
     let lender = Address::generate(&env);
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2023-Q3");
 
+    activate_business(&env, &core_client, &admin, &business);
+
     // Add lender to access list (Tier 1)
-    setup_lender(&access_list_client, &_admin, &lender, 1);
+    setup_lender(&access_list_client, &admin, &lender, 1);
 
     // 1. Submit an attestation
     let revenue: i128 = 100_000;
@@ -102,15 +120,17 @@ fn test_lender_consumer_observes_revocation_state() {
 
 #[test]
 fn test_lender_consumer_observes_revocation_state_multi_period() {
-    let (env, _admin, core_client, access_list_client, consumer_client) = setup_env();
+    let (env, admin, core_client, access_list_client, consumer_client) = setup_env();
 
     let lender = Address::generate(&env);
     let business = Address::generate(&env);
     let period1 = String::from_str(&env, "2023-Q1");
     let period2 = String::from_str(&env, "2023-Q2");
 
+    activate_business(&env, &core_client, &admin, &business);
+
     // Add lender to access list (Tier 1)
-    setup_lender(&access_list_client, &_admin, &lender, 1);
+    setup_lender(&access_list_client, &admin, &lender, 1);
 
     // 1. Submit attestations
     let revenue1: i128 = 100_000;
