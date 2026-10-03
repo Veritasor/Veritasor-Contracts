@@ -1369,10 +1369,12 @@ impl AttestationContract {
         }
     }
     pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
+        // Active tier lives in instance storage (see `execute_submission`).
+        let active_key = DataKey::Attestation(business.clone(), period.clone());
         if let Some(att_data) = env
             .storage()
-            .persistent()
-            .get::<_, AttestationData>(&DataKey::Attestation(business.clone(), period.clone()))
+            .instance()
+            .get::<_, AttestationData>(&active_key)
         {
             env.storage()
                 .instance()
@@ -1380,31 +1382,26 @@ impl AttestationContract {
             return Some(att_data);
         }
 
-        // Try reading from archive
+        // Try reading from the archival tier and rehydrate back to active
+        // (instance) storage.
         let archive_key = DataKey::AttestationSnapshot(business.clone(), period.clone());
         if let Some(archived_att_data) = env
             .storage()
             .persistent()
             .get::<_, AttestationData>(&archive_key)
         {
-            let current_config = network_config::get_config(&env);
-
-            // Rehydrate back to active storage
-            let active_key = DataKey::Attestation(business.clone(), period.clone());
             env.storage()
-                .persistent()
+                .instance()
                 .set(&active_key, &archived_att_data);
-            env.storage().persistent().extend_ttl(
-                &active_key,
-                current_config.min_persistent_entry_ttl,
-                current_config.max_entry_ttl,
-            );
+            env.storage()
+                .instance()
+                .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
 
             // Emit rehydrate event
             events::emit_rehydrated_from_archive(&env, &business, &period, archived_att_data.3);
 
             // Remove from archive to complete the move
-            env.storage().instance().remove(&archive_key);
+            env.storage().persistent().remove(&archive_key);
 
             return Some(archived_att_data);
         }
@@ -3878,9 +3875,6 @@ mod dispute_adversarial_test;
 mod dispute_attestation_index_adversarial_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod dispute_test;
-/// Focused adversarial tests for `set_dispute_deadline`.
-#[cfg(test)]
-mod test_set_dispute_deadline;
 #[cfg(all(test, feature = "full-tests"))]
 mod dynamic_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
@@ -3949,6 +3943,9 @@ mod revocation_test;
 /// interaction with `require_not_paused`, and authorization boundary tests.
 #[cfg(test)]
 mod set_paused_test;
+/// Focused adversarial tests for `set_dispute_deadline`.
+#[cfg(test)]
+mod test_set_dispute_deadline;
 
 #[cfg(all(test, feature = "full-tests"))]
 #[cfg(test)]

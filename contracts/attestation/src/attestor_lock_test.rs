@@ -177,6 +177,13 @@ fn test_open_dispute_no_lock_when_no_attestor_recorded() {
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
     client.grant_role(&admin, &business, &ROLE_BUSINESS);
+    client.register_business(
+        &business,
+        &BytesN::from_array(&env, &[1u8; 32]),
+        &soroban_sdk::symbol_short!("US"),
+        &soroban_sdk::Vec::new(&env),
+    );
+    client.approve_business(&admin, &business);
 
     client.submit_attestation(
         &business,
