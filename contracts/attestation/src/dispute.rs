@@ -1637,7 +1637,10 @@ mod test {
             &DisputeType::DataIntegrity,
             &String::from_str(&env, "post revocation"),
         );
-        assert!(res3.is_err(), "open on revoked attestation must be rejected");
+        assert!(
+            res3.is_err(),
+            "open on revoked attestation must be rejected"
+        );
 
         with_contract(&env, &contract_id, || {
             // Index MUST remain completely unchanged
@@ -1647,4 +1650,3 @@ mod test {
         });
     }
 }
-

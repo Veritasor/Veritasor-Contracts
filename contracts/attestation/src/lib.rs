@@ -3878,9 +3878,6 @@ mod dispute_adversarial_test;
 mod dispute_attestation_index_adversarial_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod dispute_test;
-/// Focused adversarial tests for `set_dispute_deadline`.
-#[cfg(test)]
-mod test_set_dispute_deadline;
 #[cfg(all(test, feature = "full-tests"))]
 mod dynamic_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
@@ -3949,6 +3946,9 @@ mod revocation_test;
 /// interaction with `require_not_paused`, and authorization boundary tests.
 #[cfg(test)]
 mod set_paused_test;
+/// Focused adversarial tests for `set_dispute_deadline`.
+#[cfg(test)]
+mod test_set_dispute_deadline;
 
 #[cfg(all(test, feature = "full-tests"))]
 #[cfg(test)]
