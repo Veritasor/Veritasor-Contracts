@@ -239,11 +239,11 @@ fn reconcile_zero_base_fee_with_flat() {
     let business = Address::generate(&ctx.env);
     let collector = Address::generate(&ctx.env);
     let token = deploy_and_fund(&ctx.env, &business, 10_000);
-    ctx.client
-        .configure_fees(&token, &collector, &0, &true);
+    ctx.client.configure_fees(&token, &collector, &0, &true);
     ctx.client
         .configure_flat_fee(&token, &collector, &400, &true);
-    let quote = ctx.client.get_fee_quote(&business);        let (base, _tier_bps, _vol_bps, dynamic, flat) = ctx.client.get_fee_quote_detailed(&business);
+    let quote = ctx.client.get_fee_quote(&business);
+    let (base, _tier_bps, _vol_bps, dynamic, flat) = ctx.client.get_fee_quote_detailed(&business);
     assert_eq!(base, 0);
     assert_eq!(dynamic, 0);
     assert_eq!(flat, 400);
@@ -257,8 +257,7 @@ fn reconcile_flat_fee_zero_amount_enabled() {
     let business = Address::generate(&ctx.env);
     let collector = Address::generate(&ctx.env);
     let token = deploy_and_fund(&ctx.env, &business, 0);
-    ctx.client
-        .configure_flat_fee(&token, &collector, &0, &true);
+    ctx.client.configure_flat_fee(&token, &collector, &0, &true);
     assert_eq!(ctx.client.get_fee_quote(&business), 0);
     assert_reconciles_with_quote(&ctx, &business, "2026-flat-zero", 1, None);
 }
@@ -288,10 +287,22 @@ fn reconcile_multiple_businesses_different_tiers() {
     submit(&ctx.client, &ctx.env, &biz_a, "m-a", 1);
     submit(&ctx.client, &ctx.env, &biz_b, "m-b", 2);
 
-    let stored_a = ctx.client.get_attestation(&biz_a, &String::from_str(&ctx.env, "m-a")).unwrap();
-    let stored_b = ctx.client.get_attestation(&biz_b, &String::from_str(&ctx.env, "m-b")).unwrap();
-    assert_eq!(stored_a.3, quote_a, "biz_a fee_paid must match pre-submit quote");
-    assert_eq!(stored_b.3, quote_b, "biz_b fee_paid must match pre-submit quote");
+    let stored_a = ctx
+        .client
+        .get_attestation(&biz_a, &String::from_str(&ctx.env, "m-a"))
+        .unwrap();
+    let stored_b = ctx
+        .client
+        .get_attestation(&biz_b, &String::from_str(&ctx.env, "m-b"))
+        .unwrap();
+    assert_eq!(
+        stored_a.3, quote_a,
+        "biz_a fee_paid must match pre-submit quote"
+    );
+    assert_eq!(
+        stored_b.3, quote_b,
+        "biz_b fee_paid must match pre-submit quote"
+    );
 }
 
 // ── Batch submission reconciliation ──────────────────────────────────
@@ -333,8 +344,15 @@ fn reconcile_batch_submission_fee_paid() {
 
     let quotes = [q0, q1, q2];
     for (i, p) in periods.iter().enumerate() {
-        let stored = ctx.client.get_attestation(&business, &String::from_str(&ctx.env, p)).unwrap();
-        assert_eq!(stored.3, quotes[i], "batch item {} fee_paid must match pre-submit quote", i);
+        let stored = ctx
+            .client
+            .get_attestation(&business, &String::from_str(&ctx.env, p))
+            .unwrap();
+        assert_eq!(
+            stored.3, quotes[i],
+            "batch item {} fee_paid must match pre-submit quote",
+            i
+        );
     }
 }
 
@@ -346,8 +364,7 @@ fn reconcile_quote_stable_after_submission() {
     let business = Address::generate(&ctx.env);
     let collector = Address::generate(&ctx.env);
     let token = deploy_and_fund(&ctx.env, &business, 1_000_000_000);
-    ctx.client
-        .configure_fees(&token, &collector, &1_000, &true);
+    ctx.client.configure_fees(&token, &collector, &1_000, &true);
     ctx.client.set_tier_discount(&0, &2_000);
     ctx.client.set_business_tier(&business, &0);
 
@@ -355,7 +372,10 @@ fn reconcile_quote_stable_after_submission() {
     submit(&ctx.client, &ctx.env, &business, "stable-1", 1);
     let after = ctx.client.get_fee_quote(&business);
 
-    assert_eq!(before, after, "quote must be stable (no volume brackets configured)");
+    assert_eq!(
+        before, after,
+        "quote must be stable (no volume brackets configured)"
+    );
 }
 
 // ── Property-based sweep ────────────────────────────────────────────
