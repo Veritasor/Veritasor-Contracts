@@ -1089,8 +1089,8 @@ mod test_set_dao {
 #[cfg(test)]
 mod test_get_business_count {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Address, Env};
     use crate::AttestationContract;
+    use soroban_sdk::{testutils::Address as _, Address, Env};
 
     #[test]
     fn missing_business_count_defaults_to_zero() {
