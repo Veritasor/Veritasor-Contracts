@@ -3960,6 +3960,8 @@ mod revoke_reason_test;
 #[cfg(test)]
 mod role_bitmap_adversarial_test;
 #[cfg(test)]
+mod role_from_name_test;
+#[cfg(test)]
 mod schema_export_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod test;
