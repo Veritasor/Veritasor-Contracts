@@ -1646,8 +1646,7 @@ mod get_pending_restore_adversarial_tests {
 mod finalize_epoch_test;
 
 #[cfg(test)]
-mod restore_commit_adversarial_test;
-
-#[cfg(test)]
 mod get_epoch_finalization_adversarial_test;
 
+#[cfg(test)]
+mod restore_commit_adversarial_test;
