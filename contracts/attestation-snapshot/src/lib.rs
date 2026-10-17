@@ -238,6 +238,10 @@ mod test_initialize;
 #[cfg(test)]
 mod last_restore_id_test;
 
+/// Focused adversarial tests for `get_epoch_finalization`.
+#[cfg(test)]
+mod test_epoch_finalization;
+
 // ════════════════════════════════════════════════════════════════════
 //  Storage types
 // ════════════════════════════════════════════════════════════════════
@@ -1265,9 +1269,6 @@ impl AttestationSnapshotContract {
 
 #[cfg(test)]
 mod snapshot_ttl_test;
-
-#[cfg(test)]
-mod get_epoch_finalization_adversarial_test;
 // ═════════════════════════════════════════════════════════════════════════════
 //  Adversarial coverage for `get_pending_restore`
 //
