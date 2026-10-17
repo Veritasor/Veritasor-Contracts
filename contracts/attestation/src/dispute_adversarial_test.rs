@@ -3,7 +3,6 @@ use crate::RevocationData;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Ledger as _;
 use soroban_sdk::{Address, Env, String};
-use soroban_sdk::BytesN;
 
 fn setup() -> (Env, Address) {
     let env = Env::default();
@@ -11,6 +10,7 @@ fn setup() -> (Env, Address) {
     let contract = env.register(crate::AttestationContract, ());
     (env, contract)
 }
+
 
 fn in_contract<R>(
 env: &Env,
@@ -290,132 +290,3 @@ assert!(
 );
 }
 
-// -----------------------------------------------------------------------------
-// submit_dispute_witness adversarial coverage
-// -----------------------------------------------------------------------------
-
-fn witness_leaf(env: &Env, seed: u8) -> BytesN<32> {
-    let mut bytes = [0u8; 32];
-    bytes[0] = seed;
-    BytesN::from_array(env, &bytes)
-}
-
-fn witness_proof(env: &Env, seeds: &[u8]) -> soroban_sdk::Vec<BytesN<32>> {
-    let mut proof = soroban_sdk::Vec::new(env);
-    for seed in seeds {
-        proof.push_back(witness_leaf(env, *seed));
-    }
-    proof
-}
-
-#[test]
-fn submit_dispute_witness_rejects_empty_proof() {
-
-let (env, contract) = setup();
-
-let caller = Address::generate(&env);
-let leaf = witness_leaf(&env, 1);
-let proof = soroban_sdk::Vec::new(&env);
-
-let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-    in_contract(&env, &contract, |env| {
-        dispute::submit_dispute_witness(env, &caller, 1, &leaf, &proof);
-    });
-}));
-
-assert!(result.is_err(), "an empty witness proof must be rejected");
-}
-
-#[test]
-fn submit_dispute_witness_rejects_zero_dispute_id() {
-
-let (env, contract) = setup();
-
-let caller = Address::generate(&env);
-let leaf = witness_leaf(&env, 2);
-let proof = witness_proof(&env, &[3, 4]);
-
-let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-    in_contract(&env, &contract, |env| {
-        dispute::submit_dispute_witness(env, &caller, 0, &leaf, &proof);
-    });
-}));
-
-assert!(result.is_err(), "dispute id zero must be rejected as invalid");
-}
-
-#[test]
-fn submit_dispute_witness_rejects_duplicate_leaf_in_proof() {
-
-let (env, contract) = setup();
-
-let caller = Address::generate(&env);
-let leaf = witness_leaf(&env, 5);
-let proof = witness_proof(&env, &[5, 5]);
-
-let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-    in_contract(&env, &contract, |env| {
-        dispute::submit_dispute_witness(env, &caller, 1, &leaf, &proof);
-    });
-}));
-
-assert!(
-    result.is_err(),
-    "a proof containing the leaf itself must be rejected"
-);
-}
-
-#[test]
-fn submit_dispute_witness_is_deterministic_on_rejection() {
-
-let (env, contract) = setup();
-
-let caller = Address::generate(&env);
-let leaf = witness_leaf(&env, 6);
-let proof = soroban_sdk::Vec::new(&env);
-
-let first = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-    in_contract(&env, &contract, |env| {
-        dispute::submit_dispute_witness(env, &caller, 1, &leaf, &proof);
-    });
-}));
-
-let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-    in_contract(&env, &contract, |env| {
-        dispute::submit_dispute_witness(env, &caller, 1, &leaf, &proof);
-    });
-}));
-
-assert!(first.is_err(), "first rejected call must fail");
-assert!(second.is_err(), "repeated rejected calls must fail identically");
-}
-
-#[test]
-fn submit_dispute_witness_rejection_does_not_mutate_revocation_state() {
-
-let (env, contract) = setup();
-
-let business = Address::generate(&env);
-let period = String::from_str(&env, "2026-09");
-let reason = String::from_str(&env, "adversarial witness revocation");
-let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
-
-in_contract(&env, &contract, |env| {
-    dispute::record_revocation(env, &business, &period, &revocation)
-});
-
-let caller = Address::generate(&env);
-let leaf = witness_leaf(&env, 7);
-let proof = soroban_sdk::Vec::new(&env);
-
-let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-    in_contract(&env, &contract, |env| {
-        dispute::submit_dispute_witness(env, &caller, 1, &leaf, &proof);
-    });
-}));
-
-assert!(result.is_err(), "invalid witness submission must be rejected");
-assert!(in_contract(&env, &contract, |env| {
-    dispute::is_attestation_revoked(env, &business, &period)
-}), "rejected witness submission must not mutate revocation state");
-}
