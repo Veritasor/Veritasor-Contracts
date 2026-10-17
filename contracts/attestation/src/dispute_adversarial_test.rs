@@ -2,8 +2,9 @@ use crate::dispute;
 use crate::RevocationData;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Ledger as _;
-use soroban_sdk::{Address, Env, String};
-use soroban_sdk::{BytesN, Vec};
+use soroban_sdk::{Address, BytesN, Env, String, Vec};
+
+use crate::dispute::DisputeStatus;
 
 fn setup() -> (Env, Address) {
     let env = Env::default();
@@ -294,120 +295,142 @@ assert!(
 // submit_dispute_witness adversarial coverage
 // -----------------------------------------------------------------------------
 
-fn witness_leaf(env: &Env, seed: u8) -> BytesN<32> {
+fn leaf(env: &Env, seed: u8) -> BytesN<32> {
     BytesN::from_array(env, &[seed; 32])
 }
 
-fn witness_proof(env: &Env, seeds: &[u8]) -> Vec<BytesN<32>> {
+fn proof_of(env: &Env, seeds: &[u8]) -> Vec<BytesN<32>> {
     let mut proof = Vec::new(env);
     for seed in seeds {
-        proof.push_back(witness_leaf(env, *seed));
+        proof.push_back(leaf(env, *seed));
     }
     proof
 }
 
+fn open_dispute(env: &Env, contract: &Address, dispute_id: u64) {
+    in_contract(env, contract, |env| {
+        dispute::open_dispute(env, dispute_id, &leaf(env, 0), &proof_of(env, &[1, 2]));
+    });
+}
+
 #[test]
-fn submit_dispute_witness_accepts_valid_proof() {
+fn submit_dispute_witness_accepts_valid_witness() {
     let (env, contract) = setup();
     let dispute_id = 1u64;
-    let leaf = witness_leaf(&env, 1);
-    let proof = witness_proof(&env, &[2, 3]);
+    open_dispute(&env, &contract, dispute_id);
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        in_contract(&env, &contract, |env| {
-            dispute::submit_dispute_witness(env, dispute_id, &leaf, &proof)
-        })
-    }));
-
-    assert!(result.is_ok(), "a valid witness submission must succeed");
-}
-
-#[test]
-fn submit_dispute_witness_accepts_empty_proof() {
-    let (env, contract) = setup();
-    let dispute_id = 2u64;
-    let leaf = witness_leaf(&env, 4);
-    let proof = Vec::new(&env);
-
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        in_contract(&env, &contract, |env| {
-            dispute::submit_dispute_witness(env, dispute_id, &leaf, &proof)
-        })
-    }));
-
-    assert!(result.is_ok(), "an empty proof must be handled deterministically");
-}
-
-#[test]
-fn submit_dispute_witness_is_deterministic() {
-    let (env, contract) = setup();
-    let dispute_id = 3u64;
-    let leaf = witness_leaf(&env, 5);
-    let proof = witness_proof(&env, &[6, 7, 8]);
-
-    let first = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        in_contract(&env, &contract, |env| {
-            dispute::submit_dispute_witness(env, dispute_id, &leaf, &proof)
-        })
-    }));
-    let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        in_contract(&env, &contract, |env| {
-            dispute::submit_dispute_witness(env, dispute_id, &leaf, &proof)
-        })
-    }));
-
-    assert_eq!(
-        first.is_ok(),
-        second.is_ok(),
-        "repeated submissions must be deterministic"
-    );
-}
-
-#[test]
-fn submit_dispute_witness_does_not_mutate_revocation_state() {
-    let (env, contract) = setup();
-    let business = Address::generate(&env);
-    let period = String::from_str(&env, "2026-09");
-    let reason = String::from_str(&env, "adversarial witness test");
-    let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
+    let witness_leaf = leaf(&env, 9);
+    let witness_proof = proof_of(&env, &[3, 4]);
 
     in_contract(&env, &contract, |env| {
-        dispute::record_revocation(env, &business, &period, &revocation)
+        dispute::submit_dispute_witness(env, dispute_id, &witness_leaf, &witness_proof);
     });
 
-    let dispute_id = 4u64;
-    let leaf = witness_leaf(&env, 9);
-    let proof = witness_proof(&env, &[10]);
-
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        in_contract(&env, &contract, |env| {
-            dispute::submit_dispute_witness(env, dispute_id, &leaf, &proof)
-        })
-    }));
-
-    assert!(
-        in_contract(&env, &contract, |env| {
-            dispute::is_attestation_revoked(env, &business, &period)
-        }),
-        "witness submission must not mutate revocation state"
-    );
+    let stored = in_contract(&env, &contract, |env| {
+        dispute::get_dispute(env, dispute_id)
+    });
+    assert_eq!(stored.status, DisputeStatus::WitnessSubmitted);
+    assert_eq!(stored.witness_leaf, witness_leaf);
+    assert_eq!(stored.witness_proof, witness_proof);
 }
 
 #[test]
-fn submit_dispute_witness_rejects_unauthorized_caller() {
+fn submit_dispute_witness_rejects_unknown_dispute_id() {
     let (env, contract) = setup();
-    let dispute_id = 5u64;
-    let leaf = witness_leaf(&env, 11);
-    let proof = witness_proof(&env, &[12]);
+    let dispute_id = 42u64;
+    let witness_leaf = leaf(&env, 9);
+    let witness_proof = proof_of(&env, &[3, 4]);
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         in_contract(&env, &contract, |env| {
-            dispute::submit_dispute_witness(env, dispute_id, &leaf, &proof)
-        })
+            dispute::submit_dispute_witness(env, dispute_id, &witness_leaf, &witness_proof);
+        });
     }));
 
-    assert!(
-        result.is_ok() || result.is_err(),
-        "unauthorized callers must be rejected deterministically"
-    );
+    assert!(result.is_err(), "unknown dispute id must be rejected");
+    assert!(in_contract(&env, &contract, |env| {
+        dispute::get_dispute(env, dispute_id).is_none()
+    }));
+}
+
+#[test]
+fn submit_dispute_witness_rejects_empty_proof() {
+    let (env, contract) = setup();
+    let dispute_id = 2u64;
+    open_dispute(&env, &contract, dispute_id);
+
+    let witness_leaf = leaf(&env, 9);
+    let empty_proof = Vec::new(&env);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        in_contract(&env, &contract, |env| {
+            dispute::submit_dispute_witness(env, dispute_id, &witness_leaf, &empty_proof);
+        });
+    }));
+
+    assert!(result.is_err(), "empty witness proof must be rejected");
+    let stored = in_contract(&env, &contract, |env| {
+        dispute::get_dispute(env, dispute_id)
+    });
+    assert_eq!(stored.status, DisputeStatus::Open);
+    assert_ne!(stored.witness_leaf, witness_leaf);
+}
+
+#[test]
+fn submit_dispute_witness_rejects_duplicate_submission() {
+    let (env, contract) = setup();
+    let dispute_id = 3u64;
+    open_dispute(&env, &contract, dispute_id);
+
+    let witness_leaf = leaf(&env, 9);
+    let witness_proof = proof_of(&env, &[3, 4]);
+
+    in_contract(&env, &contract, |env| {
+        dispute::submit_dispute_witness(env, dispute_id, &witness_leaf, &witness_proof);
+    });
+
+    let second_leaf = leaf(&env, 10);
+    let second_proof = proof_of(&env, &[5, 6]);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        in_contract(&env, &contract, |env| {
+            dispute::submit_dispute_witness(env, dispute_id, &second_leaf, &second_proof);
+        });
+    }));
+
+    assert!(result.is_err(), "duplicate witness submission must be rejected");
+    let stored = in_contract(&env, &contract, |env| {
+        dispute::get_dispute(env, dispute_id)
+    });
+    assert_eq!(stored.witness_leaf, witness_leaf);
+    assert_eq!(stored.witness_proof, witness_proof);
+}
+
+#[test]
+fn submit_dispute_witness_rejects_zero_dispute_id() {
+    let (env, contract) = setup();
+    let witness_leaf = leaf(&env, 9);
+    let witness_proof = proof_of(&env, &[3, 4]);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        in_contract(&env, &contract, |env| {
+            dispute::submit_dispute_witness(env, 0u64, &witness_leaf, &witness_proof);
+        });
+    }));
+
+    assert!(result.is_err(), "zero dispute id must be rejected");
+}
+
+#[test]
+fn submit_dispute_witness_rejects_max_dispute_id() {
+    let (env, contract) = setup();
+    let witness_leaf = leaf(&env, 9);
+    let witness_proof = proof_of(&env, &[3, 4]);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        in_contract(&env, &contract, |env| {
+            dispute::submit_dispute_witness(env, u64::MAX, &witness_leaf, &witness_proof);
+        });
+    }));
+
+    assert!(result.is_err(), "max dispute id must be rejected");
 }
