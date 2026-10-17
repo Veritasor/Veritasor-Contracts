@@ -818,96 +818,9 @@ pub fn handle_epoch_rollover(env: &Env) {
 //  Per-epoch checkpoint accumulators & backfill counter
 // ════════════════════════════════════════════════════════════════════
 
-/// Increment the running submission count for `period` within the current
-/// epoch and return the new count.
-///
-/// Backed by [`DataKey::EpochSubmissions`]; used to emit `EpochCheckpoint`
-/// events after each submission (single and batch paths).
-pub fn increment_epoch_submissions(env: &Env, period: &soroban_sdk::String, amount: u64) -> u64 {
-    let current = env
-        .storage()
-        .instance()
-        .get::<_, u64>(&DataKey::EpochSubmissions(period.clone()))
-        .unwrap_or(0u64);
-    let next = current.saturating_add(amount);
-    env.storage()
-        .instance()
-        .set(&DataKey::EpochSubmissions(period.clone()), &next);
-    next
-}
-
-/// Accumulate `amount` into the epoch fee total for `period` and return the
-/// new accumulated total.
-///
-/// Backed by [`DataKey::EpochFees`]; used to emit `EpochCheckpoint` events.
-pub fn accumulate_epoch_fees(env: &Env, period: &soroban_sdk::String, amount: i128) -> i128 {
-    let current = env
-        .storage()
-        .instance()
-        .get::<_, i128>(&DataKey::EpochFees(period.clone()))
-        .unwrap_or(0i128);
-    let next = current.saturating_add(amount);
-    env.storage()
-        .instance()
-        .set(&DataKey::EpochFees(period.clone()), &next);
-    next
-}
-
-/// Increment the global backfill submission counter and return the new value.
-///
-/// Backed by [`DataKey::BackfillSubmissionCount`]; the counter drives
-/// `BackfillCheckpoint` emission every `BACKFILL_CHECKPOINT_INTERVAL`
-/// submissions.
-pub fn increment_backfill_count(env: &Env) -> u64 {
-    let current = env
-        .storage()
-        .instance()
-        .get::<_, u64>(&DataKey::BackfillSubmissionCount)
-        .unwrap_or(0u64);
-    let next = current.saturating_add(1);
-    env.storage()
-        .instance()
-        .set(&DataKey::BackfillSubmissionCount, &next);
-    next
-}
-
 // ════════════════════════════════════════════════════════════════════
 //  Time-locked staking contract rebinding
 // ════════════════════════════════════════════════════════════════════
-
-/// Pending attestor staking contract rebinding, enforced with a 24 h
-/// timelock between proposal and commit (see `docs/timelock-staking-binding.md`).
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct PendingStakingContract {
-    /// Proposed staking contract address.
-    pub new_contract: Address,
-    /// Ledger timestamp at which the proposal becomes effective.
-    pub effective_at: u64,
-    /// Admin that proposed the rebinding.
-    pub proposed_by: Address,
-}
-
-/// Read the pending staking contract rebinding proposal, if any.
-pub fn get_pending_staking_contract(env: &Env) -> Option<PendingStakingContract> {
-    env.storage()
-        .instance()
-        .get(&DataKey::PendingStakingContract)
-}
-
-/// Store a pending staking contract rebinding proposal.
-pub fn set_pending_staking_contract(env: &Env, pending: &PendingStakingContract) {
-    env.storage()
-        .instance()
-        .set(&DataKey::PendingStakingContract, pending);
-}
-
-/// Remove any pending staking contract rebinding proposal.
-pub fn clear_pending_staking_contract(env: &Env) {
-    env.storage()
-        .instance()
-        .remove(&DataKey::PendingStakingContract);
-}
 
 //  Archive tier types and helpers
 // ════════════════════════════════════════════════════════════════════
@@ -1105,4 +1018,260 @@ pub fn set_min_reputation(env: &Env, min_score: u64) {
     env.storage()
         .instance()
         .set(&DataKey::MinReputation, &min_score);
+}
+
+#[cfg(test)]
+mod test_set_dao {
+    use super::*;
+    use crate::{AttestationContract, AttestationContractClient};
+    use soroban_sdk::{testutils::Address as _, Address, Env};
+
+    fn setup_env<'a>() -> (Env, AttestationContractClient<'a>, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let id = env.register(AttestationContract, ());
+        let client = AttestationContractClient::new(&env, &id);
+        client.initialize(&admin, &0u64);
+        (env, client, admin)
+    }
+
+    #[test]
+    fn test_set_dao_valid_call() {
+        let (env, client, _admin) = setup_env();
+        let dao = Address::generate(&env);
+
+        env.as_contract(&client.address, || {
+            assert_eq!(get_dao(&env), None);
+        });
+
+        let res = client.try_set_dao(&dao);
+        assert!(res.is_ok());
+
+        env.as_contract(&client.address, || {
+            assert_eq!(get_dao(&env), Some(dao));
+        });
+    }
+
+    #[test]
+    fn test_set_dao_unauthorized_call() {
+        let (env, client, _admin) = setup_env();
+        let dao = Address::generate(&env);
+
+        // Clear mocked auths to simulate an unauthorized call
+        env.mock_auths(&[]);
+
+        let res = client.try_set_dao(&dao);
+        assert!(res.is_err());
+
+        // State remains unchanged
+        env.as_contract(&client.address, || {
+            assert_eq!(get_dao(&env), None);
+        });
+    }
+
+    #[test]
+    fn test_set_dao_internal_directly() {
+        let env = Env::default();
+        let dao1 = Address::generate(&env);
+        let dao2 = Address::generate(&env);
+
+        assert_eq!(get_dao(&env), None);
+
+        set_dao(&env, &dao1);
+        assert_eq!(get_dao(&env), Some(dao1));
+
+        set_dao(&env, &dao2);
+        assert_eq!(get_dao(&env), Some(dao2));
+    }
+}
+
+#[cfg(test)]
+mod test_get_revoke_proposal {
+    use super::*;
+    use crate::{AttestationContract, AttestationContractClient};
+    use soroban_sdk::{testutils::Address as _, Address, Env, String};
+
+    fn setup_env<'a>() -> (Env, AttestationContractClient<'a>, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let id = env.register(AttestationContract, ());
+        let client = AttestationContractClient::new(&env, &id);
+        client.initialize(&admin, &0u64);
+        (env, client, admin)
+    }
+
+    fn make_proposal(env: &Env, proposer: &Address, at: u64, reason: &str) -> RevokeProposal {
+        RevokeProposal {
+            proposer: proposer.clone(),
+            proposed_at: at,
+            reason: String::from_str(env, reason),
+        }
+    }
+
+    #[test]
+    fn test_get_revoke_proposal_returns_none_when_absent() {
+        let (env, client, _admin) = setup_env();
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "2024-01");
+
+        env.as_contract(&client.address, || {
+            assert_eq!(get_revoke_proposal(&env, &business, &period), None);
+        });
+    }
+
+    #[test]
+    fn test_get_revoke_proposal_roundtrip_after_store() {
+        let (env, client, _admin) = setup_env();
+        let business = Address::generate(&env);
+        let proposer = Address::generate(&env);
+        let period = String::from_str(&env, "2024-01");
+        let proposal = make_proposal(&env, &proposer, 1_234_567, "fraud");
+
+        env.as_contract(&client.address, || {
+            store_revoke_proposal(&env, &business, &period, &proposal);
+            let loaded = get_revoke_proposal(&env, &business, &period);
+            assert_eq!(loaded, Some(proposal.clone()));
+        });
+    }
+
+    #[test]
+    fn test_get_revoke_proposal_isolated_by_business() {
+        let (env, client, _admin) = setup_env();
+        let business_a = Address::generate(&env);
+        let business_b = Address::generate(&env);
+        let proposer = Address::generate(&env);
+        let period = String::from_str(&env, "2024-01");
+        let proposal = make_proposal(&env, &proposer, 42, "reason-a");
+
+        env.as_contract(&client.address, || {
+            store_revoke_proposal(&env, &business_a, &period, &proposal);
+            assert_eq!(
+                get_revoke_proposal(&env, &business_a, &period),
+                Some(proposal.clone())
+            );
+            // Different business, same period → no leakage.
+            assert_eq!(get_revoke_proposal(&env, &business_b, &period), None);
+        });
+    }
+
+    #[test]
+    fn test_get_revoke_proposal_isolated_by_period() {
+        let (env, client, _admin) = setup_env();
+        let business = Address::generate(&env);
+        let proposer = Address::generate(&env);
+        let period_a = String::from_str(&env, "2024-01");
+        let period_b = String::from_str(&env, "2024-02");
+        let proposal = make_proposal(&env, &proposer, 7, "reason-a");
+
+        env.as_contract(&client.address, || {
+            store_revoke_proposal(&env, &business, &period_a, &proposal);
+            assert_eq!(
+                get_revoke_proposal(&env, &business, &period_a),
+                Some(proposal.clone())
+            );
+            // Same business, different period → no leakage.
+            assert_eq!(get_revoke_proposal(&env, &business, &period_b), None);
+        });
+    }
+
+    #[test]
+    fn test_get_revoke_proposal_returns_none_after_remove() {
+        let (env, client, _admin) = setup_env();
+        let business = Address::generate(&env);
+        let proposer = Address::generate(&env);
+        let period = String::from_str(&env, "2024-01");
+        let proposal = make_proposal(&env, &proposer, 99, "reason");
+
+        env.as_contract(&client.address, || {
+            store_revoke_proposal(&env, &business, &period, &proposal);
+            assert!(get_revoke_proposal(&env, &business, &period).is_some());
+
+            remove_revoke_proposal(&env, &business, &period);
+            assert_eq!(get_revoke_proposal(&env, &business, &period), None);
+        });
+    }
+
+    #[test]
+    fn test_get_revoke_proposal_remove_is_idempotent() {
+        let (env, client, _admin) = setup_env();
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "2024-01");
+
+        env.as_contract(&client.address, || {
+            // Removing an absent proposal must not panic and must leave state absent.
+            remove_revoke_proposal(&env, &business, &period);
+            assert_eq!(get_revoke_proposal(&env, &business, &period), None);
+            remove_revoke_proposal(&env, &business, &period);
+            assert_eq!(get_revoke_proposal(&env, &business, &period), None);
+        });
+    }
+
+    #[test]
+    fn test_get_revoke_proposal_overwrite_replaces_previous() {
+        let (env, client, _admin) = setup_env();
+        let business = Address::generate(&env);
+        let proposer_a = Address::generate(&env);
+        let proposer_b = Address::generate(&env);
+        let period = String::from_str(&env, "2024-01");
+        let first = make_proposal(&env, &proposer_a, 1, "first");
+        let second = make_proposal(&env, &proposer_b, 2, "second");
+
+        env.as_contract(&client.address, || {
+            store_revoke_proposal(&env, &business, &period, &first);
+            store_revoke_proposal(&env, &business, &period, &second);
+            assert_eq!(
+                get_revoke_proposal(&env, &business, &period),
+                Some(second.clone())
+            );
+            assert_ne!(
+                get_revoke_proposal(&env, &business, &period),
+                Some(first)
+            );
+        });
+    }
+
+    #[test]
+    fn test_get_revoke_proposal_boundary_timestamps() {
+        let (env, client, _admin) = setup_env();
+        let business = Address::generate(&env);
+        let proposer = Address::generate(&env);
+        let period = String::from_str(&env, "2024-01");
+
+        env.as_contract(&client.address, || {
+            // proposed_at == 0 boundary.
+            let zero = make_proposal(&env, &proposer, 0, "zero");
+            store_revoke_proposal(&env, &business, &period, &zero);
+            assert_eq!(
+                get_revoke_proposal(&env, &business, &period),
+                Some(zero.clone())
+            );
+
+            // proposed_at == u64::MAX boundary.
+            let max = make_proposal(&env, &proposer, u64::MAX, "max");
+            store_revoke_proposal(&env, &business, &period, &max);
+            assert_eq!(
+                get_revoke_proposal(&env, &business, &period),
+                Some(max.clone())
+            );
+        });
+    }
+
+    #[test]
+    fn test_get_revoke_proposal_empty_period_string() {
+        let (env, client, _admin) = setup_env();
+        let business = Address::generate(&env);
+        let proposer = Address::generate(&env);
+        let empty = String::from_str(&env, "");
+        let proposal = make_proposal(&env, &proposer, 5, "empty-period");
+
+        env.as_contract(&client.address, || {
+            store_revoke_proposal(&env, &business, &empty, &proposal);
+            assert_eq!(
+                get_revoke_proposal(&env, &business, &empty),
+                Some(proposal.clone())
+            );
+        });
+    }
 }
