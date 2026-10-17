@@ -311,6 +311,91 @@ fn admin_transfer_changes_admin() {
 }
 
 // ════════════════════════════════════════════════════════════════════
+//  transfer_admin — adversarial coverage
+// ════════════════════════════════════════════════════════════════════
+
+/// Missing authorization for the current admin must be rejected and leave
+/// the admin unchanged.
+#[test]
+fn transfer_admin_requires_current_admin_authorization() {
+    let (env, client, admin, _initial_impl) = setup();
+    let new_admin = Address::generate(&env);
+
+    // Replace the blanket auth mock with none so `require_auth` is enforced.
+    env.mock_auths(&[]);
+
+    let result = client.try_transfer_admin(&new_admin);
+    assert!(
+        result.is_err(),
+        "unauthenticated admin transfer must be rejected"
+    );
+    assert_eq!(client.get_admin(), Some(admin));
+}
+
+/// A rejected transfer must not mutate the stored admin.
+#[test]
+fn rejected_transfer_admin_leaves_admin_unchanged() {
+    let (env, client, admin, _initial_impl) = setup();
+    let new_admin = Address::generate(&env);
+
+    env.mock_auths(&[]);
+    let result = client.try_transfer_admin(&new_admin);
+    assert!(result.is_err(), "transfer without auth must be rejected");
+
+    // Original admin is preserved after the rejected operation.
+    assert_eq!(client.get_admin(), Some(admin));
+    assert_ne!(client.get_admin(), Some(new_admin));
+}
+
+/// Transferring admin to the current admin is a no-op boundary case that
+/// must still succeed and leave the admin unchanged.
+#[test]
+fn transfer_admin_to_self_is_allowed_and_stable() {
+    let (_env, client, admin, _initial_impl) = setup();
+
+    client.transfer_admin(&admin);
+    assert_eq!(client.get_admin(), Some(admin.clone()));
+
+    // Repeated self-transfer remains stable.
+    client.transfer_admin(&admin);
+    assert_eq!(client.get_admin(), Some(admin));
+}
+
+/// Transferring admin to the current implementation address is permitted
+/// (no explicit guard), and the new admin is then rejected as an impl.
+#[test]
+fn transfer_admin_to_current_implementation_is_observable() {
+    let (_env, client, _admin, initial_impl) = setup();
+
+    client.transfer_admin(&initial_impl);
+    assert_eq!(client.get_admin(), Some(initial_impl.clone()));
+
+    // The new admin (== current impl) is rejected by validate_implementation.
+    assert!(!client.validate_implementation(&initial_impl));
+}
+
+/// Only the most recent admin can transfer; the previous admin loses rights.
+#[test]
+fn previous_admin_cannot_transfer_after_handoff() {
+    let (env, client, old_admin, _initial_impl) = setup();
+    let new_admin = Address::generate(&env);
+    let attacker = Address::generate(&env);
+
+    client.transfer_admin(&new_admin);
+    assert_eq!(client.get_admin(), Some(new_admin.clone()));
+
+    // Drop auths so a stale admin cannot silently succeed.
+    env.mock_auths(&[]);
+    let result = client.try_transfer_admin(&attacker);
+    assert!(
+        result.is_err(),
+        "transfer without current admin auth must be rejected"
+    );
+    assert_eq!(client.get_admin(), Some(new_admin));
+    assert_ne!(client.get_admin(), Some(old_admin));
+}
+
+// ════════════════════════════════════════════════════════════════════
 //  Duplicate-key protection tests
 // ════════════════════════════════════════════════════════════════════
 
@@ -761,7 +846,7 @@ fn has_attestation_key_is_read_only() {
 fn query_functions_do_not_require_auth() {
     // Query functions should be callable without authorization.
     let env = Env::default();
-    // Do NOT mock auths — queries should work regardless
+    // Do NOT mock auths �?" queries should work regardless
     let registry_id = env.register(AttestationRegistry, ());
     let client = AttestationRegistryClient::new(&env, &registry_id);
 
@@ -773,4 +858,78 @@ fn query_functions_do_not_require_auth() {
     assert_eq!(client.get_previous_implementation(), None);
     assert_eq!(client.get_previous_version(), None);
     assert_eq!(client.get_version_info(), None);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  register_attestation_key — adversarial coverage (#852)
+// ════════════════════════════════════════════════════════════════════
+
+/// Missing authorization for the `attester` must be rejected and leave no key.
+#[test]
+fn register_key_requires_attester_authorization() {
+    let (env, client, _admin, _impl) = setup();
+    let attester = Address::generate(&env);
+    let key = soroban_sdk::String::from_str(&env, "2024-Q1");
+
+    // Replace the blanket auth mock with none so `require_auth` is enforced.
+    env.mock_auths(&[]);
+
+    let result = client.try_register_attestation_key(&attester, &key);
+    assert!(
+        result.is_err(),
+        "unauthenticated registration must be rejected"
+    );
+    assert!(!client.has_attestation_key(&attester, &key));
+}
+
+/// A rejected duplicate must not overwrite or clear the existing registration.
+#[test]
+fn rejected_duplicate_keeps_existing_registration() {
+    let (env, client, _admin, _impl) = setup();
+    let attester = Address::generate(&env);
+    let key = soroban_sdk::String::from_str(&env, "2024-Q1");
+
+    client.register_attestation_key(&attester, &key);
+    let duplicate = client.try_register_attestation_key(&attester, &key);
+    assert!(
+        duplicate.is_err(),
+        "duplicate registration must be rejected"
+    );
+
+    // The initial registration is untouched by the rejected call.
+    assert!(client.has_attestation_key(&attester, &key));
+}
+
+/// Empty key is a valid boundary value: accepted once, then guarded as a key.
+#[test]
+fn empty_key_is_a_valid_boundary_and_guarded() {
+    let (env, client, _admin, _initial_impl) = setup();
+    let attester = Address::generate(&env);
+    let empty = soroban_sdk::String::from_str(&env, "");
+
+    client.register_attestation_key(&attester, &empty);
+    assert!(client.has_attestation_key(&attester, &empty));
+
+    let duplicate = client.try_register_attestation_key(&attester, &empty);
+    assert!(duplicate.is_err(), "empty key must still be un-reusable");
+}
+
+/// Registrations are namespaced by both `attester` and `key`.
+#[test]
+fn registrations_are_isolated_per_attester_and_key() {
+    let (env, client, _admin, _initial_impl) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let key_x = soroban_sdk::String::from_str(&env, "X");
+    let key_y = soroban_sdk::String::from_str(&env, "Y");
+
+    client.register_attestation_key(&alice, &key_x);
+    client.register_attestation_key(&bob, &key_x);
+    client.register_attestation_key(&alice, &key_y);
+
+    assert!(client.has_attestation_key(&alice, &key_x));
+    assert!(client.has_attestation_key(&bob, &key_x));
+    assert!(client.has_attestation_key(&alice, &key_y));
+    // A pair that was never registered stays absent.
+    assert!(!client.has_attestation_key(&bob, &key_y));
 }

@@ -50,10 +50,20 @@ extern crate std;
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, Env, String};
 
 #[cfg(test)]
+mod get_previous_version_test;
+#[cfg(test)]
+mod transfer_admin_adversarial_test;
+#[cfg(test)]
 mod registry_batch_consistency_test;
 #[cfg(test)]
+mod rollback_adversarial_test;
+#[cfg(test)]
 mod test;
+#[cfg(test)]
+mod validate_implementation_test;
 
+#[cfg(test)]
+mod transfer_admin_adversarial_test;
 // ════════════════════════════════════════════════════════════════════
 //  Storage types
 // ════════════════════════════════════════════════════════════════════
@@ -513,3 +523,9 @@ impl AttestationRegistry {
         admin
     }
 }
+
+#[cfg(test)]
+mod upgrade_adversarial_test;
+
+#[cfg(test)]
+mod transfer_admin_adversarial_test;
