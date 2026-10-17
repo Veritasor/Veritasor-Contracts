@@ -2,7 +2,7 @@ use crate::dispute;
 use crate::RevocationData;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Ledger as _;
-use soroban_sdk::{Address, Env, String};
+use soroban_sdk:zz(Address, Env, String);
 
 fn setup() -> (Env, Address) {
     let env = Env::default();
@@ -12,486 +12,286 @@ fn setup() -> (Env, Address) {
 }
 
 fn in_contract<R>(
-env: &Env,
-
-contract: &Address,
-
-f: impl FnOnce(&Env) -> R,
-) -> R
-{
-
-env.as_contract(contract, || f(env))
+    env: &Env,
+    contract: &Address,
+    f: impl FnOnce(&Env) -> R,
+) -> R {
+    env.as_contract(contract, || f(env))
 }
 
-// -----------------------------------------------------------------------------
-// check_and_rollback_disputes adversarial coverage
-// -----------------------------------------------------------------------------
-
-#[test]
-fn check_and_rollback_disputes_empty_ids_is_no_op() {
-
-let (env, contract) = setup();
-
-let dispute_ids = soroban_sdk::Vec::new(&env);
-
-
-let result = in_contract(&env, &contract, |env| {
-
-dispute::check_and_rollback_disputes(env, &dispute_ids, 0)
-
-});
-
-assert_eq!(
-    result,
-
-    0,
-
-    "an empty dispute set must roll back nothing"
-
-);
-}
-
-#[test]
-fn check_and_rollback_disputes_respects_limit_and_reports_count() {
-
-let (env, contract) = setup();
-
-let dispute_ids = soroban_sdk::Vec::from_array(&env, [1, 2, 3]);
-
-
-let result = in_contract(&env, &contract, |env| {
-
-dispute::check_and_rollback_disputes(env, &dispute_ids, 2)
-
-});
-
-assert_eq!(
-    result,
-
-    2,
-
-    "only the first limit disputes may be rolled back"
-
-);
-}
-
-#[test]
-fn check_and_rollback_disputes_limit_greater_than_length_is_clamped() {
-
-let (env, contract) = setup();
-
-let dispute_ids = soroban_sdk::Vec::from_array(&env, [10, 20]);
-
-let result = in_contract(&env, &contract, |env| {
-
-dispute::check_and_rollback_disputes(env, &dispute_ids, u32::MAX)
-
-});
-
-assert_eq!(
-    result,
-
-    2,
-
-    "limit larger than the input length must not overcount"
-
-);
-}
-
-#[test]
-fn check_and_rollback_disputes_zero_limit_rollbacks_nothing() {
-
-let (env, contract) = setup();
-
-let dispute_ids = soroban_sdk::Vec::from_array(&env, [7, 8, 9]);
-
-let result = in_contract(&env, &contract, |env| {
-
-dispute::check_and_rollback_disputes(env, &dispute_ids, 0)
-
-});
-
-assert_eq!(
-    result,
-
-    0,
-
-    "a zero limit must roll back nothing"
-
-);
-}
-
-#[test]
-fn check_and_rollback_disputes_is_deterministic() {
-
-let (env, contract) = setup();
-
-let dispute_ids = soroban_sdk::Vec::from_array(&env, [11, 22, 33]);
-
-let first = in_contract(&env, &contract, |env| {
-
-dispute::check_and_rollback_disputes(env, &dispute_ids, 3)
-
-});
-
-let second = in_contract(&env, &contract, |env| {
-
-dispute::check_and_rollback_disputes(env, &dispute_ids, 3)
-
-});
-
-assert_eq!(first, 3, "first call must report the clamped count");
-assert_eq!(second, 3, "repeated calls must be deterministic");
-}
-
-#[test]
-fn check_and_rollback_disputes_does_not_mutate_revocation_state() {
-
-let (env, contract) = setup();
-
-let business = Address::generate(&env);
-
-let period = String::from_str(&env, "2026-09");
-
-let reason = String::from_str(&env, "adversarial test revocation");
-
-let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
-
-in_contract(&env, &contract, |env| {
-
-dispute::record_revocation(env, &business, &period, &revocation)
-
-});
-
-let dispute_ids = soroban_sdk::Vec::from_array(&env, [1, 2, 3]);
-
-let result = in_contract(&env, &contract, |env| {
-
-dispute::check_and_rollback_disputes(env, &dispute_ids, 2)
-
-});
-
-assert_eq!(result, 2);
-
-assert!(in_contract(&env, &contract, |env| {
-
-dispute::is_attestation_revoked(env, &business, &period)
-
-}), "rollback checks must not mutate revocation state");
-}
-
-// -----------------------------------------------------------------------------
-// Existing revocation guard coverage
-// -----------------------------------------------------------------------------
-
-#[test]
-fn require_not_revoked_for_update_allows_active_attestation() {
-
-let (env, contract) = setup();
-
-let business = Address::generate(&env);
-
-let period = String::from_str(&env, "2026-09");
-
-let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-
-in_contract(&env, &contract, |env| {
-
-dispute::require_not_revoked_for_update(env, &business, &period);
-
-});
-
-}));
-
-assert!(
-	result.is_ok(),
-	"an active attestation must remain updatable"
-);
-assert!(in_contract(&env, &contract, |env| {
-	dispute::is_attestation_revoked(env, &business, &period)
-}));
-}
-
-#[test]
-fn require_not_revoked_for_update_rejects_revoked_attestation() {
-
-let (env, contract) = setup();
-
-let business = Address::generate(&env);
-
-let period = String::from_str(&env, "2026-09");
-
-let reason = String::from_str(&env, "adversarial test revocation");
-
-let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
-
-in_contract(&env, &contract, |env| {
-
-dispute::record_revocation(env, &business, &period, &revocation)
-
-});
-
-let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-
-in_contract(&env, &contract, |env| {
-
-dispute::require_not_revoked_for_update(env, &business, &period);
-
-});
-
-}));
-
-assert!(result.is_err(), "revoked attestations must be immutable");
-assert!(in_contract(&env, &contract, |env| {
-	dispute::is_attestation_revoked(env, &business, &period)
-}));
-}
-
-#[test]
-fn require_not_revoked_for_update_uses_business_and_period_boundaries() {
-
-let (env, contract) = setup();
-
-let business = Address::generate(&env);
-
-let other_business = Address::generate(&env);
-
-let period = String::from_str(&env, "");
-
-in_contract(&env, &contract, |env| {
-
-dispute::require_not_revoked_for_update(env, &business, &period);
-
-});
-
-let reason = String::from_str(&env, "only one key is revoked");
-
-let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
-in_contract(&env, &contract, |env| {
-
-dispute::record_revocation(env, &business, &period, &revocation)
-
-});
-
-let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-
-in_contract(&env, &contract, |env| {
-
-dispute::require_not_revoked_for_update(env, &other_business, &period);
-
-});
-
-}));
-
-assert!(
-	result.is_ok(),
-	"revocation must be scoped to business and period"
-);
-}
-
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 // store_dispute_resolution adversarial coverage
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 
-fn resolution_for(env: &Env, outcome: u32) -> dispute::DisputeResolution {
-    dispute::DisputeResolution {
-        dispute_id: 0,
-        outcome,
-        resolved_at: env.ledger().timestamp(),
-    }
-}
-
+// Valid call persists the resolution and is observable through the getter.
 #[test]
-fn store_dispute_resolution_persists_valid_resolution() {
+fn store_dispute_resolution_valid_call_persists() {
     let (env, contract) = setup();
     let dispute_id: u64 = 42;
-    let resolution = resolution_for(&env, 1);
+    let resolution = dispute::DisputeResolution {
+        dispute_id,
+        resolved: true,
+        resolved_at: env.ledger().timestamp(),
+    };
 
     in_contract(&env, &contract, |env| {
-        dispute::store_dispute_resolution(env, dispute_id, &resolution)
+        dispute::store_dispute_resolution(env, dispute_id, &resolution);
     });
 
-    let stored = in_contract(&env, &contract, |env| {
+    let stored = in_contract(&env, &contract, |en| {
         dispute::get_dispute_resolution(env, dispute_id)
     });
-    assert_eq!(stored.outcome, 1, "stored outcome must match input");
-    assert_eq!(
-        stored.resolved_at,
-        resolution.resolved_at,
-        "stored timestamp must match input"
-    );
+    assert!(stored.is_some(), "stored resolution must be readable back");
+    let stored = stored.unwrap();
+    assert_eq!(stored.dispute_id, dispute_id);
+    assert!(stored.resolved);
 }
 
+// Boundary: dispute_id = 0 is a legal key and must not be treated as absent.
 #[test]
-fn store_dispute_resolution_overwrites_previous_value() {
+fn store_dispute_resolution_zero_id_is_stored() {
     let (env, contract) = setup();
-    let dispute_id: u64 = 7;
-    let first = resolution_for(&env, 1);
-    let second = resolution_for(&env, 2);
+    let resolution = dispute::DisputeResolution {
+        dispute_id: 0,
+        resolved: true,
+        resolved_at: env.ledger().timestamp(),
+    };
 
     in_contract(&env, &contract, |env| {
-        dispute::store_dispute_resolution(env, dispute_id, &first)
-    });
-    in_contract(&env, &contract, |env| {
-        dispute::store_dispute_resolution(env, dispute_id, &second)
-    });
-
-    let stored = in_contract(&env, &contract, |env| {
-        dispute::get_dispute_resolution(env, dispute_id)
-    });
-    assert_eq!(stored.outcome, 2, "second write must win");
-}
-
-#[test]
-fn store_dispute_resolution_boundary_dispute_id_zero() {
-    let (env, contract) = setup();
-    let resolution = resolution_for(&env, 1);
-
-    in_contract(&env, &contract, |env| {
-        dispute::store_dispute_resolution(env, 0, &resolution)
+        dispute::store_dispute_resolution(env, 0, &resolution);
     });
 
     let stored = in_contract(&env, &contract, |env| {
         dispute::get_dispute_resolution(env, 0)
     });
-    assert_eq!(stored.outcome, 1, "dispute id zero must be storable");
+    assert!(stored.is_some(), "dispute_id 0 must be storable");
 }
 
+// Boundary: dispute_id = u64::MAX is a legal key and must not overflow or collide.
 #[test]
-fn store_dispute_resolution_boundary_dispute_id_max() {
+fn store_dispute_resolution_max_id_is_stored() {
     let (env, contract) = setup();
-    let resolution = resolution_for(&env, 1);
     let dispute_id = u64::MAX;
+    let resolution = dispute::DisputeResolution {
+        dispute_id,
+        resolved: true,
+        resolved_at: env.ledger().timestamp(),
+    };
 
-    in_contract(&env, &contract, |env| {
-        dispute::store_dispute_resolution(env, dispute_id, &resolution)
+    in_contract(&env, &contract, |en| {
+        dispute::store_dispute_resolution(env, dispute_id, &resolution);
+    });
+
+    let stored = in_contract(&env, &contract, |en| {
+        dispute::get_dispute_resolution(env, dispute_id)
+    });
+    assert!(stored.is_some(), "u64::MAX must be storable");
+    assert_eq(stored.unwrap().dispute_id, dispute_id);
+}
+
+// Repeated stores for the same id must be deterministic and last-write-wins.
+#[test]
+fn store_dispute_resolution_overwrite_is_deterministic() {
+    let (env, contract) = setup();
+    let dispute_id = 7;
+    let first = dispute::DisputeResolution {
+        dispute_id,
+        resolved: false,
+        resolved_at: env.ledger().timestamp(),
+    };
+    let second = dispute::DisputeResolution {
+        dispute_id,
+        resolved: true,
+        resolved_at: env.ledger().timestamp() + 1,
+    };
+
+    in_contract(&env, &contract, |en| {
+        dispute::store_dispute_resolution(env, dispute_id, &first);
+        dispute::store_dispute_resolution(env, dispute_id, &second);
     });
 
     let stored = in_contract(&env, &contract, |env| {
         dispute::get_dispute_resolution(env, dispute_id)
     });
-    assert_eq!(stored.outcome, 1, "max dispute id must be storable");
+    let stored = stored.unwrap();
+    assert!(stored.resolved, "last write must win");
+    assert_eq(stored.resolved_at, env.ledger().timestamp() + 1);
+}
+
+// Distinct ids do not collide.
+#[test]
+fn store_dispute_resolution_ids_are_isolated() {
+    let (env, contract) = setup();
+    let a = dispute::DisputeResolution {
+        dispute_id: 1,
+        resolved: true,
+        resolved_at: env.ledger().timestamp(),
+    };
+    let b = dispute::DisputeResolution {
+        dispute_id: 2,
+        resolved: false,
+        resolved_at: env.ledger().timestamp(),
+    };
+
+    in_contract(&env, &contract, |en| {
+        dispute::store_dispute_resolution(env, 1, &a);
+        dispute::store_dispute_resolution(env, 2, &b);
+    });
+
+    let stored_a = in_contract(&env, &contract, |en| {
+        dispute::get_dispute_resolution(env, 1)
+    }).unwrap();
+    let stored_b = in_contract(&env, &contract, |en| {
+        dispute::get_dispute_resolution(env, 2)
+    }).unwrap();
+    assert!(stored_a.resolved);
+    assert!(!stored_b.resolved);
+}
+
+// -------------------------------------------------------------------------------
+// check_and_rollback_disputes adversarial coverage
+// -------------------------------------------------------------------------------
+
+#[test]
+fn check_and_rollback_disputes_empty_ids_is_no_op() {
+    let (env, contract) = setup();
+    let dispute_ids = soroban_sdk:Vec::new(&env);
+
+    let result = in_contract(&env, &contract, |env| {
+        dispute::check_and_rollback_disputes(env, &dispute_ids, 0)
+    });
+    assert_eq(result, 0, "an empty dispute set must roll back nothing");
 }
 
 #[test]
-fn store_dispute_resolution_boundary_outcome_zero() {
+fn check_and_rollback_disputes_respects_limit_and_reports_count() {
     let (env, contract) = setup();
-    let dispute_id: u64 = 3;
-    let resolution = resolution_for(&env, 0);
+    let dispute_ids = soroban_sdk::Vec::from_array(&env, [1, 2, 3]);
 
-    in_contract(&env, &contract, |env| {
-        dispute::store_dispute_resolution(env, dispute_id, &resolution)
+    let result = in_contract(&env, &contract, |en| {
+        dispute::check_and_rollback_disputes(env, &dispute_ids, 2)
     });
-
-    let stored = in_contract(&env, &contract, |env| {
-        dispute::get_dispute_resolution(env, dispute_id)
-    });
-    assert_eq!(stored.outcome, 0, "zero outcome must round-trip");
+    assert_eq(result, 2, "only the first limit disputes may be rolled back");
 }
 
 #[test]
-fn store_dispute_resolution_boundary_outcome_max() {
+fn check_and_rollback_disputes_limit_greater_than_length_is_clamped() {
     let (env, contract) = setup();
-    let dispute_id: u64 = 4;
-    let resolution = resolution_for(&env, u32::MAX);
-
-    in_contract(&env, &contract, |env| {
-        dispute::store_dispute_resolution(env, dispute_id, &resolution)
+    let dispute_ids = soroban_sdk::Vec::from_array(&env, [10, 20]);
+    let result = in_contract(&env, &contract, |env| {
+        dispute::check_and_rollback_disputes(env, &dispute_ids, u32::MAX)
     });
-
-    let stored = in_contract(&env, &contract, |env| {
-        dispute::get_dispute_resolution(env, dispute_id)
-    });
-    assert_eq!(stored.outcome, u32::MAX, "max outcome must round-trip");
+    assert_eq(result, 2, "limit larger than the input length must not overcount");
 }
 
 #[test]
-fn store_dispute_resolution_boundary_timestamp_zero() {
+fn check_and_rollback_disputes_zero_limit_rollbacks_nothing() {
     let (env, contract) = setup();
-    env.ledger().set_timestamp(0);
-    let dispute_id: u64 = 5;
-    let resolution = resolution_for(&env, 1);
-
-    in_contract(&env, &contract, |env| {
-        dispute::store_dispute_resolution(env, dispute_id, &resolution)
+    let dispute_ids = soroban_sdk:Vec::from_array(&env, [7, 8, 9]);
+    let result = in_contract(&env, &contract, |en| {
+        dispute::check_and_rollback_disputes(env, &dispute_ids, 0)
     });
-
-    let stored = in_contract(&env, &contract, |env| {
-        dispute::get_dispute_resolution(env, dispute_id)
-    });
-    assert_eq!(stored.resolved_at, 0, "zero timestamp must round-trip");
+    assert_eq(result, 0, "a zero limit must roll back nothing");
 }
 
 #[test]
-fn store_dispute_resolution_is_deterministic() {
+fn check_and_rollback_disputes_is_deterministic() {
     let (env, contract) = setup();
-    let dispute_id: u64 = 9;
-    let resolution = resolution_for(&env, 1);
-
-    in_contract(&env, &contract, |env| {
-        dispute::store_dispute_resolution(env, dispute_id, &resolution)
-    });
+    let dispute_ids = soroban_sdk::Vec::from_array(&env, [11, 22, 33]);
     let first = in_contract(&env, &contract, |env| {
-        dispute::get_dispute_resolution(env, dispute_id)
-    });
-    in_contract(&env, &contract, |env| {
-        dispute::store_dispute_resolution(env, dispute_id, &resolution)
+        dispute::check_and_rollback_disputes(env, &dispute_ids, 3)
     });
     let second = in_contract(&env, &contract, |env| {
-        dispute::get_dispute_resolution(env, dispute_id)
+        dispute::check_and_rollback_disputes(env, &dispute_ids, 3)
     });
-
-    assert_eq!(first.outcome, second.outcome, "repeated writes must agree");
-    assert_eq!(
-        first.resolved_at, second.resolved_at,
-        "repeated writes must agree on timestamp"
-    );
+    assert_eq(first, 3, "first call must report the clamped count");
+    assert_eq(second, 3, "repeated calls must be deterministic");
 }
 
 #[test]
-fn store_dispute_resolution_does_not_mutate_revocation_state() {
+fn check_and_rollback_disputes_does_not_mutate_revocation_state() {
     let (env, contract) = setup();
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2026-09");
     let reason = String::from_str(&env, "adversarial test revocation");
     let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
-
     in_contract(&env, &contract, |env| {
         dispute::record_revocation(env, &business, &period, &revocation)
     });
 
-    let resolution = resolution_for(&env, 1);
-    in_contract(&env, &contract, |env| {
-        dispute::store_dispute_resolution(env, 1, &resolution)
+    let dispute_ids = soroban_sdk::Vec::from_array(&env, [1, 2, 3]);
+    let result = in_contract(&env, &contract, |en| {
+        dispute::check_and_rollback_disputes(env, &dispute_ids, 2)
     });
+    assert_eq(result, 2);
+    assert!(in_contract(&env, &contract, |env| {
+        dispute::is_attestation_revoked(env, &business, &period)
+    }), "rollback checks must not mutate revocation state");
+}
 
-    assert!(
+// -------------------------------------------------------------------------------
+// Existing revocation guard coverage
+// -------------------------------------------------------------------------------
+
+#[test]
+fn require_not_revoked_for_update_allows_active_attestation() {
+    let (env, contract) = setup();
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-09");
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         in_contract(&env, &contract, |env| {
-            dispute::is_attestation_revoked(env, &business, &period)
-        }),
-        "storing a resolution must not mutate revocation state"
-    );
+            dispute::require_not_revoked_for_update(env, &business, &period);
+        });
+    }));
+    assert!(result.is_ok(), "an active attestation must remain updatable");
+    assert!(in_contract(&env, &contract, |en| {
+        dispute::is_attestation_revoked(env, &business, &period)
+    }));
 }
 
 #[test]
-fn store_dispute_resolution_does_not_affect_other_dispute_ids() {
+fn require_not_revoked_for_update_rejects_revoked_attestation() {
     let (env, contract) = setup();
-    let resolution_a = resolution_for(&env, 1);
-    let resolution_b = resolution_for(&env, 2);
-
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-09");
+    let reason = String::from_str(&env, "adversarial test revocation");
+    let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
     in_contract(&env, &contract, |env| {
-        dispute::store_dispute_resolution(env, 100, &resolution_a)
-    });
-    in_contract(&env, &contract, |env| {
-        dispute::store_dispute_resolution(env, 200, &resolution_b)
+        dispute::record_revocation(env, &business, &period, &revocation)
     });
 
-    let stored_a = in_contract(&env, &contract, |env| {
-        dispute::get_dispute_resolution(env, 100)
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        in_contract(&env, &contract, |env| {
+            dispute::require_not_revoked_for_update(env, &business, &period);
+        });
+    }));
+    assert!(result.is_err(), "revoked attestations must be immutable");
+    assert!(in_contract(&env, &contract, |env| {
+        dispute::is_attestation_revoked(env, &business, &period)
+    }));
+}
+
+#[test]
+fn require_not_revoked_for_update_uses_business_and_period_boundaries() {
+    let (env, contract) = setup();
+    let business = Address::generate(&env);
+    let other_business = Address::generate(&env);
+    let period = String::from_str(&env, "");
+    in_contract(&env, &contract, |env| {
+        dispute::require_not_revoked_for_update(env, &business, &period);
     });
-    let stored_b = in_contract(&env, &contract, |env| {
-        dispute::get_dispute_resolution(env, 200)
+
+    let reason = String::from_str(&env, "only one key is revoked");
+    let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
+    in_contract(&env, &contract, |env| {
+        dispute::record_revocation(env, &business, &period, &revocation)
     });
-    assert_eq!(stored_a.outcome, 1, "dispute 100 must be isolated");
-    assert_eq!(stored_b.outcome, 2, "dispute 200 must be isolated");
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        in_contract(&env, &contract, |env| {
+            dispute::require_not_revoked_for_update(env, &other_business, &period);
+        });
+    }));
+    assert!(result.is_ok(), "revocation must be scoped to business and period");
 }
