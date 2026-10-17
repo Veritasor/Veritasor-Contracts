@@ -31,13 +31,13 @@ use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, St
 #[cfg(test)]
 mod activate_admin_test;
 #[cfg(test)]
+mod set_pending_admin_test;
+#[cfg(test)]
 mod admin_rotation_test;
 #[cfg(test)]
 mod event_ingestion_test;
 #[cfg(test)]
 mod initialize_test;
-#[cfg(test)]
-mod set_pending_admin_test;
 
 use veritasor_common::{governance_gating, replay_protection};
 
@@ -560,3 +560,4 @@ mod get_max_portfolio_businesses_test {
         assert_eq!(client.get_portfolio(&portfolio_id), portfolio_before);
     }
 }
+
