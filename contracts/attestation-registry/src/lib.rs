@@ -50,9 +50,9 @@ extern crate std;
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, Env, String};
 
 #[cfg(test)]
-mod get_current_implementation_test;
-#[cfg(test)]
 mod get_previous_version_test;
+#[cfg(test)]
+mod get_current_implementation_test;
 #[cfg(test)]
 mod registry_batch_consistency_test;
 #[cfg(test)]
