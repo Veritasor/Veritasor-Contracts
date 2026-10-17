@@ -519,8 +519,6 @@ impl AggregatedAttestationsContract {
 }
 
 #[cfg(test)]
-mod set_pending_admin_test;
-#[cfg(test)]
 mod get_max_portfolio_businesses_test {
     extern crate std;
 
@@ -562,4 +560,3 @@ mod get_max_portfolio_businesses_test {
         assert_eq!(client.get_portfolio(&portfolio_id), portfolio_before);
     }
 }
-
