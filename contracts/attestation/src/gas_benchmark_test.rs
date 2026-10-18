@@ -1606,16 +1606,24 @@ fn bench_batch_vs_single_profiling() {
     std::println!("╠═══════════════════════════════════════════════════════════════════════╣");
     std::println!(
         "║  Baseline single-call: cpu={:<8} mem={:<8}                        ║",
-        baseline_cpu, baseline_mem
+        baseline_cpu,
+        baseline_mem
     );
     std::println!(
         "║  Regression threshold: cpu≤{:<8} mem≤{:<8} ({}% over baseline)  ║",
-        threshold_cpu, threshold_mem, BATCH_REGRESSION_THRESHOLD_PCT
+        threshold_cpu,
+        threshold_mem,
+        BATCH_REGRESSION_THRESHOLD_PCT
     );
     std::println!("╠═══════════════════════════════════════════════════════════════════════╣");
     std::println!(
         "║  {:>4}  {:>14}  {:>12}  {:>14}  {:>12}  {:>8}  ║",
-        "size", "single/item cpu", "single/item mem", "batch/item cpu", "batch/item mem", "savings%"
+        "size",
+        "single/item cpu",
+        "single/item mem",
+        "batch/item cpu",
+        "batch/item mem",
+        "savings%"
     );
     std::println!("╠═══════════════════════════════════════════════════════════════════════╣");
 
@@ -1644,15 +1652,18 @@ fn bench_batch_vs_single_profiling() {
         // Human-readable table row.
         std::println!(
             "║  {:>4}  {:>14}  {:>12}  {:>14}  {:>12}  {:>7.1}%  ║",
-            size, s_per_cpu, s_per_mem, b_per_cpu, b_per_mem, savings_pct
+            size,
+            s_per_cpu,
+            s_per_mem,
+            b_per_cpu,
+            b_per_mem,
+            savings_pct
         );
 
         // Structured JSON line.
         emit_profiling_json(
-            size,
-            s_per_cpu, s_per_mem, s_tot_cpu, s_tot_mem,
-            b_per_cpu, b_per_mem, b_tot_cpu, b_tot_mem,
-            regression,
+            size, s_per_cpu, s_per_mem, s_tot_cpu, s_tot_mem, b_per_cpu, b_per_mem, b_tot_cpu,
+            b_tot_mem, regression,
         );
 
         // Append to CSV for trend tracking.
@@ -1720,13 +1731,21 @@ fn regression_batch_vs_single_per_item_cpu() {
             b_per_cpu <= threshold_cpu,
             "regression_batch_vs_single [size={}]: per-item CPU {} > threshold {} \
              (baseline={}, threshold_pct={}%)",
-            size, b_per_cpu, threshold_cpu, baseline_cpu, BATCH_REGRESSION_THRESHOLD_PCT
+            size,
+            b_per_cpu,
+            threshold_cpu,
+            baseline_cpu,
+            BATCH_REGRESSION_THRESHOLD_PCT
         );
         assert!(
             b_per_mem <= threshold_mem,
             "regression_batch_vs_single [size={}]: per-item mem {} > threshold {} \
              (baseline={}, threshold_pct={}%)",
-            size, b_per_mem, threshold_mem, baseline_mem, BATCH_REGRESSION_THRESHOLD_PCT
+            size,
+            b_per_mem,
+            threshold_mem,
+            baseline_mem,
+            BATCH_REGRESSION_THRESHOLD_PCT
         );
     }
 }
@@ -1742,13 +1761,24 @@ fn bench_batch_size_one_vs_single_within_tolerance() {
     let (batch_per_cpu, batch_per_mem, _, _) = measure_batch_submission(1);
 
     std::println!("\n=== batch size 1 vs single submission ===");
-    std::println!("single submit_attestation  — CPU: {}  mem: {}", single_per_cpu, single_per_mem);
-    std::println!("batch submit (size=1)       — CPU: {}  mem: {}", batch_per_cpu, batch_per_mem);
+    std::println!(
+        "single submit_attestation  — CPU: {}  mem: {}",
+        single_per_cpu,
+        single_per_mem
+    );
+    std::println!(
+        "batch submit (size=1)       — CPU: {}  mem: {}",
+        batch_per_cpu,
+        batch_per_mem
+    );
 
     std::println!(
         "{{\"op\":\"size1_vs_single\",\"single_cpu\":{},\"single_mem\":{},\
          \"batch1_cpu\":{},\"batch1_mem\":{}}}",
-        single_per_cpu, single_per_mem, batch_per_cpu, batch_per_mem
+        single_per_cpu,
+        single_per_mem,
+        batch_per_cpu,
+        batch_per_mem
     );
 
     // Skip when mock env returns 0.
@@ -1758,18 +1788,26 @@ fn bench_batch_size_one_vs_single_within_tolerance() {
     }
 
     // Tolerance: batch size-1 must be ≤ 3× single-call (300 % overhead cap).
-    let cpu_3x = single_per_cpu.saturating_mul(3).max(BATCH_PROFILING_BASELINE_CPU_FALLBACK * 3);
-    let mem_3x = single_per_mem.saturating_mul(3).max(BATCH_PROFILING_BASELINE_MEM_FALLBACK * 3);
+    let cpu_3x = single_per_cpu
+        .saturating_mul(3)
+        .max(BATCH_PROFILING_BASELINE_CPU_FALLBACK * 3);
+    let mem_3x = single_per_mem
+        .saturating_mul(3)
+        .max(BATCH_PROFILING_BASELINE_MEM_FALLBACK * 3);
 
     assert!(
         batch_per_cpu <= cpu_3x,
         "batch size-1 CPU {} exceeds 3× single cost {} (3× cap: {})",
-        batch_per_cpu, single_per_cpu, cpu_3x
+        batch_per_cpu,
+        single_per_cpu,
+        cpu_3x
     );
     assert!(
         batch_per_mem <= mem_3x,
         "batch size-1 mem {} exceeds 3× single cost {} (3× cap: {})",
-        batch_per_mem, single_per_mem, mem_3x
+        batch_per_mem,
+        single_per_mem,
+        mem_3x
     );
 }
 
@@ -1781,24 +1819,27 @@ fn bench_batch_max_size_within_regression_threshold() {
     let threshold_cpu = baseline_cpu + (baseline_cpu * BATCH_REGRESSION_THRESHOLD_PCT / 100);
     let threshold_mem = baseline_mem + (baseline_mem * BATCH_REGRESSION_THRESHOLD_PCT / 100);
 
-    let (b_per_cpu, b_per_mem, b_tot_cpu, b_tot_mem) =
-        measure_batch_submission(MAX_BATCH_SIZE);
+    let (b_per_cpu, b_per_mem, b_tot_cpu, b_tot_mem) = measure_batch_submission(MAX_BATCH_SIZE);
 
     std::println!("\n=== batch MAX_BATCH_SIZE ({}) ===", MAX_BATCH_SIZE);
-    std::println!(
-        "total — CPU: {}  mem: {}",
-        b_tot_cpu, b_tot_mem
-    );
+    std::println!("total — CPU: {}  mem: {}", b_tot_cpu, b_tot_mem);
     std::println!(
         "per-item — CPU: {}  mem: {}  (threshold: cpu≤{} mem≤{})",
-        b_per_cpu, b_per_mem, threshold_cpu, threshold_mem
+        b_per_cpu,
+        b_per_mem,
+        threshold_cpu,
+        threshold_mem
     );
 
     std::println!(
         "{{\"op\":\"max_batch_size_check\",\"max_batch_size\":{},\
          \"per_item_cpu\":{},\"per_item_mem\":{},\
          \"threshold_cpu\":{},\"threshold_mem\":{}}}",
-        MAX_BATCH_SIZE, b_per_cpu, b_per_mem, threshold_cpu, threshold_mem
+        MAX_BATCH_SIZE,
+        b_per_cpu,
+        b_per_mem,
+        threshold_cpu,
+        threshold_mem
     );
 
     if b_per_cpu == 0 && b_per_mem == 0 {
@@ -1810,13 +1851,21 @@ fn bench_batch_max_size_within_regression_threshold() {
         b_per_cpu <= threshold_cpu,
         "MAX_BATCH_SIZE={} per-item CPU {} exceeds threshold {} \
          (baseline={}, +{}%)",
-        MAX_BATCH_SIZE, b_per_cpu, threshold_cpu, baseline_cpu, BATCH_REGRESSION_THRESHOLD_PCT
+        MAX_BATCH_SIZE,
+        b_per_cpu,
+        threshold_cpu,
+        baseline_cpu,
+        BATCH_REGRESSION_THRESHOLD_PCT
     );
     assert!(
         b_per_mem <= threshold_mem,
         "MAX_BATCH_SIZE={} per-item mem {} exceeds threshold {} \
          (baseline={}, +{}%)",
-        MAX_BATCH_SIZE, b_per_mem, threshold_mem, baseline_mem, BATCH_REGRESSION_THRESHOLD_PCT
+        MAX_BATCH_SIZE,
+        b_per_mem,
+        threshold_mem,
+        baseline_mem,
+        BATCH_REGRESSION_THRESHOLD_PCT
     );
 }
 
@@ -2021,7 +2070,10 @@ fn bench_batch_profiling_sequential_batches_independent() {
     std::println!(
         "{{\"op\":\"sequential_batches\",\"batch_a_cpu\":{},\"batch_a_mem\":{},\
          \"batch_b_cpu\":{},\"batch_b_mem\":{}}}",
-        cost_a.cpu_insns, cost_a.mem_bytes, cost_b.cpu_insns, cost_b.mem_bytes
+        cost_a.cpu_insns,
+        cost_a.mem_bytes,
+        cost_b.cpu_insns,
+        cost_b.mem_bytes
     );
 }
 
