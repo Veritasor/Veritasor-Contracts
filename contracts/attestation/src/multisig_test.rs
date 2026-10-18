@@ -297,11 +297,8 @@ fn test_execute_add_owner_proposal() {
     let events = env.events().all();
     let (_cid, topics, data) = events.last().unwrap();
     assert_eq!(
-        topics.get(0).unwrap(),
-        soroban_sdk::IntoVal::into_val(
-            &crate::events::TOPIC_OWNER_RECOVERY_PHRASE_ACKNOWLEDGED,
-            &env
-        )
+        Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+        crate::events::TOPIC_OWNER_RECOVERY_PHRASE_ACKNOWLEDGED
     );
     assert_eq!(
         Address::try_from_val(&env, &topics.get(1).unwrap()).unwrap(),

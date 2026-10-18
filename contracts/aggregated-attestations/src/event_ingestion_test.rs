@@ -366,6 +366,28 @@ fn test_empty_portfolio_returns_zero_metrics() {
     assert_eq!(metrics.average_trailing_revenue, 0);
 }
 
+#[test]
+fn test_unknown_portfolio_returns_zero_without_using_snapshot_address() {
+    let h = setup_harness();
+    let unknown_portfolio = String::from_str(&h.env, "missing");
+    let invalid_snapshot_contract = Address::generate(&h.env);
+
+    let metrics = h
+        .agg_client
+        .get_aggregated_metrics(&invalid_snapshot_contract, &unknown_portfolio);
+
+    assert_eq!(
+        metrics,
+        AggregatedMetrics {
+            total_trailing_revenue: 0,
+            total_anomaly_count: 0,
+            business_count: 0,
+            businesses_with_snapshots: 0,
+            average_trailing_revenue: 0,
+        }
+    );
+}
+
 // ────────────────────────────────────────────────────────────────────
 //  5. Business with no snapshot contributes zero (partial portfolio)
 // ────────────────────────────────────────────────────────────────────
