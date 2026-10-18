@@ -300,3 +300,18 @@ fn test_double_unlock_is_safe() {
         assert!(!dispute::is_attestor_locked(&env, &attestor));
     });
 }
+
+#[test]
+fn test_unlock_empty_state_returns_fully_unlocked() {
+    let (env, _client, _admin, contract_id) = setup();
+    let attestor = Address::generate(&env);
+
+    let fully_unlocked = with_contract(&env, &contract_id, || {
+        dispute::unlock_attestor(&env, &attestor)
+    });
+
+    assert!(fully_unlocked);
+    assert!(!with_contract(&env, &contract_id, || {
+        dispute::is_attestor_locked(&env, &attestor)
+    }));
+}
