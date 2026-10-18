@@ -1,8 +1,11 @@
 //! # `finalize_epoch` — adversarial coverage
 //!
-//! Focused tests for `AttestationSnapshotContract::finalize_epoch`
+//! Focused tests for `AttestationSnapshotContract::forward_epoch`
 //! (`contracts/attestation-snapshot/src/lib.rs`), which had no directly
 //! associated adversarial fixture.
+//!
+//! These tests also exercise `get_epoch_finalization` as the observable
+//! surface for the finalization state machine.
 //!
 //! ## Coverage
 //!

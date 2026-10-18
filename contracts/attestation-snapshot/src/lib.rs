@@ -238,6 +238,10 @@ mod test_initialize;
 #[cfg(test)]
 mod last_restore_id_test;
 
+/// Focused adversarial tests for `get_epoch_finalization`.
+#[cfg(test)]
+mod test_epoch_finalization;
+
 // ════════════════════════════════════════════════════════════════════
 //  Storage types
 // ════════════════════════════════════════════════════════════════════
