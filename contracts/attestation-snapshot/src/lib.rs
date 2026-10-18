@@ -238,6 +238,10 @@ mod test_initialize;
 #[cfg(test)]
 mod last_restore_id_test;
 
+/// Focused adversarial tests for `get_total_epoch_count`.
+#[cfg(test)]
+mod test_total_epoch_count;
+
 // ════════════════════════════════════════════════════════════════════
 //  Storage types
 // ════════════════════════════════════════════════════════════════════
