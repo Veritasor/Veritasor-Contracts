@@ -100,6 +100,12 @@ pub enum SampleStatus {
     Pending,
     Done,
 }
+
+#[contracttype]
+pub enum SampleCode {
+    First = 1,
+    Second = 2,
+}
 EOF
 }
 
@@ -136,6 +142,7 @@ expect_exit 0 --check --events "$BASE" --snapshot "$SNAP"
 # ─────────────────────────────────────────────────────────────────────────────
 expect_exit 0 --help
 expect_contains "EVENT_SCHEMA_VERSION: 1" --dump --events "$BASE"
+expect_contains "First=1" --dump --events "$BASE"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tool errors: missing/malformed inputs
