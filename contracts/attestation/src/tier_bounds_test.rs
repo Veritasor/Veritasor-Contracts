@@ -94,6 +94,21 @@ fn test_set_business_tier_u32_max_panics() {
     t.client.set_business_tier(&biz, &u32::MAX);
 }
 
+#[test]
+fn test_rejected_business_tier_preserves_previous_value() {
+    let t = setup();
+    let biz = Address::generate(&t.env);
+    t.client.set_business_tier(&biz, &3);
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        t.client
+            .set_business_tier(&biz, &(dynamic_fees::MAX_TIER + 1));
+    }));
+
+    assert!(rejected.is_err());
+    assert_eq!(t.client.get_business_tier(&biz), 3);
+}
+
 // ── set_tier_discount bounds ────────────────────────────────────────
 
 #[test]

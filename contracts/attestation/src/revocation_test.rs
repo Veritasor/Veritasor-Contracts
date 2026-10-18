@@ -2087,6 +2087,23 @@ fn test_grace_custom_grace_seconds() {
     assert!(client.is_revoked(&business, &period));
 }
 
+#[test]
+fn test_grace_proposal_round_trip_and_cancel_clears_storage() {
+    let (env, client, _admin, business, period, _root) = grace_setup();
+    let reason = String::from_str(&env, "adversarial round trip");
+
+    client.propose_revoke(&business, &business, &period, &reason);
+    let stored = client.get_revoke_proposal(&business, &period).unwrap();
+    assert_eq!(stored.proposer, business);
+    assert_eq!(stored.proposed_at, env.ledger().timestamp());
+    assert_eq!(stored.reason, reason);
+    assert!(!client.is_revoked(&business, &period));
+
+    client.cancel_revoke_proposal(&business, &business, &period);
+    assert!(client.get_revoke_proposal(&business, &period).is_none());
+    assert!(!client.is_revoked(&business, &period));
+}
+
 // ── 12. Zero grace window allows immediate commit ─────────────────────────────
 
 #[test]
@@ -2104,6 +2121,22 @@ fn test_grace_zero_allows_immediate_commit() {
     // No time advance needed — grace = 0.
     client.commit_revoke(&business, &business, &period);
     assert!(client.is_revoked(&business, &period));
+}
+
+#[test]
+fn test_grace_maximum_window_is_stored_without_overflow() {
+    let (env, client, admin, business, period, _root) = grace_setup();
+    client.set_revoke_grace_seconds(&admin, &u64::MAX);
+
+    assert_eq!(client.get_revoke_grace_seconds(), u64::MAX);
+    client.propose_revoke(
+        &business,
+        &business,
+        &period,
+        &String::from_str(&env, "maximum grace"),
+    );
+    assert!(client.get_revoke_proposal(&business, &period).is_some());
+    assert!(!client.is_revoked(&business, &period));
 }
 
 // ── 13. Paused contract rejects propose, commit, and cancel ──────────────────

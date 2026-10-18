@@ -2,7 +2,7 @@ use crate::dispute;
 use crate::RevocationData;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Ledger as _;
-use soroban_sdk:{Address, Env, String};
+use soroban_sdk::{Address, Env, String};
 
 fn setup() -> (Env, Address) {
     let env = Env::default();
@@ -16,7 +16,7 @@ env: &Env,
 
 contract: &Address,
 
-f: impl FiOnce(&Env) -> R,
+f: impl FnOnce(&Env) -> R,
 ) -> R
 {
 
@@ -80,7 +80,7 @@ fn check_and_rollback_disputes_limit_greater_than_length_is_clamped() {
 
 let (env, contract) = setup();
 
-let dispute_ids = soroban_sdk:Vec::from_array(&env, [10, 20]);
+let dispute_ids = soroban_sdk::Vec::from_array(&env, [10, 20]);
 
 let result = in_contract(&env, &contract, |env| {
 
@@ -172,6 +172,7 @@ dispute::check_and_rollback_disputes(env, &dispute_ids, 2)
 });
 
 assert_eq!(result, 2);
+
 assert!(in_contract(&env, &contract, |env| {
 
 dispute::is_attestation_revoked(env, &business, &period)
@@ -184,7 +185,7 @@ dispute::is_attestation_revoked(env, &business, &period)
 // ----------------------------------------------------------------------------------------------------
 
 #[test]
-fn store_dispute_resolution_stores resolution_for_dispute_id() {
+fn store_dispute_resolution_stores_resolution_for_dispute_id() {
 
 let (env, contract) = setup();
 
