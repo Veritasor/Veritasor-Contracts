@@ -362,7 +362,9 @@ pub fn get_last_role_assignment(env: &Env, role_address: &Address) -> Option<u64
 
 /// Set a pending admin for a time-locked rotation.
 pub fn set_pending_admin(env: &Env, admin: Address, delay: u64) {
-    env.storage().instance().set(&GovernanceKey::PendingAdmin, &admin);
+    env.storage()
+        .instance()
+        .set(&GovernanceKey::PendingAdmin, &admin);
     let activation_time = env.ledger().timestamp() + delay;
     env.storage()
         .instance()
@@ -384,7 +386,9 @@ pub fn get_active_pending_admin(env: &Env) -> Option<Address> {
 
 /// Clear the pending admin and activation time.
 pub fn clear_pending_admin(env: &Env) {
-    env.storage().instance().remove(&GovernanceKey::PendingAdmin);
+    env.storage()
+        .instance()
+        .remove(&GovernanceKey::PendingAdmin);
     env.storage()
         .instance()
         .remove(&GovernanceKey::AdminActivationTime);

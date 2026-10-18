@@ -13,7 +13,7 @@
 //! |------|----------|
 //! | `finalize_epoch_non_admin_panics` | Unauthorized caller rejected |
 //! | `finalize_epoch_second_call_panics` | Epoch can only be finalized once |
-// 	`finalize_epoch_without_snapshots_panics` | Empty epoch cannot be finalized |
+//! | `finalize_epoch_without_snapshots_panics` | Empty epoch cannot be finalized |
 //! | `finalize_epoch_rejects_oversized_epoch` | Period length bound is enforced |
 //! | `finalize_epoch_counts_distinct_businesses` | `snapshot_count` = distinct businesses |
 //! | `finalize_epoch_does_not_double_count_repeat_business` | Re-records do not inflate the count |
@@ -31,7 +31,7 @@ extern crate std;
 
 use crate::{AttestationSnapshotContract, AttestationSnapshotContractClient, MAX_PERIOD_BYTES};
 use soroban_sdk::testutils::{Address as _, Ledger as _};
-use soroban_sdk:{Address, Env, String};
+use soroban_sdk::{Address, Env, String};
 
 fn setup() -> (Env, AttestationSnapshotContractClient<'static>, Address) {
     let env = Env::default();
@@ -117,7 +117,7 @@ fn finalize_epoch_counts_distinct_businesses() {
     client.finalize_epoch(&admin, &epoch);
 
     let fin = client.get_epoch_finalization(&epoch).unwrap();
-    assert_eq(fin.snapshot_count, 3);
+    assert_eq!(fin.snapshot_count, 3);
 }
 
 #[test]
@@ -134,7 +134,7 @@ fn finalize_epoch_does_not_double_count_repeat_business() {
     client.finalize_epoch(&admin, &epoch);
 
     let fin = client.get_epoch_finalization(&epoch).unwrap();
-    assert_eq(fin.snapshot_count, 1);
+    assert_eq!(fin.snapshot_count, 1);
 }
 
 #[test]
@@ -173,10 +173,10 @@ fn record_after_finalization_is_rejected_per_epoch() {
     let blocked =
         client.try_record_snapshot(&admin, &business, &finalized, &999_999i128, &9u32, &9u64);
     assert!(
-        blocked.is_errOr()||blocked.is_err(),
+        blocked.is_err(),
         "write to finalized epoch must be rejected"
     );
-    assert_eq(
+    assert_eq!(
         client
             .get_snapshot(&business, &finalized)
             .unwrap()
@@ -195,14 +195,14 @@ fn finalize_epoch_records_caller_and_timestamp() {
     let epoch = p(&env, "2026-09");
     let business = Address::generate(&env);
 
-    env.ledger().with_mut(| l| l.timestamp = 7_777_000);
+    env.ledger().with_mut(|l| l.timestamp = 7_777_000);
     record(&client, &env, &admin, &business, "2026-09");
 
-    env.ledger().with_mut(| l | l.timestamp = 8_888_000);
+    env.ledger().with_mut(|l| l.timestamp = 8_888_000);
     client.finalize_epoch(&admin, &epoch);
 
     let fin = client.get_epoch_finalization(&epoch).unwrap();
-    assert_eq(fin.epoch, epoch);
-    assert_eq(fin.finalized_by, admin);
-    assert_eq(fin.finalized_at, 8_888_000u64);
+    assert_eq!(fin.epoch, epoch);
+    assert_eq!(fin.finalized_by, admin);
+    assert_eq!(fin.finalized_at, 8_888_000u64);
 }
