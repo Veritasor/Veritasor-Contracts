@@ -288,3 +288,136 @@ assert!(
 	"revocation must be scoped to business and period"
 );
 }
+
+// -----------------------------------------------------------------------------
+// is_attestor_locked adversarial coverage
+// -----------------------------------------------------------------------------
+
+#[test]
+fn is_attestor_locked_returns_false_for_unknown_attestor() {
+
+let (env, contract) = setup();
+
+let attestor = Address::generate(&env);
+
+let locked = in_contract(&env, &contract, |env| {
+
+dispute::is_attestor_locked(env, &attestor)
+
+});
+
+assert!(
+	!locked,
+	"an attestor with no recorded lock must not be reported as locked"
+);
+}
+
+#[test]
+fn is_attestor_locked_is_deterministic_for_unknown_attestor() {
+
+let (env, contract) = setup();
+
+let attestor = Address::generate(&env);
+
+let first = in_contract(&env, &contract, |env| {
+
+dispute::is_attestor_locked(env, &attestor)
+
+});
+
+let second = in_contract(&env, &contract, |env| {
+
+dispute::is_attestor_locked(env, &attestor)
+
+});
+
+assert_eq!(first, false, "first read must report unlocked");
+assert_eq!(second, false, "repeated reads must be deterministic");
+}
+
+#[test]
+fn is_attestor_locked_is_scoped_to_attestor() {
+
+let (env, contract) = setup();
+
+let attestor = Address::generate(&env);
+
+let other_attestor = Address::generate(&env);
+
+let locked = in_contract(&env, &contract, |env| {
+
+dispute::is_attestor_locked(env, &attestor)
+
+});
+
+let other_locked = in_contract(&env, &contract, |env| {
+
+dispute::is_attestor_locked(env, &other_attestor)
+
+});
+
+assert!(!locked, "queried attestor must be unlocked");
+assert!(
+	!other_locked,
+	"lock state must be scoped to the queried attestor"
+);
+}
+
+#[test]
+fn is_attestor_locked_does_not_mutate_revocation_state() {
+
+let (env, contract) = setup();
+
+let business = Address::generate(&env);
+
+let attestor = Address::generate(&env);
+
+let period = String::from_str(&env, "2026-09");
+
+let reason = String::from_str(&env, "adversarial test revocation");
+
+let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
+
+in_contract(&env, &contract, |env| {
+
+dispute::record_revocation(env, &business, &period, &revocation)
+
+});
+
+let locked = in_contract(&env, &contract, |env| {
+
+dispute::is_attestor_locked(env, &attestor)
+
+});
+
+assert!(!locked, "lock query must not report an unrelated lock");
+assert!(in_contract(&env, &contract, |env| {
+	dispute::is_attestation_revoked(env, &business, &period)
+}), "lock query must not mutate revocation state");
+}
+
+#[test]
+fn is_attestor_locked_does_not_mutate_lock_state_across_repeated_reads() {
+
+let (env, contract) = setup();
+
+let attestor = Address::generate(&env);
+
+let first = in_contract(&env, &contract, |env| {
+
+dispute::is_attestor_locked(env, &attestor)
+
+});
+
+let second = in_contract(&env, &contract, |env| {
+
+dispute::is_attestor_locked(env, &attestor)
+
+});
+
+assert_eq!(first, second, "repeated reads must observe identical state");
+assert!(
+	!second,
+	"read-only lock checks must not leave the attestor locked"
+);
+}
