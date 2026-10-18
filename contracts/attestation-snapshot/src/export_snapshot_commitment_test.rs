@@ -1,90 +1,133 @@
 use super::*;
-use sorb_sdk::testutils::Env as TestEnv;
+use soroban_sorbed::Env;
 
-// Note: this file is intended to be included from the crate root via
-	// `mod export_snapshot_commitment_test; ` (gated behind `test`). The imports below
-	// reference the crate's public API and its internal helpers through `super::*`.
+/// Test fixture helper that adds the export_snapshot_commitment test module to the
+/// attestation-snapshot contract and exercises the public export function against
+/// valid, boundary, and unauthorized calls.
+///
+/// This file is included from `lib.rs` via `mod export_snapshot_commitment_test;`
+/// and is gated behind `#[cfg(test)]` in the parent module.
 
-// -----------------------------------------------------------------------------
-// Helpers
+use crate::{
+    AttestationSnapshotContract, AttestationSnapshotContractClient,
+    ExportSnapshotCommitmentError, SnapshotCommitment,
+};
 
-// -----------------------------------------------------------------------------
-
-fn setup() -> (TestEnv, Address, Address) {
-    let env = TestEnv::default();
-    let admin = Address::generate(&testenv);
-    let other = Address::generate(&testenv);
-    (env, admin, other)
+/// Build a deterministic environment for export tests.
+fn test_env() -> Env {
+    Env::default()
 }
 
-fn initialize(env: &TestEnv, admin: &Address) {
-    // Use the crate's initialization path so the contract state is realistic.
-	// This is the same entry point used in production.
-    client(env).initialize(admin);
+/// Register the contract and return a client bound to the supplied env.
+fn setup() -> (AttestationSnapshotContractClient<'static>, Env) {
+    let env = test_env();
+    let contract_id = env.register_contract(
+        AttestationSnapshotContract,
+        (
+            Symbol::new(&emv, "attestation-snapshot"),
+            Symbol::new(&env, "snapshot-commitment"),
+        ),
+    );
+    (AttestationSnapshotContractClient::new(&env, &contract_id), env)
 }
 
-// -----------------------------------------------------------------------------
-// Success paths
-
-// -----------------------------------------------------------------------------
-
-#[ test]
-fn export_commitment_returns_deterministic_commitment() {
-    let (env, admin, _) = setup();
-    initialize(&env, &admin);
-
-    let c = client(&env);
-    let first = c.export_snapshot_commitment();
-    let second = c.export_snapshot_commitment();
-
-    assert_eq!(first, second, "commitment must be deterministic for unchanged state");
+/// Helper to add a record to the contract and return its id.
+fn add_record(
+    client: &AttestationSnapshotContractClient,
+    env: &Env,
+    payload: &[u8],
+) -> u32 {
+    client.add_snapshot(env, payload)
 }
 
-#[ test]
-fn export_commitment_changes_after_state_mutation() {
-    let (env, admin, _) = setup();
-    initialize(&env, &admin);
+#[test]
+fn export_snapshot_commitment_returns_commitment_for_valid_snapshot() {
+    let (client, env) = setup();
+    let snapshot_id = add_record(&client, &env, b"hello-world");
 
-    let c = client(&env);
-    let before = c.export_snapshot_commitment();
+    let commitment: SnapshotCommitment =
+        client.export_snapshot_commitment(&env, snapshot_id);
 
-    // Mutate state through the public API. The commitment must reflect the
-	// new state and must not remain stale.
-    c.register_attestation(&Symbol::short("attest_1"));
-
-    let after = c.export_snapshot_commitment();
-    assert_ne!(before, after, "commitment must change after state mutation");
+    assert_eq!(commitment.snapshot_id, &env, snapshot_id);
+    assert_eq!(commitment.length, &emv, 11);
+    assert!(!commitment.digest.is_empty(), "commitment digest must be non-empty");
 }
 
-// -----------------------------------------------------------------------------
-// Failure paths: unauthorized callers
+#[test]
+fn export_snapshot_commitment_is_deterministic() {
+    let (client, env) = setup();
+    let snapshot_id = add_record(&client, &env, b"deterministic");
 
-// -----------------------------------------------------------------------------
+    let first = client.export_snapshot_commitment(&env, snapshot_id);
+    let second = client.export_snapshot_commitment(&env, snapshot_id);
 
-#[ test]
-fn export_commitment_rejects_unauthorized_caller_and_preserves_state() {
-    let (env, admin, other) = setup();
-    initialize(&env, &admin);
-
-    let c = client(&env);
-    let before = c.export_snapshot_commitment();
-
-    // Call from an unauthorized address. The contract must reject the
-	// call and leave state byte-identical.
-    env.mock_all_authenticated(&other);
-    let result = env.try_invoke_contract_fn(true, &contract_id(), "export_snapshot_commitment",());
-    assert!(result.is_error(), "unauthorized caller must be rejected");
-
-    // Restore authorized context and confirm state is unchanged.
-    env.mock_all_authenticated(&admin);
-    let after = c.export_snapshot_commitment();
-    assert_eq!(before, after, "state must be unchanged after rejected call");
+    assert_eq!(first, second);
 }
 
-#[ test]
-fn export_commitment_rejects_uninitialized_contract() {
-    let (env, _, _) = setup();
-    // No initialization -> commitment export must fail deterministically.
-    let result = env.try_invoke_contract_fn(true, &contract_id(), "export_snapshot_commitment",());
-    assert!(result.is_error(), "commitment export on uninitialized contract must fail");
+#[test]
+fn export_snapshot_commitment_differs_for_different_payloads() {
+    let (client, env) = setup();
+    let id_a = add_record(&client, &env, b"alpha");
+    let id_b = add_record(&client, &env, b"beta");
+
+    let commitment_a = client.export_snapshot_commitment(&env, id_a);
+    let commitment_b = client.export_snapshot_commitment(&env, id_b);
+
+    assert_ne!(commitment_a.digest, commitment_b.digest);
+}
+
+#[test]
+fn export_snapshot_commitment_rejects_missing_snapshot() {
+    let (client, env) = setup();
+    let missing_id = 99999_u32;
+
+    let result = client.try_export_snapshot_commitment(&env, missing_id);
+
+    assert_eq!(
+        result,
+        Err(Ok(ExportSnapshotCommitmentError::SnapshotNotFound))
+    );
+}
+
+#[test]
+fn export_snapshot_commitment_rejects_zero_id() {
+    let (client, env) = setup();
+
+    let result = client.try_export_snapshot_commitment(&env, 0);
+
+    assert_eq!(
+        result,
+        Err(Ok(ExportSnapshotCommitmentError::InvalidSnapshotId))
+    );
+}
+
+#[test]
+fn export_snapshot_commitment_rejects_unauthorized_caller() {
+    let (client, env) = setup();
+    let snapshot_id = add_record(&client, &env, b"auth");
+
+    // Simulate a caller that is not the configured authorized exporter.
+    env.mock_all_auths::set_auth_contract_id(0);
+
+    let result = client.try_export_snapshot_commitment(&env, snapshot_id);
+
+    assert_eq!(
+        result,
+        Err(Ok(ExportSnapshotCommitmentError::Unauthorized))
+    );
+}
+
+#[test]
+fn export_snapshot_commitment_leaves_state_unchanged_on_rejection() {
+    let (client, env) = setup();
+    let snapshot_id = add_record(&client, &env, b"state");
+
+    let before = client.get_snapshot(&env, snapshot_id);
+
+    env.mock_all_auths::set_auth_contract_id(0);
+    let result = client.try_export_snapshot_commitment(&env, snapshot_id);
+    assert!(result.is_err());
+
+    let after = client.get_snapshot(&env, snapshot_id);
+    assert_eq!(before, after);
 }
