@@ -243,7 +243,8 @@ fn reconcile_zero_base_fee_with_flat() {
         .configure_fees(&token, &collector, &0, &true);
     ctx.client
         .configure_flat_fee(&token, &collector, &400, &true);
-    let quote = ctx.client.get_fee_quote(&business);        let (base, _tier_bps, _vol_bps, dynamic, flat) = ctx.client.get_fee_quote_detailed(&business);
+    let quote = ctx.client.get_fee_quote(&business);
+    let (base, _tier_bps, _vol_bps, dynamic, flat) = ctx.client.get_fee_quote_detailed(&business);
     assert_eq!(base, 0);
     assert_eq!(dynamic, 0);
     assert_eq!(flat, 400);
