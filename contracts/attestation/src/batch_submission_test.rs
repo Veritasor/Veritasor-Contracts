@@ -1283,7 +1283,7 @@ fn test_batch_stress_boundary_24_items_succeeds() {
 fn test_batch_stress_25_businesses_one_item_each() {
     let (env, client) = setup();
 
-    let businesses: Vec<Address> = (0..MAX_BATCH_SIZE)
+    let businesses: std::vec::Vec<Address> = (0..MAX_BATCH_SIZE)
         .map(|_| Address::generate(&env))
         .collect();
 
@@ -1306,7 +1306,7 @@ fn test_batch_stress_25_businesses_one_item_each() {
 
     // Each business must have exactly 1 attestation.
     for business in businesses.iter() {
-        assert_eq!(client.get_business_count(business.clone()), 1);
+        assert_eq!(client.get_business_count(business), 1);
     }
 }
 
@@ -1318,7 +1318,7 @@ fn test_batch_stress_sequential_batches_overlapping_businesses() {
     let (env, client) = setup();
 
     // Generate 25 businesses; 10 will appear in both batches.
-    let businesses: Vec<Address> = (0..MAX_BATCH_SIZE)
+    let businesses: std::vec::Vec<Address> = (0..MAX_BATCH_SIZE)
         .map(|_| Address::generate(&env))
         .collect();
 
@@ -1342,7 +1342,8 @@ fn test_batch_stress_sequential_batches_overlapping_businesses() {
     client.submit_attestations_batch(&batch1);
 
     // ---- Batch 2: 25 items; 10 overlapping businesses + 15 new ones ----
-    let extra_businesses: Vec<Address> = (0..15).map(|_| Address::generate(&env)).collect();
+    let extra_businesses: std::vec::Vec<Address> =
+        (0..15).map(|_| Address::generate(&env)).collect();
 
     let mut batch2 = Vec::new(&env);
     // 10 overlapping businesses get period = month 26–35
@@ -1381,15 +1382,15 @@ fn test_batch_stress_sequential_batches_overlapping_businesses() {
     // ---- Verify accumulation ----
     // Overlapping businesses should have 2 attestations each.
     for business in businesses.iter().take(10) {
-        assert_eq!(client.get_business_count(business.clone()), 2);
+        assert_eq!(client.get_business_count(business), 2);
     }
     // Non-overlapping businesses from batch 1 have 1 attestation.
     for business in businesses.iter().skip(10) {
-        assert_eq!(client.get_business_count(business.clone()), 1);
+        assert_eq!(client.get_business_count(business), 1);
     }
     // Extra businesses from batch 2 have 1 attestation.
     for business in extra_businesses.iter() {
-        assert_eq!(client.get_business_count(business.clone()), 1);
+        assert_eq!(client.get_business_count(business), 1);
     }
 }
 
@@ -1419,7 +1420,7 @@ fn test_batch_stress_all_items_single_business() {
 
     assert_eq!(items.len() as u32, MAX_BATCH_SIZE);
     client.submit_attestations_batch(&items);
-    assert_eq!(client.get_business_count(business), MAX_BATCH_SIZE as u64);
+    assert_eq!(client.get_business_count(&business), MAX_BATCH_SIZE as u64);
 }
 
 /// Stress test: 5 businesses each contributing MAX_BATCH_SIZE items in
@@ -1429,7 +1430,7 @@ fn test_batch_stress_all_items_single_business() {
 fn test_batch_stress_many_sequential_full_batches() {
     let (env, client) = setup();
 
-    let businesses: Vec<Address> = (0..5).map(|_| Address::generate(&env)).collect();
+    let businesses: std::vec::Vec<Address> = (0..5).map(|_| Address::generate(&env)).collect();
 
     // Submit 5 sequential full batches, each with one item per business
     // (5 businesses × 5 periods = 25 items per batch).
@@ -1438,7 +1439,7 @@ fn test_batch_stress_many_sequential_full_batches() {
         for (b_idx, business) in businesses.iter().enumerate() {
             let period = String::from_str(&env, &std::format!("2026-B{}-P{}", batch_idx, b_idx));
             let mut root = [0u8; 32];
-            root[0] = (batch_idx * 5 + b_idx) as u8;
+            root[0] = (batch_idx * 5 + b_idx as u32) as u8;
             items.push_back(BatchAttestationItem {
                 business: business.clone(),
                 period,
@@ -1455,7 +1456,7 @@ fn test_batch_stress_many_sequential_full_batches() {
 
     // Each business should now have 5 attestations (one per batch).
     for business in businesses.iter() {
-        assert_eq!(client.get_business_count(business.clone()), 5);
+        assert_eq!(client.get_business_count(business), 5);
     }
 }
 
@@ -1466,7 +1467,7 @@ fn test_batch_stress_many_sequential_full_batches() {
 fn test_batch_stress_interleaved_business_overlap() {
     let (env, client) = setup();
 
-    let businesses: Vec<Address> = (0..25).map(|_| Address::generate(&env)).collect();
+    let businesses: std::vec::Vec<Address> = (0..25).map(|_| Address::generate(&env)).collect();
 
     // ---- Batch 1: businesses 0..25, periods 01..25 ----
     let mut batch1 = Vec::new(&env);
@@ -1488,7 +1489,7 @@ fn test_batch_stress_interleaved_business_overlap() {
     client.submit_attestations_batch(&batch1);
 
     // ---- Batch 2: businesses 10..25 (15) + new businesses 0..10 (10) ----
-    let new_businesses: Vec<Address> = (0..10).map(|_| Address::generate(&env)).collect();
+    let new_businesses: std::vec::Vec<Address> = (0..10).map(|_| Address::generate(&env)).collect();
 
     let mut batch2 = Vec::new(&env);
     // Overlapping: businesses[10..25]
@@ -1526,15 +1527,15 @@ fn test_batch_stress_interleaved_business_overlap() {
 
     // Verify: businesses[0..10] have 1 attestation (batch 1 only).
     for business in businesses.iter().take(10) {
-        assert_eq!(client.get_business_count(business.clone()), 1);
+        assert_eq!(client.get_business_count(business), 1);
     }
     // Verify: businesses[10..25] have 2 attestations (both batches).
     for business in businesses.iter().skip(10) {
-        assert_eq!(client.get_business_count(business.clone()), 2);
+        assert_eq!(client.get_business_count(business), 2);
     }
     // Verify: new_businesses have 1 attestation (batch 2 only).
     for business in new_businesses.iter() {
-        assert_eq!(client.get_business_count(business.clone()), 1);
+        assert_eq!(client.get_business_count(business), 1);
     }
 }
 
@@ -1546,7 +1547,8 @@ fn test_batch_stress_skewed_distribution() {
     let (env, client) = setup();
 
     let heavy_business = Address::generate(&env);
-    let light_businesses: Vec<Address> = (0..15).map(|_| Address::generate(&env)).collect();
+    let light_businesses: std::vec::Vec<Address> =
+        (0..15).map(|_| Address::generate(&env)).collect();
 
     let mut items = Vec::new(&env);
     let mut idx = 0u8;
@@ -1589,9 +1591,9 @@ fn test_batch_stress_skewed_distribution() {
     client.submit_attestations_batch(&items);
 
     // Heavy business: 10 attestations.
-    assert_eq!(client.get_business_count(heavy_business), 10);
+    assert_eq!(client.get_business_count(&heavy_business), 10);
     // Each light business: exactly 1 attestation.
     for business in light_businesses.iter() {
-        assert_eq!(client.get_business_count(business.clone()), 1);
+        assert_eq!(client.get_business_count(business), 1);
     }
 }
