@@ -379,6 +379,135 @@ fn test_get_disputes_by_challenger() {
 }
 
 #[test]
+fn test_get_dispute_ids_by_challenger_empty_for_unknown_challenger() {
+    let (env, client) = setup();
+
+    let unknown = Address::generate(&env);
+    let dispute_ids = client.get_dispute_ids_by_challenger(&unknown);
+
+    assert_eq!(dispute_ids.len(), 0);
+}
+
+#[test]
+fn test_get_dispute_ids_by_challenger_returns_single_id() {
+    let (env, client) = setup();
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    let challenger = Address::generate(&env);
+    let dispute_id = client.open_dispute(
+        &challenger,
+        &business,
+        &period,
+        &DisputeType::RevenueMismatch,
+        &String::from_str(&env, "Dispute evidence"),
+    );
+
+    let dispute_ids = client.get_dispute_ids_by_challenger(&challenger);
+    assert_eq!(dispute_ids.len(), 1);
+    assert_eq!(dispute_ids.get(0), Some(dispute_id));
+}
+
+#[test]
+fn test_get_dispute_ids_by_challenger_scoped_per_challenger() {
+    let (env, client) = setup();
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    let challenger_a = Address::generate(&env);
+    let challenger_b = Address::generate(&env);
+
+    let dispute_a = client.open_dispute(
+        &challenger_a,
+        &business,
+        &period,
+        &DisputeType::RevenueMismatch,
+        &String::from_str(&env, "Dispute A"),
+    );
+    let dispute_b = client.open_dispute(
+        &challenger_b,
+        &business,
+        &period,
+        &DisputeType::DataIntegrity,
+        &String::from_str(&env, "Dispute B"),
+    );
+
+    let ids_a = client.get_dispute_ids_by_challenger(&challenger_a);
+    assert_eq!(ids_a.len(), 1);
+    assert_eq!(ids_a.get(0), Some(dispute_a));
+
+    let ids_b = client.get_dispute_ids_by_challenger(&challenger_b);
+    assert_eq!(ids_b.len(), 1);
+    assert_eq!(ids_b.get(0), Some(dispute_b));
+}
+
+#[test]
+fn test_get_dispute_ids_by_challenger_unchanged_after_rejected_open() {
+    let (env, client) = setup();
+
+    let business = Address::generate(&env);
+    let period = String::from_str(&env, "2026-02");
+    let root = BytesN::from_array(&env, &[1u8; 32]);
+    client.submit_attestation(
+        &business,
+        &period,
+        &root,
+        &1700000000u64,
+        &1u32,
+        &0i128,
+        &None,
+        &None,
+    );
+
+    let challenger = Address::generate(&env);
+    let dispute_id = client.open_dispute(
+        &challenger,
+        &business,
+        &period,
+        &DisputeType::RevenueMismatch,
+        &String::from_str(&env, "First dispute"),
+    );
+
+    // A duplicate open is rejected; the challenger index must not grow.
+    let rejected = client.try_open_dispute(
+        &challenger,
+        &business,
+        &period,
+        &DisputeType::RevenueMismatch,
+        &String::from_str(&env, "Duplicate dispute"),
+    );
+    assert!(rejected.is_err());
+
+    let dispute_ids = client.get_dispute_ids_by_challenger(&challenger);
+    assert_eq!(dispute_ids.len(), 1);
+    assert_eq!(dispute_ids.get(0), Some(dispute_id));
+}
+
+#[test]
 fn test_business_vs_lender_dispute_scenario() {
     let (env, client) = setup();
 

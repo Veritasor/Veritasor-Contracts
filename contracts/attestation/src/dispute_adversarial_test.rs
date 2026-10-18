@@ -288,3 +288,82 @@ assert!(
 	"revocation must be scoped to business and period"
 );
 }
+
+// -----------------------------------------------------------------------------
+// get_dispute_ids_by_challenger adversarial coverage
+// -----------------------------------------------------------------------------
+
+#[test]
+fn get_dispute_ids_by_challenger_unknown_challenger_returns_empty() {
+    let (env, contract) = setup();
+    let challenger = Address::generate(&env);
+
+    let ids = in_contract(&env, &contract, |env| {
+        dispute::get_dispute_ids_by_challenger(env, &challenger)
+    });
+
+    assert_eq!(
+        ids.len(),
+        0,
+        "an unknown challenger must have no associated disputes"
+    );
+}
+
+#[test]
+fn get_dispute_ids_by_challenger_is_deterministic_for_unknown_challenger() {
+    let (env, contract) = setup();
+    let challenger = Address::generate(&env);
+
+    let first = in_contract(&env, &contract, |env| {
+        dispute::get_dispute_ids_by_challenger(env, &challenger)
+    });
+    let second = in_contract(&env, &contract, |env| {
+        dispute::get_dispute_ids_by_challenger(env, &challenger)
+    });
+
+    assert_eq!(first.len(), 0, "first lookup must be empty");
+    assert_eq!(second.len(), 0, "repeated lookups must be deterministic");
+}
+
+#[test]
+fn get_dispute_ids_by_challenger_is_scoped_per_challenger() {
+    let (env, contract) = setup();
+    let challenger_a = Address::generate(&env);
+    let challenger_b = Address::generate(&env);
+
+    let ids_a = in_contract(&env, &contract, |env| {
+        dispute::get_dispute_ids_by_challenger(env, &challenger_a)
+    });
+    let ids_b = in_contract(&env, &contract, |env| {
+        dispute::get_dispute_ids_by_challenger(env, &challenger_b)
+    });
+
+    assert_eq!(ids_a.len(), 0, "challenger A must have no disputes");
+    assert_eq!(ids_b.len(), 0, "challenger B must have no disputes");
+}
+
+#[test]
+fn get_dispute_ids_by_challenger_does_not_mutate_revocation_state() {
+    let (env, contract) = setup();
+    let business = Address::generate(&env);
+    let challenger = Address::generate(&env);
+    let period = String::from_str(&env, "2026-09");
+    let reason = String::from_str(&env, "adversarial test revocation");
+    let revocation: RevocationData = (business.clone(), env.ledger().timestamp(), reason);
+
+    in_contract(&env, &contract, |env| {
+        dispute::record_revocation(env, &business, &period, &revocation)
+    });
+
+    let ids = in_contract(&env, &contract, |env| {
+        dispute::get_dispute_ids_by_challenger(env, &challenger)
+    });
+
+    assert_eq!(ids.len(), 0, "lookup must not synthesize dispute ids");
+    assert!(
+        in_contract(&env, &contract, |env| {
+            dispute::is_attestation_revoked(env, &business, &period)
+        }),
+        "lookup must not mutate revocation state"
+    );
+}
