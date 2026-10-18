@@ -1085,3 +1085,193 @@ mod test_set_dao {
         assert_eq!(get_dao(&env), Some(dao2));
     }
 }
+
+#[cfg(test)]
+mod test_get_revoke_proposal {
+    use super::*;
+    use crate::{AttestationContract, AttestationContractClient};
+    use soroban_sdk::{testutils::Address as _, Address, Env, String};
+
+    fn setup_env<'a>() -> (Env, AttestationContractClient<'a>, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let id = env.register(AttestationContract, ());
+        let client = AttestationContractClient::new(&env, &id);
+        client.initialize(&admin, &0u64);
+        (env, client, admin)
+    }
+
+    fn make_proposal(env: &Env, proposer: &Address, at: u64, reason: &str) -> RevokeProposal {
+        RevokeProposal {
+            proposer: proposer.clone(),
+            proposed_at: at,
+            reason: String::from_str(env, reason),
+        }
+    }
+
+    #[test]
+    fn test_get_revoke_proposal_returns_none_when_absent() {
+        let (env, client, _admin) = setup_env();
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "2024-01");
+
+        env.as_contract(&client.address, || {
+            assert_eq!(get_revoke_proposal(&env, &business, &period), None);
+        });
+    }
+
+    #[test]
+    fn test_get_revoke_proposal_roundtrip_after_store() {
+        let (env, client, _admin) = setup_env();
+        let business = Address::generate(&env);
+        let proposer = Address::generate(&env);
+        let period = String::from_str(&env, "2024-01");
+        let proposal = make_proposal(&env, &proposer, 1_234_567, "fraud");
+
+        env.as_contract(&client.address, || {
+            store_revoke_proposal(&env, &business, &period, &proposal);
+            let loaded = get_revoke_proposal(&env, &business, &period);
+            assert_eq!(loaded, Some(proposal.clone()));
+        });
+    }
+
+    #[test]
+    fn test_get_revoke_proposal_isolated_by_business() {
+        let (env, client, _admin) = setup_env();
+        let business_a = Address::generate(&env);
+        let business_b = Address::generate(&env);
+        let proposer = Address::generate(&env);
+        let period = String::from_str(&env, "2024-01");
+        let proposal = make_proposal(&env, &proposer, 42, "reason-a");
+
+        env.as_contract(&client.address, || {
+            store_revoke_proposal(&env, &business_a, &period, &proposal);
+            assert_eq!(
+                get_revoke_proposal(&env, &business_a, &period),
+                Some(proposal.clone())
+            );
+            // Different business, same period → no leakage.
+            assert_eq!(get_revoke_proposal(&env, &business_b, &period), None);
+        });
+    }
+
+    #[test]
+    fn test_get_revoke_proposal_isolated_by_period() {
+        let (env, client, _admin) = setup_env();
+        let business = Address::generate(&env);
+        let proposer = Address::generate(&env);
+        let period_a = String::from_str(&env, "2024-01");
+        let period_b = String::from_str(&env, "2024-02");
+        let proposal = make_proposal(&env, &proposer, 7, "reason-a");
+
+        env.as_contract(&client.address, || {
+            store_revoke_proposal(&env, &business, &period_a, &proposal);
+            assert_eq!(
+                get_revoke_proposal(&env, &business, &period_a),
+                Some(proposal.clone())
+            );
+            // Same business, different period → no leakage.
+            assert_eq!(get_revoke_proposal(&env, &business, &period_b), None);
+        });
+    }
+
+    #[test]
+    fn test_get_revoke_proposal_returns_none_after_remove() {
+        let (env, client, _admin) = setup_env();
+        let business = Address::generate(&env);
+        let proposer = Address::generate(&env);
+        let period = String::from_str(&env, "2024-01");
+        let proposal = make_proposal(&env, &proposer, 99, "reason");
+
+        env.as_contract(&client.address, || {
+            store_revoke_proposal(&env, &business, &period, &proposal);
+            assert!(get_revoke_proposal(&env, &business, &period).is_some());
+
+            remove_revoke_proposal(&env, &business, &period);
+            assert_eq!(get_revoke_proposal(&env, &business, &period), None);
+        });
+    }
+
+    #[test]
+    fn test_get_revoke_proposal_remove_is_idempotent() {
+        let (env, client, _admin) = setup_env();
+        let business = Address::generate(&env);
+        let period = String::from_str(&env, "2024-01");
+
+        env.as_contract(&client.address, || {
+            // Removing an absent proposal must not panic and must leave state absent.
+            remove_revoke_proposal(&env, &business, &period);
+            assert_eq!(get_revoke_proposal(&env, &business, &period), None);
+            remove_revoke_proposal(&env, &business, &period);
+            assert_eq!(get_revoke_proposal(&env, &business, &period), None);
+        });
+    }
+
+    #[test]
+    fn test_get_revoke_proposal_overwrite_replaces_previous() {
+        let (env, client, _admin) = setup_env();
+        let business = Address::generate(&env);
+        let proposer_a = Address::generate(&env);
+        let proposer_b = Address::generate(&env);
+        let period = String::from_str(&env, "2024-01");
+        let first = make_proposal(&env, &proposer_a, 1, "first");
+        let second = make_proposal(&env, &proposer_b, 2, "second");
+
+        env.as_contract(&client.address, || {
+            store_revoke_proposal(&env, &business, &period, &first);
+            store_revoke_proposal(&env, &business, &period, &second);
+            assert_eq!(
+                get_revoke_proposal(&env, &business, &period),
+                Some(second.clone())
+            );
+            assert_ne!(
+                get_revoke_proposal(&env, &business, &period),
+                Some(first)
+            );
+        });
+    }
+
+    #[test]
+    fn test_get_revoke_proposal_boundary_timestamps() {
+        let (env, client, _admin) = setup_env();
+        let business = Address::generate(&env);
+        let proposer = Address::generate(&env);
+        let period = String::from_str(&env, "2024-01");
+
+        env.as_contract(&client.address, || {
+            // proposed_at == 0 boundary.
+            let zero = make_proposal(&env, &proposer, 0, "zero");
+            store_revoke_proposal(&env, &business, &period, &zero);
+            assert_eq!(
+                get_revoke_proposal(&env, &business, &period),
+                Some(zero.clone())
+            );
+
+            // proposed_at == u64::MAX boundary.
+            let max = make_proposal(&env, &proposer, u64::MAX, "max");
+            store_revoke_proposal(&env, &business, &period, &max);
+            assert_eq!(
+                get_revoke_proposal(&env, &business, &period),
+                Some(max.clone())
+            );
+        });
+    }
+
+    #[test]
+    fn test_get_revoke_proposal_empty_period_string() {
+        let (env, client, _admin) = setup_env();
+        let business = Address::generate(&env);
+        let proposer = Address::generate(&env);
+        let empty = String::from_str(&env, "");
+        let proposal = make_proposal(&env, &proposer, 5, "empty-period");
+
+        env.as_contract(&client.address, || {
+            store_revoke_proposal(&env, &business, &empty, &proposal);
+            assert_eq!(
+                get_revoke_proposal(&env, &business, &empty),
+                Some(proposal.clone())
+            );
+        });
+    }
+}

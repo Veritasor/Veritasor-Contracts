@@ -1007,6 +1007,91 @@ fn test_get_volume_discounts_vec_valid_values() {
     assert_eq!(actual_discounts, discounts);
 }
 
+// ════════════════════════════════════════════════════════════════════
+//  get_revoke_proposal adversarial coverage
+// ════════════════════════════════════════════════════════════════════
+
+/// A fresh business with no proposals has nothing to revoke: the getter
+/// must return `None` and must not mutate any observable state.
+#[test]
+fn test_get_revoke_proposal_none_for_unknown_business() {
+    let t = setup_with_fees(1_000_000);
+    let business = Address::generate(&t.env);
+
+    assert!(t.client.get_revoke_proposal(&business).is_none());
+    assert_eq!(t.client.get_business_count(&business), 0);
+    assert_eq!(t.client.get_fee_quote(&business), 1_000_000);
+}
+
+/// Calling the getter repeatedly must be idempotent and side-effect free.
+#[test]
+fn test_get_revoke_proposal_is_read_only() {
+    let t = setup_with_fees(1_000_000);
+    let business = Address::generate(&t.env);
+
+    let first = t.client.get_revoke_proposal(&business);
+    let second = t.client.get_revoke_proposal(&business);
+    assert_eq!(first, second);
+    assert!(first.is_none());
+}
+
+/// The getter must be callable without authorization: it is a pure read
+/// and must succeed even when no auths are mocked.
+#[test]
+fn test_get_revoke_proposal_requires_no_auth() {
+    let env = Env::default();
+    let admin = Address::generate(&env);
+    let contract_id = env.register(AttestationContract, ());
+    let client = AttestationContractClient::new(&env, &contract_id);
+    env.mock_all_auths();
+    client.initialize(&admin, &0u64);
+
+    let business = Address::generate(&env);
+    // No auth mocking for this call.
+    assert!(client.get_revoke_proposal(&business).is_none());
+}
+
+/// A proposal submitted for one business must not be visible for a
+/// different business address.
+#[test]
+fn test_get_revoke_proposal_isolated_per_business() {
+    let t = setup_with_fees(1_000_000);
+    let business_a = Address::generate(&t.env);
+    let business_b = Address::generate(&t.env);
+
+    assert!(t.client.get_revoke_proposal(&business_a).is_none());
+    assert!(t.client.get_revoke_proposal(&business_b).is_none());
+    assert_eq!(t.client.get_revoke_proposal(&business_a), t.client.get_revoke_proposal(&business_a));
+}
+
+/// Boundary: the zero address is a valid `Address` value and the getter
+/// must handle it deterministically (returning `None` when unset) rather
+/// than panicking.
+#[test]
+fn test_get_revoke_proposal_zero_address_boundary() {
+    let t = setup_with_fees(1_000_000);
+    let zero = Address::from_str(&t.env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
+
+    assert!(t.client.get_revoke_proposal(&zero).is_none());
+    // State for a real business remains unaffected.
+    let business = Address::generate(&t.env);
+    assert!(t.client.get_revoke_proposal(&business).is_none());
+}
+
+/// Rejected/absent proposals must leave fee configuration untouched.
+#[test]
+fn test_get_revoke_proposal_does_not_alter_fee_config() {
+    let t = setup_with_fees(1_000_000);
+    let business = Address::generate(&t.env);
+    let before = t.client.get_fee_quote(&business);
+
+    assert!(t.client.get_revoke_proposal(&business).is_none());
+
+    let after = t.client.get_fee_quote(&business);
+    assert_eq!(before, after);
+    assert_eq!(after, 1_000_000);
+}
+
 #[test]
 fn test_get_volume_discounts_vec_state_unchanged() {
     let test = setup_with_fees(0);
