@@ -186,6 +186,12 @@ pub fn set_roles(env: &Env, account: &Address, roles: u32) {
 
 /// Check if an address has a specific role.
 pub fn has_role(env: &Env, account: &Address, role: u32) -> bool {
+    // Do not let an invalid query mask overlap a real role and accidentally
+    // report authorization (for example, ROLE_ADMIN | an undefined bit).
+    if role == 0 || !is_valid_role_bitmap(role) {
+        return false;
+    }
+
     (get_roles(env, account) & role) != 0
 }
 

@@ -471,6 +471,42 @@ fn test_roles_are_zero_by_default() {
 }
 
 #[test]
+fn test_has_role_rejects_zero_and_undefined_role_masks_without_mutating_state() {
+    let (env, client, admin) = setup();
+    let admin_roles_before = in_contract(&env, &client.address, |e| {
+        access_control::get_roles(e, &admin)
+    });
+    let holder_count_before = in_contract(&env, &client.address, |e| {
+        access_control::get_role_holders(e).len()
+    });
+    let undefined_role = 1u32 << 4;
+
+    assert!(!client.has_role(&admin, &0));
+    assert!(!client.has_role(&admin, &undefined_role));
+    assert!(!client.has_role(&admin, &(ROLE_ADMIN | undefined_role)));
+    assert!(!client.has_role(&admin, &u32::MAX));
+    assert!(client.has_role(&admin, &ROLE_ADMIN));
+
+    let admin_roles_after = in_contract(&env, &client.address, |e| {
+        access_control::get_roles(e, &admin)
+    });
+    let holder_count_after = in_contract(&env, &client.address, |e| {
+        access_control::get_role_holders(e).len()
+    });
+    assert_eq!(admin_roles_after, admin_roles_before);
+    assert_eq!(holder_count_after, holder_count_before);
+}
+
+#[test]
+fn test_has_role_returns_false_for_unregistered_account_and_unassigned_valid_role() {
+    let (env, client, _admin) = setup();
+    let unregistered = Address::generate(&env);
+
+    assert!(!client.has_role(&unregistered, &ROLE_ADMIN));
+    assert!(!client.has_role(&unregistered, &ROLE_BUSINESS));
+}
+
+#[test]
 fn test_all_role_combinations() {
     let (env, client, admin) = setup();
     let user = Address::generate(&env);
@@ -694,6 +730,76 @@ fn test_fuzz_grant_revoke_role_random_bitmaps() {
     let user2 = soroban_sdk::Address::generate(&e);
     e.as_contract(&contract_id, || {
         crate::access_control::set_roles(&e, &user2, ROLE_ADMIN);
+
+        // Seed enough admins that revoking ROLE_ADMIN from user1 keeps the
+        // admin count above MIN_ADMIN_COUNT (and the cooldown guard idle).
+        let admin1 = soroban_sdk::Address::generate(&e);
+        let admin2 = soroban_sdk::Address::generate(&e);
+        let admin3 = soroban_sdk::Address::generate(&e);
+        access_control::grant_role(&e, &admin1, ROLE_ADMIN, &admin1);
+        access_control::grant_role(&e, &admin2, ROLE_ADMIN, &admin1);
+        access_control::grant_role(&e, &admin3, ROLE_ADMIN, &admin1);
+
+        let valid_roles = [
+            0b0000, 0b0001, 0b0010, 0b0100, 0b1000, 0b0011, 0b0101, 0b1001, 0b0110, 0b1010, 0b1100,
+            0b0111, 0b1011, 0b1101, 0b1110, 0b1111,
+        ];
+        let invalid_bitmaps = [0b10000u32, 0b100000u32, 0xFFFFu32, 0xDEADu32, 0xFFFFFFFFu32];
+
+        let user1 = soroban_sdk::Address::generate(&e);
+
+        for &roles in valid_roles.iter() {
+            access_control::set_roles(&e, &user1, 0u32);
+            if roles == 0 {
+                // `grant_role` rejects the zero bitmap; `set_roles` accepts it.
+                assert_eq!(access_control::get_roles(&e, &user1), 0u32);
+                continue;
+            }
+            access_control::grant_role(&e, &user1, roles, &admin1);
+            assert_eq!(
+                access_control::get_roles(&e, &user1),
+                roles,
+                "grant_role failed for bitmap {}",
+                roles
+            );
+        }
+
+        // Granting an already-held role is idempotent.
+        access_control::set_roles(&e, &user1, 0u32);
+        access_control::grant_role(&e, &user1, 0b0101u32, &admin1);
+        access_control::grant_role(&e, &user1, 0b0101u32, &admin1);
+        assert_eq!(access_control::get_roles(&e, &user1), 0b0101u32);
+
+        access_control::set_roles(&e, &user1, 0b1111u32);
+        access_control::revoke_role(&e, &user1, 0b0001u32, &admin1);
+        assert_eq!(access_control::get_roles(&e, &user1), 0b1110u32);
+        access_control::revoke_role(&e, &user1, 0b0010u32, &admin1);
+        assert_eq!(access_control::get_roles(&e, &user1), 0b1100u32);
+        access_control::revoke_role(&e, &user1, 0b0100u32, &admin1);
+        assert_eq!(access_control::get_roles(&e, &user1), 0b1000u32);
+        access_control::revoke_role(&e, &user1, 0b1000u32, &admin1);
+        assert_eq!(access_control::get_roles(&e, &user1), 0u32);
+
+        // Revoking a role that is not held is a no-op.
+        access_control::revoke_role(&e, &user1, 0b0010u32, &admin1);
+        assert_eq!(access_control::get_roles(&e, &user1), 0u32);
+
+        for &invalid in invalid_bitmaps.iter() {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                access_control::grant_role(&e, &user1, invalid, &admin1);
+            }));
+            assert!(
+                result.is_err(),
+                "grant_role should panic for invalid bitmap: {}",
+                invalid
+            );
+        }
+
+        assert!(access_control::is_valid_role_bitmap(0b0000u32));
+        assert!(access_control::is_valid_role_bitmap(0b1111u32));
+        assert!(!access_control::is_valid_role_bitmap(0b10000u32));
+        assert!(!access_control::is_valid_role_bitmap(0xFFFFFFFFu32));
+    });
 
         for &roles in valid_roles.iter() {
             crate::access_control::set_roles(&e, &user1, 0u32);
