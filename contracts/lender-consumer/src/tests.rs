@@ -4,7 +4,9 @@ use crate::{LenderConsumerContract, LenderConsumerContractClient, REJECTION_REVO
 use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String, Vec};
 use veritasor_attestation::AttestationContract;
 use veritasor_attestation::AttestationContractClient;
-use veritasor_lender_access_list::{LenderAccessListClient, LenderAccessListContract};
+use veritasor_lender_access_list::{
+    LenderAccessListContract, LenderAccessListContractClient, LenderMetadata,
+};
 
 fn setup_env() -> (
     Env,
@@ -36,16 +38,48 @@ fn setup_env() -> (
     (env, admin, core_client, access_list_client, consumer_client)
 }
 
+fn register_business(
+    env: &Env,
+    client: &AttestationContractClient,
+    admin: &Address,
+    business: &Address,
+) {
+    client.grant_role(admin, business, &4u32);
+    client.register_business(
+        business,
+        &BytesN::from_array(env, &[1u8; 32]),
+        &soroban_sdk::Symbol::new(env, "US"),
+        &Vec::new(env),
+    );
+    client.approve_business(admin, business);
+}
+
+fn setup_lender(
+    env: &Env,
+    client: &LenderAccessListContractClient,
+    admin: &Address,
+    lender: &Address,
+    tier: u32,
+) {
+    let metadata = LenderMetadata {
+        name: String::from_str(env, ""),
+        url: String::from_str(env, ""),
+        notes: String::from_str(env, ""),
+    };
+    client.set_lender(admin, lender, &tier, &metadata);
+}
+
 #[test]
 fn test_lender_consumer_observes_revocation_state() {
     let (env, _admin, core_client, access_list_client, consumer_client) = setup_env();
 
     let lender = Address::generate(&env);
     let business = Address::generate(&env);
+    register_business(&env, &core_client, &_admin, &business);
     let period = String::from_str(&env, "2023-Q3");
 
     // Add lender to access list (Tier 1)
-    setup_lender(&access_list_client, &_admin, &lender, 1);
+    setup_lender(&env, &access_list_client, &_admin, &lender, 1);
 
     // 1. Submit an attestation
     let revenue: i128 = 100_000;
@@ -91,11 +125,12 @@ fn test_lender_consumer_observes_revocation_state_multi_period() {
 
     let lender = Address::generate(&env);
     let business = Address::generate(&env);
+    register_business(&env, &core_client, &_admin, &business);
     let period1 = String::from_str(&env, "2023-Q1");
     let period2 = String::from_str(&env, "2023-Q2");
 
     // Add lender to access list (Tier 1)
-    setup_lender(&access_list_client, &_admin, &lender, 1);
+    setup_lender(&env, &access_list_client, &_admin, &lender, 1);
 
     // 1. Submit attestations
     let revenue1: i128 = 100_000;

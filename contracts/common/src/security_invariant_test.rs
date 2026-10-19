@@ -33,6 +33,23 @@ fn setup_attestation(env: &Env) -> (AttestationContractClient<'_>, Address) {
     (client, admin)
 }
 
+/// Register and approve `business` so submissions pass the active-business gate.
+fn register_business(
+    env: &Env,
+    client: &AttestationContractClient<'_>,
+    admin: &Address,
+    business: &Address,
+) {
+    client.grant_role(admin, business, &4u32);
+    client.register_business(
+        business,
+        &soroban_sdk::BytesN::from_array(env, &[1u8; 32]),
+        &soroban_sdk::Symbol::new(env, "US"),
+        &soroban_sdk::Vec::new(env),
+    );
+    client.approve_business(admin, business);
+}
+
 /// Stand up an initialized integration registry and return (client, admin).
 fn setup_registry(env: &Env) -> (IntegrationRegistryContractClient<'_>, Address) {
     let contract_id = env.register(IntegrationRegistryContract, ());
@@ -161,6 +178,7 @@ fn invariant_attestation_no_duplicate_submission() {
     env.mock_all_auths();
     let (client, _admin) = setup_attestation(&env);
     let business = Address::generate(&env);
+    register_business(&env, &client, &_admin, &business);
     let period = String::from_str(&env, "202401");
     let root = soroban_sdk::BytesN::from_array(&env, &[1u8; 32]);
     client.submit_attestation(
@@ -180,6 +198,7 @@ fn invariant_attestation_different_periods_both_succeed() {
     env.mock_all_auths();
     let (client, _admin) = setup_attestation(&env);
     let business = Address::generate(&env);
+    register_business(&env, &client, &_admin, &business);
     let root = soroban_sdk::BytesN::from_array(&env, &[2u8; 32]);
     client.submit_attestation(
         &business,
@@ -212,6 +231,8 @@ fn invariant_attestation_different_businesses_same_period_both_succeed() {
     let (client, _admin) = setup_attestation(&env);
     let biz_a = Address::generate(&env);
     let biz_b = Address::generate(&env);
+    register_business(&env, &client, &_admin, &biz_a);
+    register_business(&env, &client, &_admin, &biz_b);
     let period = String::from_str(&env, "202401");
     let root = soroban_sdk::BytesN::from_array(&env, &[3u8; 32]);
     client.submit_attestation(
@@ -316,6 +337,7 @@ fn invariant_attestation_submit_restored_after_unpause() {
     client.pause(&admin, &1u64);
     client.unpause(&admin, &2u64);
     let business = Address::generate(&env);
+    register_business(&env, &client, &admin, &business);
     let root = soroban_sdk::BytesN::from_array(&env, &[6u8; 32]);
     // Must not panic after unpause.
     client.submit_attestation(

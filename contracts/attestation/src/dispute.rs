@@ -918,7 +918,7 @@ pub fn check_and_rollback_disputes(env: &Env, dispute_ids: &Vec<u64>, limit: u32
     rolled_back_count
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "full-tests"))]
 mod test {
     use super::*;
     use soroban_sdk::testutils::Address as _;

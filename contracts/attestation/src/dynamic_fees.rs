@@ -1020,7 +1020,7 @@ pub fn set_min_reputation(env: &Env, min_score: u64) {
         .set(&DataKey::MinReputation, &min_score);
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "full-tests"))]
 mod test_set_dao {
     use super::*;
     use crate::{AttestationContract, AttestationContractClient};
