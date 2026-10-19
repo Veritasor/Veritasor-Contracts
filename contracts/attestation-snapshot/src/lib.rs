@@ -1645,5 +1645,9 @@ mod get_pending_restore_adversarial_tests {
 #[cfg(test)]
 mod finalize_epoch_test;
 
+/// Adversarial tests for `export_commitment_with_count` (closes #880).
+#[cfg(test)]
+mod export_commitment_with_count_test;
+
 #[cfg(test)]
 mod restore_commit_adversarial_test;

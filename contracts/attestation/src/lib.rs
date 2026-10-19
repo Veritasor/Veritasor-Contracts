@@ -3857,6 +3857,9 @@ mod attestor_staking_integration_test;
 mod batch_auth_dedup_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod batch_submission_test;
+/// Adversarial tests for `require_business_or_attestor` (closes #900).
+#[cfg(test)]
+mod business_or_attestor_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod business_count_role_parity_test;
 /// Focused tests for `cleanup_expired_attestation` (issue #789).
