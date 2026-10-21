@@ -1079,6 +1079,90 @@ mod test {
     }
 
     #[test]
+    fn test_get_attestor_for_attestation_missing_does_not_change_storage() {
+        let env = Env::default();
+        let contract_id = env.register(crate::AttestationContract, ());
+        env.as_contract(&contract_id, || {
+            let business = Address::generate(&env);
+            let period = String::from_str(&env, "2026-02");
+            let key = DisputeKey::AttestorByAttestation(business.clone(), period.clone());
+
+            assert!(!env.storage().instance().has(&key));
+            assert_eq!(get_attestor_for_attestation(&env, &business, &period), None);
+            assert!(!env.storage().instance().has(&key));
+        });
+    }
+
+    #[test]
+    fn test_get_attestor_for_attestation_returns_exact_mapping_without_mutation() {
+        let env = Env::default();
+        let contract_id = env.register(crate::AttestationContract, ());
+        env.as_contract(&contract_id, || {
+            let business = Address::generate(&env);
+            let period = String::from_str(&env, "2026-02");
+            let attestor = Address::generate(&env);
+            let key = DisputeKey::AttestorByAttestation(business.clone(), period.clone());
+            store_attestor_for_attestation(&env, &business, &period, &attestor);
+            let before: Option<Address> = env.storage().instance().get(&key);
+
+            assert_eq!(
+                get_attestor_for_attestation(&env, &business, &period),
+                Some(attestor)
+            );
+            assert_eq!(env.storage().instance().get::<_, Address>(&key), before);
+        });
+    }
+
+    #[test]
+    fn test_get_attestor_for_attestation_isolates_business_and_period_keys() {
+        let env = Env::default();
+        let contract_id = env.register(crate::AttestationContract, ());
+        env.as_contract(&contract_id, || {
+            let business = Address::generate(&env);
+            let other_business = Address::generate(&env);
+            let period = String::from_str(&env, "2026-02");
+            let other_period = String::from_str(&env, "2026-03");
+            let attestor = Address::generate(&env);
+            store_attestor_for_attestation(&env, &business, &period, &attestor);
+
+            assert_eq!(
+                get_attestor_for_attestation(&env, &business, &period),
+                Some(attestor)
+            );
+            assert_eq!(
+                get_attestor_for_attestation(&env, &other_business, &period),
+                None
+            );
+            assert_eq!(
+                get_attestor_for_attestation(&env, &business, &other_period),
+                None
+            );
+        });
+    }
+
+    #[test]
+    fn test_get_attestor_for_attestation_empty_period_boundary() {
+        let env = Env::default();
+        let contract_id = env.register(crate::AttestationContract, ());
+        env.as_contract(&contract_id, || {
+            let business = Address::generate(&env);
+            let empty_period = String::from_str(&env, "");
+            let nonempty_period = String::from_str(&env, "2026-02");
+            let attestor = Address::generate(&env);
+            store_attestor_for_attestation(&env, &business, &empty_period, &attestor);
+
+            assert_eq!(
+                get_attestor_for_attestation(&env, &business, &empty_period),
+                Some(attestor)
+            );
+            assert_eq!(
+                get_attestor_for_attestation(&env, &business, &nonempty_period),
+                None
+            );
+        });
+    }
+
+    #[test]
     fn test_get_anomaly_escalation_empty() {
         let env = Env::default();
         let business = Address::generate(&env);
