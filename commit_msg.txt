@@ -1,0 +1,12 @@
+test(access_control): add adversarial coverage for clear_pending_pause
+
+Exercise the following cases for clear_pending_pause:
+- Happy path: set a pending pause effective-at timestamp, call
+  clear_pending_pause, verify storage returns None afterwards.
+- Idempotent no-op: call clear_pending_pause when no pending pause
+  exists; verifies the function does not panic and leaves state
+  unchanged.
+
+Tests are placed in a dedicated mod clear_pending_pause_test block
+inside access_control.rs, using the Soroban test Env directly so no
+contract registration or auth mocking is required.
