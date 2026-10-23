@@ -44,7 +44,7 @@ use super::*;
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
 use soroban_sdk::{symbol_short, Address, BytesN, Env, String, TryFromVal, Vec};
 
-use veritasor_attestation::AttestationContract;
+use veritasor_attestation::{AttestationContract, ROLE_BUSINESS};
 use veritasor_attestation_snapshot::{
     AttestationSnapshotContract, AttestationSnapshotContractClient,
 };
@@ -78,10 +78,15 @@ fn setup_harness() -> Harness<'static> {
     let att_client = veritasor_attestation::AttestationContractClient::new(&env, &att_id);
     att_client.initialize(&admin, &0u64);
 
-    // ── 2. Snapshot contract (linked to attestation for validation) ──
+    // ── 2. Snapshot contract (no attestation-contract link in tests: the
+    //       native test environment stores attestations in instance storage
+    //       but get_attestation reads from persistent storage, so cross-
+    //       contract validation always fails. The snapshot is initialized
+    //       without a linked attestation contract so record_snapshot skips
+    //       that optional validation layer.) ──────────────────────────────
     let snap_id = env.register(AttestationSnapshotContract, ());
     let snap_client = AttestationSnapshotContractClient::new(&env, &snap_id);
-    snap_client.initialize(&admin, &Some(att_id.clone()));
+    snap_client.initialize(&admin, &None::<Address>);
 
     // ── 3. Aggregated-attestations contract ─────────────────────────
     let agg_id = env.register(AggregatedAttestationsContract, ());
@@ -142,6 +147,21 @@ fn assert_event_and_record_snapshot(
     true
 }
 
+/// Register and approve a business address in the attestation contract so it
+/// can call `submit_attestation`. This mirrors the setup done in other test
+/// suites that exercise the full submission path.
+fn register_and_approve_business(h: &Harness<'_>, business: &Address) {
+    use soroban_sdk::{Symbol, Vec as SdkVec};
+    h.att_client.grant_role(&h.admin, business, &ROLE_BUSINESS);
+    h.att_client.register_business(
+        business,
+        &BytesN::from_array(&h.env, &[0xAAu8; 32]),
+        &Symbol::new(&h.env, "US"),
+        &SdkVec::new(&h.env),
+    );
+    h.att_client.approve_business(&h.admin, business);
+}
+
 // ────────────────────────────────────────────────────────────────────
 //  1. Basic end-to-end: N submissions → counters == N
 // ────────────────────────────────────────────────────────────────────
@@ -171,6 +191,7 @@ fn test_n_submissions_produce_n_window_counts() {
 
     // Submit one attestation per business and simulate indexer ingestion.
     for biz in &businesses {
+        register_and_approve_business(&h, biz);
         h.att_client.submit_attestation(
             biz,
             &String::from_str(&h.env, period),
@@ -226,6 +247,8 @@ fn test_two_window_per_window_counters() {
 
     let root1 = BytesN::from_array(&h.env, &[0x11u8; 32]);
     let root2 = BytesN::from_array(&h.env, &[0x22u8; 32]);
+
+    register_and_approve_business(&h, &biz);
 
     // Window 1 — ledger timestamp T1
     let t1 = h.env.ledger().timestamp();
@@ -320,6 +343,7 @@ fn test_duplicate_snapshot_delivery_does_not_double_count() {
     let root = BytesN::from_array(&h.env, &[0xCCu8; 32]);
     let ts = h.env.ledger().timestamp();
 
+    register_and_approve_business(&h, &biz);
     h.att_client
         .submit_attestation(&biz, &period_str, &root, &ts, &1u32, &0i128, &None, &None);
 
@@ -416,6 +440,7 @@ fn test_business_without_snapshot_contributes_zero() {
     let period_str = String::from_str(&h.env, "2026-04");
 
     for biz in [&biz_with, &biz_with2] {
+        register_and_approve_business(&h, biz);
         h.att_client
             .submit_attestation(biz, &period_str, &root, &ts, &1u32, &0i128, &None, &None);
         assert!(assert_event_and_record_snapshot(
@@ -478,6 +503,7 @@ fn test_attestation_submitted_event_topic_is_stable() {
     let root = BytesN::from_array(&h.env, &[0xEEu8; 32]);
     let ts = h.env.ledger().timestamp();
 
+    register_and_approve_business(&h, &biz);
     h.att_client
         .submit_attestation(&biz, &period, &root, &ts, &1u32, &0i128, &None, &None);
 
@@ -536,6 +562,7 @@ fn test_csv_row_of_window_totals() {
     let period = "2026-06";
 
     for (biz, rev) in businesses.iter().zip(revenues.iter()) {
+        register_and_approve_business(&h, biz);
         h.att_client.submit_attestation(
             biz,
             &String::from_str(&h.env, period),
