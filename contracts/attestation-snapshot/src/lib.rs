@@ -1012,7 +1012,26 @@ impl AttestationSnapshotContract {
     /// Return all epoch identifiers recorded on this contract, in insertion order.
     ///
     /// Supports pagination via `page` (0-indexed) and `page_size`.
-    /// Pass `page_size = 0` to return all entries in a single page.
+    /// Pass `page_size = 0` to return all entries in a single page; `page` is
+    /// ignored in that mode.
+    ///
+    /// # Boundary behaviour
+    ///
+    /// - A page whose offset is at or past the end of the index returns an empty
+    ///   `Vec` — the same answer a caller already gets for a plain out-of-range
+    ///   page.
+    /// - `page` and `page_size` are both caller-controlled, so their product can
+    ///   exceed `u32::MAX`. This crate is built with `overflow-checks = true`
+    ///   (workspace `[profile.release]`), so a plain `page * page_size` traps on
+    ///   such an input and aborts an otherwise permissionless read. The offset is
+    ///   therefore computed with `saturating_mul`: an overflowing product
+    ///   saturates to `u32::MAX`, which is always past the end of the index and
+    ///   so yields an empty page rather than a trap.
+    /// - Saturation is also the correct answer if overflow checks are ever
+    ///   disabled: a wrapping multiply could alias an earlier page — `(1 << 31,
+    ///   2)` and `(1 << 16, 1 << 16)` wrap to offset 0 — and hand a paging
+    ///   consumer (for example an auditor walking
+    ///   `export_commitment_with_count`) entries it had already accounted for.
     pub fn get_all_epochs(env: Env, page: u32, page_size: u32) -> Vec<String> {
         let all: Vec<String> = env
             .storage()
@@ -1024,7 +1043,7 @@ impl AttestationSnapshotContract {
             return all;
         }
 
-        let start: u32 = page * page_size;
+        let start: u32 = page.saturating_mul(page_size);
         let mut result = Vec::new(&env);
         let mut i = start;
         while i < all.len() && (i - start) < page_size {
@@ -1647,3 +1666,6 @@ mod finalize_epoch_test;
 
 #[cfg(test)]
 mod restore_commit_adversarial_test;
+
+#[cfg(test)]
+mod get_all_epochs_adversarial_test;
