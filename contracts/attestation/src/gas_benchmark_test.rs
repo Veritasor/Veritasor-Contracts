@@ -53,7 +53,7 @@
 
 use super::*;
 use soroban_sdk::testutils::{Address as _, Ledger};
-use soroban_sdk::{token, Address, BytesN, Env, String};
+use soroban_sdk::{token, Address, BytesN, Env, String, Symbol, Vec};
 
 use std::format;
 use std::println;
@@ -179,6 +179,18 @@ fn setup_with_fees() -> (
     (env, client, admin, collector, token_client)
 }
 
+fn register_biz(client: &AttestationContractClient, business: &Address) {
+    let admin = client.get_admin();
+    let _ = client.try_grant_role(&admin, business, &access_control::ROLE_BUSINESS);
+    let _ = client.try_register_business(
+        business,
+        &BytesN::from_array(&client.env, &[1u8; 32]),
+        &Symbol::new(&client.env, "US"),
+        &Vec::new(&client.env),
+    );
+    let _ = client.try_approve_business(&admin, business);
+}
+
 // ── Core Operation Benchmarks ───────────────────────────────────────
 
 #[test]
@@ -186,6 +198,7 @@ fn bench_submit_attestation_no_fee() {
     let (env, client, _admin) = setup_basic();
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
@@ -212,6 +225,7 @@ fn bench_submit_attestation_with_fee() {
     let (env, client, _admin, _collector, token_client) = setup_with_fees();
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     token_client.mint(&business, &10_000_000i128);
 
     let period = String::from_str(&env, "2026-02");
@@ -240,6 +254,7 @@ fn bench_verify_attestation() {
     let (env, client, _admin) = setup_basic();
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[2u8; 32]);
 
@@ -292,6 +307,7 @@ fn bench_check_rate_limit_cold() {
     setup_rate_limit_config(&env, &client, &admin);
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
 
     // First check - no timestamps exist yet (cold storage)
     let before = BudgetSnapshot::capture(&env);
@@ -315,6 +331,7 @@ fn bench_check_rate_limit_warm() {
     setup_rate_limit_config(&env, &client, &admin);
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
@@ -353,6 +370,7 @@ fn bench_check_rate_limit_with_pruning() {
     client.configure_rate_limit(&10, &100, &5, &50, &true, &1);
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
@@ -394,6 +412,7 @@ fn bench_record_submission_cold() {
     setup_rate_limit_config(&env, &client, &admin);
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
 
     // First record - no timestamps exist yet (cold storage)
     let before = BudgetSnapshot::capture(&env);
@@ -417,6 +436,7 @@ fn bench_record_submission_warm() {
     setup_rate_limit_config(&env, &client, &admin);
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
@@ -454,6 +474,7 @@ fn bench_check_rate_limit_plus_record_submission() {
     setup_rate_limit_config(&env, &client, &admin);
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
 
     // Cold: neither check nor record has existing timestamps
     let before = BudgetSnapshot::capture(&env);
@@ -484,6 +505,7 @@ fn bench_check_rate_limit_plus_record_submission_warm() {
     setup_rate_limit_config(&env, &client, &admin);
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
@@ -531,6 +553,7 @@ fn bench_rate_limit_check_vs_record_comparison() {
         let (env, client, admin) = setup_basic();
         setup_rate_limit_config(&env, &client, &admin);
         let business = Address::generate(&env);
+        register_biz(&client, &business);
 
         let before = BudgetSnapshot::capture(&env);
         env.as_contract(&client.address, || {
@@ -552,6 +575,7 @@ fn bench_rate_limit_check_vs_record_comparison() {
         let (env, client, admin) = setup_basic();
         setup_rate_limit_config(&env, &client, &admin);
         let business = Address::generate(&env);
+        register_biz(&client, &business);
         let period = String::from_str(&env, "2026-01");
         let root = BytesN::from_array(&env, &[1u8; 32]);
         client.submit_attestation(
@@ -585,6 +609,7 @@ fn bench_rate_limit_check_vs_record_comparison() {
         let (env, client, admin) = setup_basic();
         setup_rate_limit_config(&env, &client, &admin);
         let business = Address::generate(&env);
+        register_biz(&client, &business);
 
         let before = BudgetSnapshot::capture(&env);
         env.as_contract(&client.address, || {
@@ -606,6 +631,7 @@ fn bench_rate_limit_check_vs_record_comparison() {
         let (env, client, admin) = setup_basic();
         setup_rate_limit_config(&env, &client, &admin);
         let business = Address::generate(&env);
+        register_biz(&client, &business);
         let period = String::from_str(&env, "2026-01");
         let root = BytesN::from_array(&env, &[1u8; 32]);
         client.submit_attestation(
@@ -639,6 +665,7 @@ fn bench_rate_limit_check_vs_record_comparison() {
         let (env, client, admin) = setup_basic();
         setup_rate_limit_config(&env, &client, &admin);
         let business = Address::generate(&env);
+        register_biz(&client, &business);
 
         let before = BudgetSnapshot::capture(&env);
         env.as_contract(&client.address, || {
@@ -663,6 +690,7 @@ fn bench_rate_limit_check_vs_record_comparison() {
         let (env, client, admin) = setup_basic();
         setup_rate_limit_config(&env, &client, &admin);
         let business = Address::generate(&env);
+        register_biz(&client, &business);
         let period = String::from_str(&env, "2026-01");
         let root = BytesN::from_array(&env, &[1u8; 32]);
         client.submit_attestation(
@@ -719,6 +747,7 @@ fn bench_verify_attestation_cold() {
     let (env, client, _admin) = setup_basic();
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-03");
     let root = BytesN::from_array(&env, &[20u8; 32]);
 
@@ -754,6 +783,7 @@ fn bench_verify_attestation_warm() {
     let (env, client, _admin) = setup_basic();
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-03");
     let root = BytesN::from_array(&env, &[21u8; 32]);
 
@@ -791,6 +821,7 @@ fn bench_verify_attestation_nonexistent() {
     let (env, client, _admin) = setup_basic();
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-99");
     let root = BytesN::from_array(&env, &[22u8; 32]);
 
@@ -817,6 +848,7 @@ fn bench_verify_attestation_cold_warm_comparison() {
     {
         let (env, client, _admin) = setup_basic();
         let business = Address::generate(&env);
+        register_biz(&client, &business);
         let period = String::from_str(&env, "2026-04");
         let root = BytesN::from_array(&env, &[30u8; 32]);
 
@@ -906,6 +938,7 @@ fn bench_verify_attestation_cold_warm_comparison() {
     {
         let (env, client, _admin) = setup_basic();
         let business = Address::generate(&env);
+        register_biz(&client, &business);
         let period = String::from_str(&env, "2026-99");
         let root = BytesN::from_array(&env, &[31u8; 32]);
 
@@ -934,6 +967,7 @@ fn bench_revoke_attestation() {
     let (env, client, admin) = setup_basic();
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[3u8; 32]);
 
@@ -964,6 +998,7 @@ fn bench_migrate_attestation() {
     let (env, client, admin) = setup_basic();
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-02");
     let old_root = BytesN::from_array(&env, &[4u8; 32]);
     let new_root = BytesN::from_array(&env, &[5u8; 32]);
@@ -993,6 +1028,7 @@ fn bench_get_attestation() {
     let (env, client, _admin) = setup_basic();
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[6u8; 32]);
 
@@ -1023,6 +1059,7 @@ fn bench_get_attestation_with_status() {
     let (env, client, _admin) = setup_basic();
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[6u8; 32]);
 
@@ -1059,6 +1096,7 @@ fn bench_get_attestation_with_status_revoked() {
     let (env, client, admin) = setup_basic();
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[6u8; 32]);
 
@@ -1104,6 +1142,7 @@ fn bench_get_attestation_variants_comparison() {
     {
         let (env, client, _admin) = setup_basic();
         let business = Address::generate(&env);
+        register_biz(&client, &business);
         let period = String::from_str(&env, "2026-04");
         let root = BytesN::from_array(&env, &[10u8; 32]);
 
@@ -1162,6 +1201,7 @@ fn bench_get_attestation_variants_comparison() {
     {
         let (env, client, admin) = setup_basic();
         let business = Address::generate(&env);
+        register_biz(&client, &business);
         let period = String::from_str(&env, "2026-05");
         let root = BytesN::from_array(&env, &[11u8; 32]);
 
@@ -1248,6 +1288,7 @@ fn bench_submit_batch_small() {
     let (env, client, _admin) = setup_basic();
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let batch_size = 5;
 
     let before = BudgetSnapshot::capture(&env);
@@ -1286,6 +1327,7 @@ fn bench_submit_batch_large() {
     let (env, client, _admin) = setup_basic();
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let batch_size = 20;
 
     let before = BudgetSnapshot::capture(&env);
@@ -1455,6 +1497,7 @@ fn read_profiling_baseline() -> (u64, u64) {
 fn measure_single_submissions(n: u32) -> (u64, u64, u64, u64) {
     let (env, client, _admin) = setup_basic();
     let business = Address::generate(&env);
+    register_biz(&client, &business);
 
     let before = BudgetSnapshot::capture(&env);
     for i in 0..n {
@@ -1494,6 +1537,7 @@ fn measure_single_submissions(n: u32) -> (u64, u64, u64, u64) {
 fn measure_batch_submission(n: u32) -> (u64, u64, u64, u64) {
     let (env, client, _admin) = setup_basic();
     let business = Address::generate(&env);
+    register_biz(&client, &business);
 
     let mut items = soroban_sdk::Vec::new(&env);
     for i in 0..n {
@@ -1889,6 +1933,7 @@ fn bench_batch_profiling_empty_batch_panics() {
 fn bench_batch_profiling_oversized_batch_panics() {
     let (env, client, _admin) = setup_basic();
     let business = Address::generate(&env);
+    register_biz(&client, &business);
 
     // Build MAX_BATCH_SIZE + 1 items.
     let mut items = soroban_sdk::Vec::new(&env);
@@ -1923,6 +1968,7 @@ fn bench_batch_profiling_oversized_batch_panics() {
 fn bench_batch_profiling_duplicate_in_batch_panics() {
     let (env, client, _admin) = setup_basic();
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-dup");
     let root = BytesN::from_array(&env, &[0xDDu8; 32]);
 
@@ -1951,6 +1997,7 @@ fn bench_batch_profiling_duplicate_in_batch_panics() {
 fn bench_batch_profiling_already_exists_panics() {
     let (env, client, _admin) = setup_basic();
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-exists");
     let root = BytesN::from_array(&env, &[0xEEu8; 32]);
 
@@ -1991,6 +2038,7 @@ fn bench_batch_profiling_already_exists_panics() {
 fn bench_batch_profiling_sequential_batches_independent() {
     let (env, client, _admin) = setup_basic();
     let business = Address::generate(&env);
+    register_biz(&client, &business);
 
     // First batch: items 0..5
     let mut items_a = soroban_sdk::Vec::new(&env);
@@ -2085,6 +2133,7 @@ fn bench_batch_profiling_sequential_batches_independent() {
 fn bench_batch_profiling_backward_compatibility_single_then_batch() {
     let (env, client, _admin) = setup_basic();
     let business = Address::generate(&env);
+    register_biz(&client, &business);
 
     // Single call first.
     let single_period = String::from_str(&env, "compat-single");
@@ -2161,6 +2210,7 @@ fn bench_check_rate_limit_cold_only() {
     setup_rate_limit(&env, &client, &admin);
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
 
     let before = BudgetSnapshot::capture(&env);
     env.as_contract(&client.address, || {
@@ -2179,6 +2229,7 @@ fn bench_check_rate_limit_warm_only() {
     setup_rate_limit(&env, &client, &admin);
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
@@ -2211,6 +2262,7 @@ fn bench_check_rate_limit_pruning_only() {
     setup_rate_limit(&env, &client, &admin);
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
 
     // Submit multiple attestations at different times
     for i in 1..=5 {
@@ -2250,6 +2302,7 @@ fn bench_record_submission_cold_only() {
     setup_rate_limit(&env, &client, &admin);
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
 
     let before = BudgetSnapshot::capture(&env);
     env.as_contract(&client.address, || {
@@ -2268,6 +2321,7 @@ fn bench_record_submission_warm_only() {
     setup_rate_limit(&env, &client, &admin);
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[1u8; 32]);
 
@@ -2303,6 +2357,7 @@ fn bench_record_submission_multiple_existing() {
     setup_rate_limit(&env, &client, &admin);
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
 
     // Submit multiple attestations
     for i in 1..=5 {
@@ -2342,6 +2397,7 @@ fn bench_rate_limit_check_then_record_combined() {
     setup_rate_limit(&env, &client, &admin);
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
 
     // First, populate with one submission so both check and record have warm storage
     let period = String::from_str(&env, "2026-01");
@@ -2390,6 +2446,7 @@ fn bench_check_rate_limit_disabled() {
     // Don't call setup_rate_limit - config remains disabled
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
 
     let before = BudgetSnapshot::capture(&env);
     env.as_contract(&client.address, || {
@@ -2411,6 +2468,7 @@ fn bench_record_submission_disabled() {
     // Don't call setup_rate_limit - config remains disabled
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
 
     let before = BudgetSnapshot::capture(&env);
     env.as_contract(&client.address, || {
@@ -2438,6 +2496,7 @@ fn bench_rate_limit_dry_run_vs_commit_comparison() {
         let (env, client, admin) = setup_basic();
         setup_rate_limit(&env, &client, &admin);
         let business = Address::generate(&env);
+        register_biz(&client, &business);
 
         // Dry-run: check only
         let before_check = BudgetSnapshot::capture(&env);
@@ -2491,6 +2550,7 @@ fn bench_rate_limit_dry_run_vs_commit_comparison() {
         let (env, client, admin) = setup_basic();
         setup_rate_limit(&env, &client, &admin);
         let business = Address::generate(&env);
+        register_biz(&client, &business);
 
         // Pre-populate with one submission
         let period = String::from_str(&env, "2026-01");
@@ -2566,6 +2626,7 @@ fn bench_fee_with_tier_discount() {
     let (env, client, _admin, _collector, token_client) = setup_with_fees();
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     token_client.mint(&business, &10_000_000i128);
 
     // Set tier 1 with 10% discount (admin nonces 2, 3 after setup_with_fees used 1)
@@ -2595,6 +2656,7 @@ fn bench_fee_with_volume_discount() {
     let (env, client, _admin, _collector, token_client) = setup_with_fees();
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     token_client.mint(&business, &100_000_000i128);
 
     // Set volume brackets (admin nonce 2)
@@ -2641,6 +2703,7 @@ fn bench_fee_with_combined_discounts() {
     let (env, client, _admin, _collector, token_client) = setup_with_fees();
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     token_client.mint(&business, &100_000_000i128);
 
     // Set tier discount (admin nonces 2, 3)
@@ -3021,6 +3084,7 @@ fn bench_worst_case_verify_revoked() {
     let (env, client, admin) = setup_basic();
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[8u8; 32]);
 
@@ -3057,6 +3121,7 @@ fn bench_worst_case_large_merkle_root() {
     let (env, client, _admin) = setup_basic();
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-02");
     // Use maximum entropy root (all different bytes)
     let root = BytesN::from_array(
@@ -3091,6 +3156,7 @@ fn bench_comparative_read_vs_write() {
     let (env, client, _admin) = setup_basic();
 
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-02");
     let root = BytesN::from_array(&env, &[9u8; 32]);
 
@@ -3174,6 +3240,7 @@ fn bench_summary_report() {
 fn regression_submit_attestation_no_fee_threshold() {
     let (env, client, _admin) = setup_basic();
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-03");
     let root = BytesN::from_array(&env, &[10u8; 32]);
 
@@ -3201,6 +3268,7 @@ fn regression_submit_attestation_no_fee_threshold() {
 fn regression_submit_attestation_with_fee_threshold() {
     let (env, client, _admin, _collector, token_client) = setup_with_fees();
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     token_client.mint(&business, &10_000_000i128);
     let period = String::from_str(&env, "2026-03");
     let root = BytesN::from_array(&env, &[11u8; 32]);
@@ -3228,6 +3296,7 @@ fn regression_submit_attestation_with_fee_threshold() {
 fn regression_revoke_attestation_threshold() {
     let (env, client, admin) = setup_basic();
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-03");
     let root = BytesN::from_array(&env, &[12u8; 32]);
     client.submit_attestation(
@@ -3256,6 +3325,7 @@ fn regression_revoke_attestation_threshold() {
 fn regression_migrate_attestation_threshold() {
     let (env, client, admin) = setup_basic();
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-03");
     let old_root = BytesN::from_array(&env, &[13u8; 32]);
     let new_root = BytesN::from_array(&env, &[14u8; 32]);
@@ -3284,6 +3354,7 @@ fn regression_migrate_attestation_threshold() {
 fn regression_get_attestation_threshold() {
     let (env, client, _admin) = setup_basic();
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-03");
     let root = BytesN::from_array(&env, &[15u8; 32]);
     client.submit_attestation(
@@ -3392,6 +3463,7 @@ fn regression_has_role_threshold() {
 fn regression_is_revoked_active_threshold() {
     let (env, client, _admin) = setup_basic();
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-03");
     let root = BytesN::from_array(&env, &[16u8; 32]);
     client.submit_attestation(
@@ -3420,6 +3492,7 @@ fn regression_is_revoked_active_threshold() {
 fn regression_is_revoked_after_revoke_threshold() {
     let (env, client, admin) = setup_basic();
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-03");
     let root = BytesN::from_array(&env, &[17u8; 32]);
     client.submit_attestation(
@@ -3689,6 +3762,7 @@ mod wasm_size_edge_cases {
 fn fee_operation_bounded_storage() {
     let (env, client, _admin, _collector, token_client) = setup_with_fees();
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     token_client.mint(&business, &100_000_000i128);
 
     // Submit multiple attestations with fees
@@ -3721,6 +3795,7 @@ fn fee_operation_bounded_storage() {
 fn batch_submission_linear_scaling() {
     let (env, client, _admin) = setup_basic();
     let business = Address::generate(&env);
+    register_biz(&client, &business);
 
     // Test with increasing batch sizes
     let batch_sizes = [1, 5, 10];
@@ -3767,6 +3842,7 @@ fn batch_submission_linear_scaling() {
 fn migration_does_not_accumulate() {
     let (env, client, admin) = setup_basic();
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-03");
 
     // Initial submission
@@ -3805,6 +3881,7 @@ fn migration_does_not_accumulate() {
 fn revocation_linear_storage() {
     let (env, client, admin) = setup_basic();
     let business = Address::generate(&env);
+    register_biz(&client, &business);
 
     // Create multiple attestations
     let mut periods = Vec::new(&env);
@@ -3954,6 +4031,7 @@ fn setup_expired_attestations(
     for i in 0..n {
         // Each item gets its own business address to avoid duplicate-key panics.
         let business = Address::generate(env);
+        register_biz(client, &business);
         let root = BytesN::from_array(env, &{
             let mut arr = [0u8; 32];
             arr[0] = (i & 0xFF) as u8;
@@ -4163,6 +4241,7 @@ fn bench_cleanup_double_cleanup_panics() {
 fn bench_cleanup_business_self_cleanup() {
     let (env, client, _admin) = setup_basic();
     let business = Address::generate(&env);
+    register_biz(&client, &business);
     let period = String::from_str(&env, "2026-01");
     let root = BytesN::from_array(&env, &[0xAAu8; 32]);
 
@@ -4327,6 +4406,7 @@ fn assert_multi_period_within_budget(n: u64, total_cpu: u64, total_mem: u64, lab
 /// RootIndex reverse-lookup table is also populated correctly.
 fn setup_multi_period_ranges(env: &Env, client: &AttestationContractClient, n: usize) -> Address {
     let business = Address::generate(env);
+    register_biz(client, &business);
 
     for i in 0..n {
         let start = (i as u32) * 1000 + 1;
@@ -4572,6 +4652,7 @@ fn bench_get_multi_period_ranges_zero_returns_empty() {
 
     // Fresh address — no multi-period attestations submitted.
     let business = Address::generate(&env);
+    register_biz(&client, &business);
 
     let before = BudgetSnapshot::capture(&env);
     let result = client.get_multi_period_ranges(&business);
@@ -4622,6 +4703,7 @@ fn regression_get_multi_period_ranges_budget() {
     {
         let (env, client, _admin) = setup_basic();
         let business = Address::generate(&env);
+        register_biz(&client, &business);
         let result = client.get_multi_period_ranges(&business);
         assert_eq!(
             result.len(),

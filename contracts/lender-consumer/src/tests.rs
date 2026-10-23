@@ -1,10 +1,11 @@
 #![cfg(test)]
 
 use crate::{LenderConsumerContract, LenderConsumerContractClient, REJECTION_REVOKED};
-use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String, Vec};
-use veritasor_attestation::AttestationContract;
-use veritasor_attestation::AttestationContractClient;
-use veritasor_lender_access_list::{LenderAccessListClient, LenderAccessListContract};
+use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String, Symbol, Vec};
+use veritasor_attestation::{AttestationContract, AttestationContractClient, ROLE_BUSINESS};
+use veritasor_lender_access_list::{
+    LenderAccessListContract, LenderAccessListContractClient, LenderMetadata,
+};
 
 fn setup_env() -> (
     Env,
@@ -19,33 +20,65 @@ fn setup_env() -> (
     let admin = Address::generate(&env);
 
     // Deploy core attestation contract
-    let core_id = env.register_contract(None, AttestationContract);
+    let core_id = env.register(AttestationContract, ());
     let core_client = AttestationContractClient::new(&env, &core_id);
     core_client.initialize(&admin, &0);
 
     // Deploy lender access list contract
-    let access_list_id = env.register_contract(None, LenderAccessListContract);
+    let access_list_id = env.register(LenderAccessListContract, ());
     let access_list_client = LenderAccessListContractClient::new(&env, &access_list_id);
     access_list_client.initialize(&admin);
 
     // Deploy lender consumer contract
-    let consumer_id = env.register_contract(None, LenderConsumerContract);
+    let consumer_id = env.register(LenderConsumerContract, ());
     let consumer_client = LenderConsumerContractClient::new(&env, &consumer_id);
     consumer_client.initialize(&admin, &core_id, &access_list_id);
 
     (env, admin, core_client, access_list_client, consumer_client)
 }
 
+fn setup_lender(
+    env: &Env,
+    access_list_client: &LenderAccessListContractClient,
+    admin: &Address,
+    lender: &Address,
+    tier: u32,
+) {
+    let metadata = LenderMetadata {
+        name: String::from_str(env, "Test Lender"),
+        url: String::from_str(env, "https://lender.test"),
+        notes: String::from_str(env, "Tier approved"),
+    };
+    access_list_client.set_lender(admin, lender, &tier, &metadata);
+}
+
+fn register_business(
+    env: &Env,
+    core_client: &AttestationContractClient,
+    admin: &Address,
+    business: &Address,
+) {
+    core_client.grant_role(admin, business, &ROLE_BUSINESS);
+    core_client.register_business(
+        business,
+        &BytesN::from_array(env, &[1u8; 32]),
+        &Symbol::new(env, "US"),
+        &Vec::new(env),
+    );
+    core_client.approve_business(admin, business);
+}
+
 #[test]
 fn test_lender_consumer_observes_revocation_state() {
-    let (env, _admin, core_client, access_list_client, consumer_client) = setup_env();
+    let (env, admin, core_client, access_list_client, consumer_client) = setup_env();
 
     let lender = Address::generate(&env);
     let business = Address::generate(&env);
     let period = String::from_str(&env, "2023-Q3");
 
     // Add lender to access list (Tier 1)
-    setup_lender(&access_list_client, &_admin, &lender, 1);
+    setup_lender(&env, &access_list_client, &admin, &lender, 1);
+    register_business(&env, &core_client, &admin, &business);
 
     // 1. Submit an attestation
     let revenue: i128 = 100_000;
@@ -72,7 +105,7 @@ fn test_lender_consumer_observes_revocation_state() {
 
     // 2. Revoke the attestation
     let reason = String::from_str(&env, "Fraudulent data");
-    core_client.revoke_attestation(&business, &business, &period, &reason, &0);
+    core_client.revoke_attestation(&admin, &business, &period, &reason, &0);
 
     // 3. Assert lender verify returns false due to revocation
     let result_after =
@@ -87,7 +120,7 @@ fn test_lender_consumer_observes_revocation_state() {
 
 #[test]
 fn test_lender_consumer_observes_revocation_state_multi_period() {
-    let (env, _admin, core_client, access_list_client, consumer_client) = setup_env();
+    let (env, admin, core_client, access_list_client, consumer_client) = setup_env();
 
     let lender = Address::generate(&env);
     let business = Address::generate(&env);
@@ -95,7 +128,8 @@ fn test_lender_consumer_observes_revocation_state_multi_period() {
     let period2 = String::from_str(&env, "2023-Q2");
 
     // Add lender to access list (Tier 1)
-    setup_lender(&access_list_client, &_admin, &lender, 1);
+    setup_lender(&env, &access_list_client, &admin, &lender, 1);
+    register_business(&env, &core_client, &admin, &business);
 
     // 1. Submit attestations
     let revenue1: i128 = 100_000;
@@ -139,7 +173,7 @@ fn test_lender_consumer_observes_revocation_state_multi_period() {
 
     // 2. Revoke the first attestation
     let reason = String::from_str(&env, "Data entry error");
-    core_client.revoke_attestation(&business, &business, &period1, &reason, &0);
+    core_client.revoke_attestation(&admin, &business, &period1, &reason, &0);
 
     // 3. Assert only the first one is revoked
     let res1_after =

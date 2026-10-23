@@ -49,16 +49,29 @@ mod tests {
         BytesN::from_array(env, &bytes)
     }
 
+    fn register_business(client: &AttestationContractClient, admin: &Address, business: &Address) {
+        let _ = client.try_grant_role(admin, business, &crate::access_control::ROLE_BUSINESS);
+        let _ = client.try_register_business(
+            business,
+            &BytesN::from_array(&client.env, &[1u8; 32]),
+            &soroban_sdk::Symbol::new(&client.env, "US"),
+            &Vec::new(&client.env),
+        );
+        let _ = client.try_approve_business(admin, business);
+    }
+
     /// Submit an attestation with a given timestamp and optional expiry.
     fn submit_with_expiry(
         client: &AttestationContractClient,
         env: &Env,
+        admin: &Address,
         business: &Address,
         period: &str,
         ts: u64,
         seed: u8,
         expiry: Option<u64>,
     ) {
+        register_business(client, admin, business);
         let root = make_root(env, seed);
         let period_str = String::from_str(env, period);
         client.submit_attestation(
@@ -203,7 +216,16 @@ mod tests {
 
         let business = Address::generate(&env);
         let expiry = now + 1000;
-        submit_with_expiry(&client, &env, &business, "202401", 0, 1, Some(expiry));
+        submit_with_expiry(
+            &client,
+            &env,
+            &admin,
+            &business,
+            "202401",
+            0,
+            1,
+            Some(expiry),
+        );
 
         // Attestation is still in active tier — compact_archival must skip it.
         let period = String::from_str(&env, "202401");
@@ -226,7 +248,7 @@ mod tests {
 
         let business = Address::generate(&env);
         // Submit WITHOUT expiry.
-        submit_with_expiry(&client, &env, &business, "202401", 0, 1, None);
+        submit_with_expiry(&client, &env, &admin, &business, "202401", 0, 1, None);
 
         let period = archive_one(&client, &env, &admin, &business, "202401");
 
@@ -260,7 +282,16 @@ mod tests {
         let business = Address::generate(&env);
         // Expiry is 5 epochs from now → epoch_at_expiry = 105.
         let expiry = now + FEE_BUCKET_WINDOW_SECONDS * 5;
-        submit_with_expiry(&client, &env, &business, "202401", 0, 1, Some(expiry));
+        submit_with_expiry(
+            &client,
+            &env,
+            &admin,
+            &business,
+            "202401",
+            0,
+            1,
+            Some(expiry),
+        );
 
         let period = archive_one(&client, &env, &admin, &business, "202401");
 
@@ -290,7 +321,16 @@ mod tests {
         let business = Address::generate(&env);
         // Expiry 1 epoch from now → epoch_at_expiry = 101.
         let expiry = now + FEE_BUCKET_WINDOW_SECONDS;
-        submit_with_expiry(&client, &env, &business, "202401", 0, 1, Some(expiry));
+        submit_with_expiry(
+            &client,
+            &env,
+            &admin,
+            &business,
+            "202401",
+            0,
+            1,
+            Some(expiry),
+        );
 
         let period = archive_one(&client, &env, &admin, &business, "202401");
 
@@ -318,18 +358,17 @@ mod tests {
 
         let business = Address::generate(&env);
         let root = make_root(&env, 42);
-        let period_str = String::from_str(&env, "202401");
         let expiry = now + FEE_BUCKET_WINDOW_SECONDS;
 
-        client.submit_attestation(
+        submit_with_expiry(
+            &client,
+            &env,
+            &admin,
             &business,
-            &period_str,
-            &root,
-            &0u64,
-            &1u32,
-            &0i128,
-            &None,
-            &Some(expiry),
+            "202401",
+            0,
+            42,
+            Some(expiry),
         );
 
         let period = archive_one(&client, &env, &admin, &business, "202401");
@@ -371,7 +410,16 @@ mod tests {
 
         let business = Address::generate(&env);
         let expiry = now + FEE_BUCKET_WINDOW_SECONDS;
-        submit_with_expiry(&client, &env, &business, "202401", 0, 7, Some(expiry));
+        submit_with_expiry(
+            &client,
+            &env,
+            &admin,
+            &business,
+            "202401",
+            0,
+            7,
+            Some(expiry),
+        );
 
         let period = archive_one(&client, &env, &admin, &business, "202401");
 
@@ -405,7 +453,16 @@ mod tests {
 
         let periods = ["202401", "202402", "202403", "202404", "202405"];
         for (i, p) in periods.iter().enumerate() {
-            submit_with_expiry(&client, &env, &business, p, 0, (i + 1) as u8, Some(expiry));
+            submit_with_expiry(
+                &client,
+                &env,
+                &admin,
+                &business,
+                p,
+                0,
+                (i + 1) as u8,
+                Some(expiry),
+            );
         }
 
         // Archive all five.
@@ -443,8 +500,8 @@ mod tests {
         let biz2 = Address::generate(&env);
         let expiry = now + FEE_BUCKET_WINDOW_SECONDS;
 
-        submit_with_expiry(&client, &env, &biz1, "202401", 0, 1, Some(expiry));
-        submit_with_expiry(&client, &env, &biz2, "202401", 0, 2, Some(expiry));
+        submit_with_expiry(&client, &env, &admin, &biz1, "202401", 0, 1, Some(expiry));
+        submit_with_expiry(&client, &env, &admin, &biz2, "202401", 0, 2, Some(expiry));
 
         let period = String::from_str(&env, "202401");
         let mut arch = Vec::new(&env);
@@ -484,7 +541,16 @@ mod tests {
 
         let business = Address::generate(&env);
         let expiry = now + FEE_BUCKET_WINDOW_SECONDS;
-        submit_with_expiry(&client, &env, &business, "202401", 0, 1, Some(expiry));
+        submit_with_expiry(
+            &client,
+            &env,
+            &admin,
+            &business,
+            "202401",
+            0,
+            1,
+            Some(expiry),
+        );
 
         let period = archive_one(&client, &env, &admin, &business, "202401");
 
@@ -517,14 +583,32 @@ mod tests {
 
         // old: expiry at epoch 101, will be 10 epochs past expiry → eligible.
         let expiry_old = now + FEE_BUCKET_WINDOW_SECONDS;
-        submit_with_expiry(&client, &env, &business, "202401", 0, 1, Some(expiry_old));
+        submit_with_expiry(
+            &client,
+            &env,
+            &admin,
+            &business,
+            "202401",
+            0,
+            1,
+            Some(expiry_old),
+        );
 
         // young: expiry at epoch 108, will be only 3 epochs past expiry → NOT eligible.
         let expiry_young = now + FEE_BUCKET_WINDOW_SECONDS * 8;
-        submit_with_expiry(&client, &env, &business, "202402", 0, 2, Some(expiry_young));
+        submit_with_expiry(
+            &client,
+            &env,
+            &admin,
+            &business,
+            "202402",
+            0,
+            2,
+            Some(expiry_young),
+        );
 
         // no_expiry: no expiry → never eligible.
-        submit_with_expiry(&client, &env, &business, "202403", 0, 3, None);
+        submit_with_expiry(&client, &env, &admin, &business, "202403", 0, 3, None);
 
         let period_old = String::from_str(&env, "202401");
         let period_young = String::from_str(&env, "202402");
@@ -572,18 +656,17 @@ mod tests {
 
         let business = Address::generate(&env);
         let root = make_root(&env, 9);
-        let period_str = String::from_str(&env, "202401");
         let expiry = now + FEE_BUCKET_WINDOW_SECONDS;
 
-        client.submit_attestation(
+        submit_with_expiry(
+            &client,
+            &env,
+            &admin,
             &business,
-            &period_str,
-            &root,
-            &0u64,
-            &1u32,
-            &0i128,
-            &None,
-            &Some(expiry),
+            "202401",
+            0,
+            9,
+            Some(expiry),
         );
 
         let period = archive_one(&client, &env, &admin, &business, "202401");

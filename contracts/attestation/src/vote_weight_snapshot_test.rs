@@ -247,7 +247,7 @@ fn vw_flash_vote_attack_blocked_on_add_owner() {
         "attacker MUST NOT be able to approve a proposal whose snapshot predates their promotion",
     );
 
-    client.approve_proposal(&owner2, &victim_id, &1u64);
+    client.approve_proposal(&owner2, &victim_id, &0u64);
     assert!(
         client
             .get_proposal_approvals(&victim_id)
@@ -576,10 +576,12 @@ fn vw_snapshot_action_tag_for_every_variant() {
         (ProposalAction::EmergencyRotateAdmin(new_addr.clone()), 9),
     ];
 
-    let mut nonce: u64 = 0;
+    let mut nonces = [0u64, 0u64, 0u64];
     for (i, (action, expected_tag)) in cases.iter().cloned().enumerate() {
-        let proposer = owners.get((i % 3) as u32).unwrap();
-        let id = client.create_proposal(&proposer, &action, &nonce);
+        let idx = (i % 3) as usize;
+        let proposer = owners.get(idx as u32).unwrap();
+        let id = client.create_proposal(&proposer, &action, &nonces[idx]);
+        nonces[idx] += 1;
         let snap = client.get_proposal_snapshot(&id).unwrap();
         assert_eq!(
             snap.action_tag, expected_tag,

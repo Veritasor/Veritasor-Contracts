@@ -51,16 +51,27 @@ fn deploy_and_fund(env: &Env, to: &Address, amount: i128) -> Address {
     token
 }
 
-fn submit(
+fn ensure_registered(
     client: &AttestationContractClient,
     env: &Env,
+    admin: &Address,
     business: &Address,
-    period: &str,
-    root_byte: u8,
 ) {
-    let period_s = String::from_str(env, period);
-    let root = BytesN::from_array(env, &[root_byte; 32]);
-    client.submit_attestation(
+    client.grant_role(admin, business, &crate::access_control::ROLE_BUSINESS);
+    let _ = client.try_register_business(
+        business,
+        &BytesN::from_array(env, &[1u8; 32]),
+        &Symbol::new(env, "US"),
+        &soroban_sdk::Vec::new(env),
+    );
+    let _ = client.try_approve_business(admin, business);
+}
+
+fn submit(ctx: &Ctx, business: &Address, period: &str, root_byte: u8) {
+    ensure_registered(&ctx.client, &ctx.env, &ctx._admin, business);
+    let period_s = String::from_str(&ctx.env, period);
+    let root = BytesN::from_array(&ctx.env, &[root_byte; 32]);
+    ctx.client.submit_attestation(
         business,
         &period_s,
         &root,
@@ -103,14 +114,14 @@ fn assert_reconciles_with_quote(
             .expect("dynamic fee configured")
             .collector;
         let before = TokenClient::new(&ctx.env, token).balance(&collector);
-        submit(&ctx.client, &ctx.env, business, period, root_byte);
+        submit(ctx, business, period, root_byte);
         let collected = TokenClient::new(&ctx.env, token).balance(&collector) - before;
         assert_eq!(
             collected, dynamic,
             "dynamic collector delta must match quote"
         );
     } else {
-        submit(&ctx.client, &ctx.env, business, period, root_byte);
+        submit(ctx, business, period, root_byte);
     }
 
     let period_s = String::from_str(&ctx.env, period);
@@ -172,7 +183,7 @@ fn reconcile_tier_and_volume_discount_grid() {
                 let thresholds = vec![&ctx.env, 1u64];
                 let discounts = vec![&ctx.env, vol_bps];
                 ctx.client.set_volume_brackets(&thresholds, &discounts);
-                submit(&ctx.client, &ctx.env, &business, "2026-00", 0);
+                submit(&ctx, &business, "2026-00", 0);
             }
             assert_reconciles_with_quote(&ctx, &business, "2026-01", 1, Some(&token));
         }
@@ -284,8 +295,8 @@ fn reconcile_multiple_businesses_different_tiers() {
     let quote_b = ctx.client.get_fee_quote(&biz_b);
     assert!(quote_a > quote_b, "tier-0 must pay more than tier-1");
 
-    submit(&ctx.client, &ctx.env, &biz_a, "m-a", 1);
-    submit(&ctx.client, &ctx.env, &biz_b, "m-b", 2);
+    submit(&ctx, &biz_a, "m-a", 1);
+    submit(&ctx, &biz_b, "m-b", 2);
 
     let stored_a = ctx
         .client
@@ -315,6 +326,7 @@ fn reconcile_batch_submission_fee_paid() {
     let token = deploy_and_fund(&ctx.env, &business, 1_000_000_000);
     ctx.client
         .configure_fees(&token, &collector, &500_000, &true);
+    ensure_registered(&ctx.client, &ctx.env, &ctx._admin, &business);
 
     let periods = ["b-p1", "b-p2", "b-p3"];
     let mut q0 = 0i128;
@@ -369,7 +381,7 @@ fn reconcile_quote_stable_after_submission() {
     ctx.client.set_business_tier(&business, &0);
 
     let before = ctx.client.get_fee_quote(&business);
-    submit(&ctx.client, &ctx.env, &business, "stable-1", 1);
+    submit(&ctx, &business, "stable-1", 1);
     let after = ctx.client.get_fee_quote(&business);
 
     assert_eq!(
@@ -408,7 +420,7 @@ proptest! {
             if flat_enabled && flat_amount > 0 {
                 StellarAssetClient::new(&ctx.env, &flat_token).mint(&business, &flat_amount.saturating_add(1_000_000));
             }
-            submit(&ctx.client, &ctx.env, &business, "2026-warm", 8);
+            submit(&ctx, &business, "2026-warm", 8);
         }
         ctx.client.configure_flat_fee(
             &flat_token,
@@ -426,7 +438,7 @@ proptest! {
         let (_, _, _, dynamic, flat) = ctx.client.get_fee_quote_detailed(&business);
         prop_assert_eq!(quote, dynamic + flat);
 
-        submit(&ctx.client, &ctx.env, &business, "2026-prop", 9);
+        submit(&ctx, &business, "2026-prop", 9);
         let stored = ctx.client
             .get_attestation(&business, &String::from_str(&ctx.env, "2026-prop"))
             .unwrap();
@@ -463,7 +475,7 @@ proptest! {
             if flat_enabled && flat_amount > 0 {
                 StellarAssetClient::new(&ctx.env, &flat_token).mint(&business, &flat_amount.saturating_add(1_000_000));
             }
-            submit(&ctx.client, &ctx.env, &business, "2026-warm", 8);
+            submit(&ctx, &business, "2026-warm", 8);
         }
         ctx.client.configure_flat_fee(&flat_token, &flat_collector, &flat_amount, &flat_enabled);
 
@@ -504,6 +516,7 @@ proptest! {
             ctx.client.set_volume_brackets(&thresholds, &discounts);
         }
         ctx.client.configure_flat_fee(&token, &collector, &flat_amount, &flat_enabled);
+        ensure_registered(&ctx.client, &ctx.env, &ctx._admin, &business);
 
         let contract_id = ctx.client.address.clone();
         let token_client = TokenClient::new(&ctx.env, &token);

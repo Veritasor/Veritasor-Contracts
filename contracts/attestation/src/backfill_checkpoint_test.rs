@@ -51,7 +51,25 @@ fn r(env: &Env, byte: u8) -> BytesN<32> {
     BytesN::from_array(env, &[byte; 32])
 }
 
-fn submit_one(client: &AttestationContractClient, env: &Env, business: &Address, root_byte: u8) {
+fn register_business(client: &AttestationContractClient, admin: &Address, business: &Address) {
+    client.grant_role(admin, business, &crate::access_control::ROLE_BUSINESS);
+    client.register_business(
+        business,
+        &BytesN::from_array(&client.env, &[1u8; 32]),
+        &Symbol::new(&client.env, "US"),
+        &soroban_sdk::Vec::new(&client.env),
+    );
+    client.approve_business(admin, business);
+}
+
+fn submit_one(
+    client: &AttestationContractClient,
+    env: &Env,
+    admin: &Address,
+    business: &Address,
+    root_byte: u8,
+) {
+    register_business(client, admin, business);
     client.submit_attestation(
         business,
         &p(env, "2026-01"),
@@ -112,13 +130,13 @@ fn backfill_checkpoints(
 
 #[test]
 fn emits_at_interval() {
-    let (env, client, _) = setup();
+    let (env, client, admin) = setup();
     let cid = client.address.clone();
 
     // Submit BACKFILL_CHECKPOINT_INTERVAL times (each from a different business).
     for i in 0..BACKFILL_CHECKPOINT_INTERVAL {
         let b = Address::generate(&env);
-        submit_one(&client, &env, &b, i as u8);
+        submit_one(&client, &env, &admin, &b, i as u8);
     }
 
     let cps = backfill_checkpoints(&env, &cid);
@@ -128,12 +146,12 @@ fn emits_at_interval() {
 
 #[test]
 fn no_emission_below_interval() {
-    let (env, client, _) = setup();
+    let (env, client, admin) = setup();
     let cid = client.address.clone();
 
     for i in 0..BACKFILL_CHECKPOINT_INTERVAL - 1 {
         let b = Address::generate(&env);
-        submit_one(&client, &env, &b, i as u8);
+        submit_one(&client, &env, &admin, &b, i as u8);
     }
 
     let cps = backfill_checkpoints(&env, &cid);
@@ -150,14 +168,14 @@ fn not_emitted_at_zero() {
 
 #[test]
 fn emits_multiple_checkpoints_across_intervals() {
-    let (env, client, _) = setup();
+    let (env, client, admin) = setup();
     let cid = client.address.clone();
     let total = BACKFILL_CHECKPOINT_INTERVAL * 2 + 1;
 
     let mut cps = std::vec::Vec::new();
     for i in 0..total {
         let b = Address::generate(&env);
-        submit_one(&client, &env, &b, i as u8);
+        submit_one(&client, &env, &admin, &b, i as u8);
         cps.extend(checkpoints_from_call(&env, &cid));
     }
 
@@ -168,7 +186,7 @@ fn emits_multiple_checkpoints_across_intervals() {
 
 #[test]
 fn large_count_handled() {
-    let (env, client, _) = setup();
+    let (env, client, admin) = setup();
     let cid = client.address.clone();
     // Submit just past the second checkpoint boundary.
     let total = BACKFILL_CHECKPOINT_INTERVAL * 2 + 5;
@@ -176,7 +194,7 @@ fn large_count_handled() {
     let mut cps = std::vec::Vec::new();
     for i in 0..total {
         let b = Address::generate(&env);
-        submit_one(&client, &env, &b, i as u8);
+        submit_one(&client, &env, &admin, &b, i as u8);
         // Vary the merkle root per submission.
         cps.extend(checkpoints_from_call(&env, &cid));
     }
@@ -197,13 +215,13 @@ fn large_count_handled() {
 
 #[test]
 fn state_commitment_deterministic() {
-    let (env, client, _) = setup();
+    let (env, client, admin) = setup();
     let cid = client.address.clone();
 
     // Submit up to the first checkpoint boundary.
     for i in 0..BACKFILL_CHECKPOINT_INTERVAL {
         let b = Address::generate(&env);
-        submit_one(&client, &env, &b, i as u8);
+        submit_one(&client, &env, &admin, &b, i as u8);
     }
 
     let cps = backfill_checkpoints(&env, &cid);
@@ -211,11 +229,11 @@ fn state_commitment_deterministic() {
 
     // Replay the same sequence in a fresh environment and verify
     // the commitment is identical.
-    let (env2, client2, _) = setup();
+    let (env2, client2, admin2) = setup();
     let cid2 = client2.address.clone();
     for i in 0..BACKFILL_CHECKPOINT_INTERVAL {
         let b = Address::generate(&env2);
-        submit_one(&client2, &env2, &b, i as u8);
+        submit_one(&client2, &env2, &admin2, &b, i as u8);
     }
     let cps2 = backfill_checkpoints(&env2, &cid2);
     assert_eq!(cps2.len(), 1);
@@ -227,7 +245,7 @@ fn state_commitment_deterministic() {
 
 #[test]
 fn persists_across_submissions() {
-    let (env, client, _) = setup();
+    let (env, client, admin) = setup();
 
     // Submit half the interval.
     let half = BACKFILL_CHECKPOINT_INTERVAL / 2;
@@ -235,14 +253,14 @@ fn persists_across_submissions() {
     for i in 0..half {
         let b = Address::generate(&env);
         businesses.push(b.clone());
-        submit_one(&client, &env, &b, i as u8);
+        submit_one(&client, &env, &admin, &b, i as u8);
     }
 
     // Submit the second half.
     for i in half..BACKFILL_CHECKPOINT_INTERVAL {
         let b = Address::generate(&env);
         businesses.push(b.clone());
-        submit_one(&client, &env, &b, i as u8);
+        submit_one(&client, &env, &admin, &b, i as u8);
     }
 
     let cps = backfill_checkpoints(&env, &client.address);

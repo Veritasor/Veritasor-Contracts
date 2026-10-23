@@ -78,9 +78,12 @@ fn setup_with_owners() -> (
 fn emergency_pause_event(env: &Env) -> Option<EmergencyPauseTriggeredEvent> {
     let events = env.events().all();
     for (_cid, topics, data) in events.iter() {
-        let sym: Symbol = topics.get(0).unwrap().try_into_val(env).unwrap();
-        if sym == TOPIC_EMERGENCY_PAUSE_TRIGGERED {
-            return Some(EmergencyPauseTriggeredEvent::try_from_val(env, &data).unwrap());
+        if let Some(topic0) = topics.get(0) {
+            if let Ok(sym) = Symbol::try_from_val(env, &topic0) {
+                if sym == TOPIC_EMERGENCY_PAUSE_TRIGGERED {
+                    return Some(EmergencyPauseTriggeredEvent::try_from_val(env, &data).unwrap());
+                }
+            }
         }
     }
     None
@@ -99,11 +102,10 @@ fn direct_call_pauses_and_reports_both_signers() {
     assert!(!client.is_paused());
     execute(&env, &client.address, &signer1, &signer2);
 
-    assert!(client.is_paused());
-
     let ev = emergency_pause_event(&env).expect("EmergencyPauseTriggered not emitted");
     assert_eq!(ev.signer1, signer1);
     assert_eq!(ev.signer2, signer2);
+    assert!(client.is_paused());
 }
 
 #[test]
@@ -154,10 +156,10 @@ fn direct_call_does_not_enforce_distinct_signers() {
 
     execute(&env, &client.address, &signer, &signer);
 
-    assert!(client.is_paused());
     let ev = emergency_pause_event(&env).expect("EmergencyPauseTriggered not emitted");
     assert_eq!(ev.signer1, signer);
     assert_eq!(ev.signer2, ev.signer1);
+    assert!(client.is_paused());
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -209,10 +211,10 @@ fn public_entry_point_pauses_and_reports_the_caller_arguments() {
 
     client.emergency_pause(&admin, &admin, &owner2, &2u64);
 
-    assert!(client.is_paused());
     let ev = emergency_pause_event(&env).expect("EmergencyPauseTriggered not emitted");
     assert_eq!(ev.signer1, admin);
     assert_eq!(ev.signer2, owner2);
+    assert!(client.is_paused());
 }
 
 #[test]

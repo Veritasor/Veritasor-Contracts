@@ -1072,16 +1072,18 @@ mod test_set_dao {
 
     #[test]
     fn test_set_dao_internal_directly() {
-        let env = Env::default();
+        let (env, client, _admin) = setup_env();
         let dao1 = Address::generate(&env);
         let dao2 = Address::generate(&env);
 
-        assert_eq!(get_dao(&env), None);
+        env.as_contract(&client.address, || {
+            assert_eq!(get_dao(&env), None);
 
-        set_dao(&env, &dao1);
-        assert_eq!(get_dao(&env), Some(dao1));
+            set_dao(&env, &dao1);
+            assert_eq!(get_dao(&env), Some(dao1));
 
-        set_dao(&env, &dao2);
-        assert_eq!(get_dao(&env), Some(dao2));
+            set_dao(&env, &dao2);
+            assert_eq!(get_dao(&env), Some(dao2));
+        });
     }
 }

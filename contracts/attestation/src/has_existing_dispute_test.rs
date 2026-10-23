@@ -47,7 +47,14 @@ fn store_attestation(
     business: &Address,
     period: &String,
 ) {
-    client.grant_role(admin, business, &ROLE_BUSINESS);
+    let _ = client.try_grant_role(admin, business, &ROLE_BUSINESS);
+    let _ = client.try_register_business(
+        business,
+        &BytesN::from_array(env, &[1u8; 32]),
+        &soroban_sdk::Symbol::new(env, "US"),
+        &soroban_sdk::Vec::new(env),
+    );
+    let _ = client.try_approve_business(admin, business);
     let root = BytesN::from_array(env, &ROOT);
     client.submit_attestation(
         business,

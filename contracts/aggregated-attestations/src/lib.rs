@@ -33,6 +33,8 @@ mod activate_admin_test;
 #[cfg(test)]
 mod admin_rotation_test;
 #[cfg(test)]
+mod aggregated_roots_test;
+#[cfg(test)]
 mod event_ingestion_test;
 #[cfg(test)]
 mod initialize_test;

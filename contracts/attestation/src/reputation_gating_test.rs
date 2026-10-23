@@ -65,7 +65,7 @@ fn setup_attestation_with_staking(
     // the time-locked propose/commit flow.
     att_client.propose_staking_contract(&admin, &staking_addr, &1u64);
     env.ledger()
-        .set_timestamp(env.ledger().timestamp() + FEE_TIMELOCK_SECONDS + 1);
+        .with_mut(|l| l.timestamp += crate::dynamic_fees::FEE_TIMELOCK_SECONDS + 1);
     att_client.commit_staking_contract(&admin, &2u64);
 
     (att_client, admin, staking_addr, token, staking_admin)
