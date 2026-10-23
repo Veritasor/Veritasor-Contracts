@@ -1085,3 +1085,51 @@ mod test_set_dao {
         assert_eq!(get_dao(&env), Some(dao2));
     }
 }
+
+#[cfg(test)]
+mod test_get_business_count {
+    use super::*;
+    use crate::AttestationContract;
+    use soroban_sdk::{testutils::Address as _, Address, Env};
+
+    #[test]
+    fn missing_business_count_defaults_to_zero() {
+        let env = Env::default();
+        let contract_id = env.register(AttestationContract, ());
+        let business = Address::generate(&env);
+
+        env.as_contract(&contract_id, || {
+            assert_eq!(get_business_count(&env, &business), 0);
+        });
+    }
+
+    #[test]
+    fn business_counts_are_isolated() {
+        let env = Env::default();
+        let contract_id = env.register(AttestationContract, ());
+        let business_a = Address::generate(&env);
+        let business_b = Address::generate(&env);
+
+        env.as_contract(&contract_id, || {
+            assert_eq!(increment_business_count(&env, &business_a), 1);
+
+            assert_eq!(get_business_count(&env, &business_a), 1);
+            assert_eq!(get_business_count(&env, &business_b), 0);
+        });
+    }
+
+    #[test]
+    fn reads_maximum_stored_count() {
+        let env = Env::default();
+        let contract_id = env.register(AttestationContract, ());
+        let business = Address::generate(&env);
+
+        env.as_contract(&contract_id, || {
+            env.storage()
+                .instance()
+                .set(&DataKey::BusinessCount(business.clone()), &u64::MAX);
+
+            assert_eq!(get_business_count(&env, &business), u64::MAX);
+        });
+    }
+}
