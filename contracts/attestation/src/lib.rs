@@ -3845,6 +3845,9 @@ mod access_control_test;
 /// operations, and the `MIN_ADMIN_COUNT` / cooldown guard ordering.
 #[cfg(test)]
 mod admin_count_test;
+/// Focused adversarial tests for `dispute::update_anomaly_escalation` (issue #940).
+#[cfg(test)]
+mod anomaly_escalation_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod anomaly_test;
 #[cfg(test)]
