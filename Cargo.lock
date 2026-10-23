@@ -1815,7 +1815,6 @@ name = "veritasor-attestation-snapshot"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk",
- "veritasor-attestation",
 ]
 
 [[package]]

@@ -28,6 +28,7 @@ mod tests {
 
     use crate::{
         dynamic_fees::{self, FEE_BUCKET_WINDOW_SECONDS},
+        test_support::register_business,
         AttestationContract, AttestationContractClient,
     };
 
@@ -59,6 +60,8 @@ mod tests {
         seed: u8,
         expiry: Option<u64>,
     ) {
+        let admin = client.get_admin();
+        register_business(client, env, &admin, business);
         let root = make_root(env, seed);
         let period_str = String::from_str(env, period);
         client.submit_attestation(
@@ -321,6 +324,7 @@ mod tests {
         let period_str = String::from_str(&env, "202401");
         let expiry = now + FEE_BUCKET_WINDOW_SECONDS;
 
+        register_business(&client, &env, &admin, &business);
         client.submit_attestation(
             &business,
             &period_str,
@@ -575,6 +579,7 @@ mod tests {
         let period_str = String::from_str(&env, "202401");
         let expiry = now + FEE_BUCKET_WINDOW_SECONDS;
 
+        register_business(&client, &env, &admin, &business);
         client.submit_attestation(
             &business,
             &period_str,

@@ -18,6 +18,7 @@ extern crate std;
 use super::dispute::{DisputeOutcome, DisputeStatus, DisputeType};
 use super::*;
 use crate::access_control::ROLE_BUSINESS;
+use crate::test_support::register_business;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, BytesN, Env, String};
 
@@ -48,6 +49,7 @@ fn store_attestation(
     period: &String,
 ) {
     client.grant_role(admin, business, &ROLE_BUSINESS);
+    register_business(client, env, admin, business);
     let root = BytesN::from_array(env, &ROOT);
     client.submit_attestation(
         business,

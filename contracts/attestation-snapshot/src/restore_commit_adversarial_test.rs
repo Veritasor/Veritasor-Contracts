@@ -13,8 +13,8 @@
 extern crate std;
 
 use super::*;
-use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
-use soroban_sdk::{vec, Address, Env, String, Symbol, TryFromVal};
+use soroban_sdk::testutils::{Address as _, Ledger as _};
+use soroban_sdk::{vec, Address, Env, String};
 
 fn setup() -> (Env, AttestationSnapshotContractClient<'static>, Address) {
     let env = Env::default();
@@ -271,7 +271,22 @@ fn test_restore_commit_business_count_mismatch_aborts_before_any_write() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.restore_commit(&admin, &entries);
     }));
-    assert!(result.is_err(), "expected business_count mismatch to panic");
+    let message = match result {
+        Err(payload) => payload
+            .downcast_ref::<std::string::String>()
+            .cloned()
+            .or_else(|| {
+                payload
+                    .downcast_ref::<&str>()
+                    .map(|s| std::string::String::from(*s))
+            })
+            .unwrap_or_default(),
+        Ok(()) => std::string::String::new(),
+    };
+    assert!(
+        message.contains("restore aborted: business_count mismatch"),
+        "expected the business_count guard to abort the restore, got: {message}"
+    );
 
     // Nothing from the batch should be written — not even the valid entry.
     let period = String::from_str(&env, "2026-01");
@@ -279,25 +294,14 @@ fn test_restore_commit_business_count_mismatch_aborts_before_any_write() {
     assert!(client.get_snapshot(&business_b, &period).is_none());
     assert!(client.get_last_restore_id().is_none());
 
-    // The RestoreAbortedEvent should name the offending business and counts.
-    let events = env.events().all();
-    let aborted: std::vec::Vec<_> = events
-        .iter()
-        .filter_map(|(cid, topics, data)| {
-            if cid != client.address {
-                return None;
-            }
-            let sym = Symbol::try_from_val(&env, &topics.get(0)?).ok()?;
-            if sym != TOPIC_RESTORE_ABORTED {
-                return None;
-            }
-            RestoreAbortedEvent::try_from_val(&env, &data).ok()
-        })
-        .collect();
-    assert_eq!(aborted.len(), 1);
-    assert_eq!(aborted[0].business, business_a);
-    assert_eq!(aborted[0].declared_count, 2);
-    assert_eq!(aborted[0].actual_count, 1);
+    // The `RestoreAbortedEvent` carries the offending business and both counts,
+    // but it is rolled back together with the failed invocation and is therefore
+    // never observable on-chain. The host's diagnostic log is the only place the
+    // payload surfaces, so pin it there instead.
+    assert!(
+        message.contains("declared_count: 2") && message.contains("actual_count: 1"),
+        "abort diagnostics must report declared_count=2 actual_count=1, got: {message}"
+    );
 }
 
 // ── Finalized-epoch skip ──────────────────────────────────────────────────

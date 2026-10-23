@@ -29,6 +29,7 @@ extern crate std;
 use std::format;
 
 use crate::events::{BackfillCheckpointEvent, TOPIC_BACKFILL_CHECKPOINT};
+use crate::test_support::register_business;
 use crate::{AttestationContract, AttestationContractClient, BACKFILL_CHECKPOINT_INTERVAL};
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
 use soroban_sdk::{Address, BytesN, Env, String, Symbol, TryFromVal};
@@ -52,6 +53,8 @@ fn r(env: &Env, byte: u8) -> BytesN<32> {
 }
 
 fn submit_one(client: &AttestationContractClient, env: &Env, business: &Address, root_byte: u8) {
+    let admin = client.get_admin();
+    register_business(client, env, &admin, business);
     client.submit_attestation(
         business,
         &p(env, "2026-01"),

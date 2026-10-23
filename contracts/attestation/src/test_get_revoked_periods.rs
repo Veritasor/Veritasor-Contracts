@@ -2,6 +2,7 @@
 
 //! Focused adversarial coverage for the read-only `get_revoked_periods` query.
 
+use crate::test_support::register_business;
 use crate::{AttestationContract, AttestationContractClient};
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, BytesN, Env, String};
@@ -24,6 +25,8 @@ fn submit_and_revoke(
     period: &String,
     seed: u8,
 ) {
+    let admin = client.get_admin();
+    register_business(client, env, &admin, business);
     client.submit_attestation(
         business,
         period,

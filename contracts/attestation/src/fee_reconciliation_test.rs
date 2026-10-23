@@ -15,6 +15,7 @@ use std::format;
 use super::*;
 use crate::dynamic_fees::compute_fee;
 use crate::events::{AttestationSubmittedEvent, TOPIC_ATTESTATION_SUBMITTED};
+use crate::test_support::register_business;
 use proptest::prelude::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::testutils::Events as _;
@@ -58,6 +59,10 @@ fn submit(
     period: &str,
     root_byte: u8,
 ) {
+    // `submit_attestation` runs `registry::require_active_business`, so the
+    // business must be registered and approved first.
+    let admin = client.get_admin();
+    register_business(client, env, &admin, business);
     let period_s = String::from_str(env, period);
     let root = BytesN::from_array(env, &[root_byte; 32]);
     client.submit_attestation(
@@ -330,6 +335,7 @@ fn reconcile_batch_submission_fee_paid() {
         }
         let period_s = String::from_str(&ctx.env, p);
         let root = BytesN::from_array(&ctx.env, &[0xAA; 32]);
+        register_business(&ctx.client, &ctx.env, &ctx.client.get_admin(), &business);
         ctx.client.submit_attestation(
             &business,
             &period_s,
@@ -518,6 +524,7 @@ proptest! {
             let period_str = std::format!("pi-{i}");
             let period = String::from_str(&ctx.env, &period_str);
             let root = BytesN::from_array(&ctx.env, &[i as u8; 32]);
+            register_business(&ctx.client, &ctx.env, &ctx.client.get_admin(), &business);
             ctx.client.submit_attestation(
                 &business,
                 &period,

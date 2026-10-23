@@ -20,7 +20,7 @@ extern crate std;
 use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
 use soroban_sdk::{vec, Address, BytesN, Env, String};
-use veritasor_attestation::{AttestationContract, AttestationContractClient};
+use veritasor_attestation::{AttestationContract, AttestationContractClient, ROLE_BUSINESS};
 
 // ════════════════════════════════════════════════════════════════════
 //  Helpers (mirroring the `full-tests` module so the cases below are a
@@ -71,7 +71,32 @@ fn balance(env: &Env, token_addr: &Address, who: &Address) -> i128 {
     TokenClient::new(env, token_addr).balance(who)
 }
 
+/// Register and approve `business` so `submit_attestation` clears the
+/// `registry::require_active_business` gate.
+fn register_business(
+    client: &AttestationContractClient,
+    env: &Env,
+    admin: &Address,
+    business: &Address,
+) {
+    if client.is_business_active(business) {
+        return;
+    }
+    if client.get_business(business).is_none() {
+        client.grant_role(admin, business, &ROLE_BUSINESS);
+        client.register_business(
+            business,
+            &BytesN::from_array(env, &[1u8; 32]),
+            &soroban_sdk::Symbol::new(env, "US"),
+            &soroban_sdk::Vec::new(env),
+        );
+    }
+    client.approve_business(admin, business);
+}
+
 fn submit(client: &AttestationContractClient, env: &Env, business: &Address, index: u32) {
+    let admin = client.get_admin();
+    register_business(client, env, &admin, business);
     let period = String::from_str(env, &std::format!("P-{index:04}"));
     let root = BytesN::from_array(env, &[index as u8; 32]);
     client.submit_attestation(

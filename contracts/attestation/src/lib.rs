@@ -537,7 +537,7 @@ impl AttestationContract {
         fees::get_pending_collector_rotation(&env)
     }
 
-    pub fn set_attestor_staking_contract(env: Env, caller: Address, staking_contract: Address) {
+    pub fn set_attestor_staking_contract(env: Env, caller: Address, _staking_contract: Address) {
         // This function is superseded by the time-locked rebinding flow.
         // Use `propose_staking_contract` followed by `commit_staking_contract`
         // (after at least 86 400 s / 24 h) instead.
@@ -1371,7 +1371,7 @@ impl AttestationContract {
     pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
         if let Some(att_data) = env
             .storage()
-            .persistent()
+            .instance()
             .get::<_, AttestationData>(&DataKey::Attestation(business.clone(), period.clone()))
         {
             env.storage()
@@ -1381,24 +1381,20 @@ impl AttestationContract {
         }
 
         // Try reading from archive
-        let archive_key = DataKey::AttestationSnapshot(business.clone(), period.clone());
+        let archive_key = DataKey::ArchivedAttestation(business.clone(), period.clone());
         if let Some(archived_att_data) = env
             .storage()
-            .persistent()
+            .instance()
             .get::<_, AttestationData>(&archive_key)
         {
-            let current_config = network_config::get_config(&env);
-
             // Rehydrate back to active storage
             let active_key = DataKey::Attestation(business.clone(), period.clone());
             env.storage()
-                .persistent()
+                .instance()
                 .set(&active_key, &archived_att_data);
-            env.storage().persistent().extend_ttl(
-                &active_key,
-                current_config.min_persistent_entry_ttl,
-                current_config.max_entry_ttl,
-            );
+            env.storage()
+                .instance()
+                .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
 
             // Emit rehydrate event
             events::emit_rehydrated_from_archive(&env, &business, &period, archived_att_data.3);
@@ -1861,12 +1857,9 @@ impl AttestationContract {
                 .instance()
                 .get::<_, AttestationData>(&DataKey::Attestation(business.clone(), period.clone()))
             {
-                let current_config = network_config::get_config(&env);
-                env.storage().persistent().extend_ttl(
-                    &DataKey::Attestation(business.clone(), period.clone()),
-                    current_config.min_persistent_entry_ttl,
-                    current_config.max_entry_ttl,
-                );
+                env.storage()
+                    .instance()
+                    .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
                 result.push_back((
                     period.clone(),
                     Some(att_data.clone()),
@@ -1876,23 +1869,19 @@ impl AttestationContract {
             }
 
             if !found {
-                let archive_key = DataKey::AttestationSnapshot(business.clone(), period.clone());
+                let archive_key = DataKey::ArchivedAttestation(business.clone(), period.clone());
                 if let Some(archived_att_data) = env
                     .storage()
-                    .persistent()
+                    .instance()
                     .get::<_, AttestationData>(&archive_key)
                 {
-                    let current_config = network_config::get_config(&env);
-
                     let active_key = DataKey::Attestation(business.clone(), period.clone());
                     env.storage()
-                        .persistent()
+                        .instance()
                         .set(&active_key, &archived_att_data);
-                    env.storage().persistent().extend_ttl(
-                        &active_key,
-                        current_config.min_persistent_entry_ttl,
-                        current_config.max_entry_ttl,
-                    );
+                    env.storage()
+                        .instance()
+                        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
 
                     events::emit_rehydrated_from_archive(
                         &env,
@@ -1900,7 +1889,7 @@ impl AttestationContract {
                         &period,
                         archived_att_data.3,
                     );
-                    env.storage().persistent().remove(&archive_key);
+                    env.storage().instance().remove(&archive_key);
 
                     result.push_back((
                         period.clone(),
@@ -2145,7 +2134,7 @@ impl AttestationContract {
     ) {
         access_control::require_admin(&env, &caller);
         replay_protection::verify_and_increment_nonce(&env, &caller, NONCE_CHANNEL_ADMIN, nonce);
-        multisig::emergency_pause(&env, &signer1, &signer2);
+        multisig::emergency_pause(&env, &caller, &signer1, &signer2);
     }
 
     // ── Multisig governance ─────────────────────────────────────────
@@ -3878,9 +3867,6 @@ mod dispute_adversarial_test;
 mod dispute_attestation_index_adversarial_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod dispute_test;
-/// Focused adversarial tests for `set_dispute_deadline`.
-#[cfg(test)]
-mod test_set_dispute_deadline;
 #[cfg(all(test, feature = "full-tests"))]
 mod dynamic_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
@@ -3949,6 +3935,12 @@ mod revocation_test;
 /// interaction with `require_not_paused`, and authorization boundary tests.
 #[cfg(test)]
 mod set_paused_test;
+/// Focused adversarial tests for `set_dispute_deadline`.
+#[cfg(test)]
+mod test_set_dispute_deadline;
+/// Shared helpers (business registration, common fixtures) for test modules.
+#[cfg(test)]
+mod test_support;
 
 #[cfg(all(test, feature = "full-tests"))]
 #[cfg(test)]
@@ -4111,6 +4103,9 @@ mod relayer_gas_attribution_test {
             &attestor,
         );
 
+        // Delegated submission still requires an active registered business.
+        crate::test_support::register_business(&client, &env, &admin, &business);
+
         // Submit attestation as attestor (delegated submission)
         client.submit_attestation_as_attestor(
             &attestor,
@@ -4138,6 +4133,9 @@ mod relayer_gas_attribution_test {
         // Mint tokens to business for fee payment
         token_client.mint(&business, &10_000_000i128);
 
+        let admin = client.get_admin();
+        crate::test_support::register_business(&client, &env, &admin, &business);
+
         // Submit attestation directly by business (not delegated)
         client.submit_attestation(
             &business,
@@ -4151,7 +4149,7 @@ mod relayer_gas_attribution_test {
         );
 
         // Check relayer gas accumulation - should be 0 for business submission
-        let relayer_gas = dynamic_fees::get_relayer_gas(&env, &business);
+        let relayer_gas = relayer_gas_of(&env, &client.address, &business);
         assert_eq!(
             relayer_gas, 0,
             "Business submission should not accumulate relayer gas"
@@ -4179,14 +4177,7 @@ mod relayer_gas_attribution_test {
         );
 
         // Batch submission requires an active (registered + approved) business.
-        client.grant_role(&admin, &business, &ROLE_BUSINESS);
-        client.register_business(
-            &business,
-            &BytesN::from_array(&env, &[1u8; 32]),
-            &Symbol::new(&env, "US"),
-            &Vec::new(&env),
-        );
-        client.approve_business(&admin, &business);
+        crate::test_support::register_business(&client, &env, &admin, &business);
 
         // Create batch items
         let mut items = Vec::new(&env);
@@ -4208,7 +4199,7 @@ mod relayer_gas_attribution_test {
         client.submit_batch_as_attestor(&attestor, &items);
 
         // Check relayer gas accumulation
-        let relayer_gas = dynamic_fees::get_relayer_gas(&env, &attestor);
+        let relayer_gas = relayer_gas_of(&env, &client.address, &attestor);
         assert!(
             relayer_gas > 0,
             "Relayer should have accumulated gas from batch submission"
@@ -4239,6 +4230,8 @@ mod relayer_gas_attribution_test {
             &attestor,
         );
 
+        crate::test_support::register_business(&client, &env, &admin, &business);
+
         // First submission
         client.submit_attestation_as_attestor(
             &attestor,
@@ -4264,7 +4257,7 @@ mod relayer_gas_attribution_test {
             &None,
         );
 
-        let gas_after_second = dynamic_fees::get_relayer_gas(&env, &attestor);
+        let gas_after_second = relayer_gas_of(&env, &client.address, &attestor);
         assert!(
             gas_after_second > gas_after_first,
             "Gas should accumulate across multiple submissions"
@@ -4278,7 +4271,7 @@ mod relayer_gas_attribution_test {
         let attestor = Address::generate(&env);
 
         // Check relayer gas for attestor with zero prior activity
-        let relayer_gas = dynamic_fees::get_relayer_gas(&env, &attestor);
+        let relayer_gas = relayer_gas_of(&env, &client.address, &attestor);
         assert_eq!(
             relayer_gas, 0,
             "New relayer should have zero gas accumulation"
@@ -4317,6 +4310,8 @@ mod relayer_gas_attribution_test {
             &admin,
             &attestor2,
         );
+
+        crate::test_support::register_business(&client, &env, &admin, &business);
 
         // First relayer submits
         client.submit_attestation_as_attestor(

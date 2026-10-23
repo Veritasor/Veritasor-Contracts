@@ -247,7 +247,9 @@ fn vw_flash_vote_attack_blocked_on_add_owner() {
         "attacker MUST NOT be able to approve a proposal whose snapshot predates their promotion",
     );
 
-    client.approve_proposal(&owner2, &victim_id, &1u64);
+    // `owner2` has not yet used the multisig nonce channel, so its first
+    // approval must present nonce 0 (nonces are tracked per actor/channel).
+    client.approve_proposal(&owner2, &victim_id, &0u64);
     assert!(
         client
             .get_proposal_approvals(&victim_id)
@@ -576,10 +578,12 @@ fn vw_snapshot_action_tag_for_every_variant() {
         (ProposalAction::EmergencyRotateAdmin(new_addr.clone()), 9),
     ];
 
-    let mut nonce: u64 = 0;
     for (i, (action, expected_tag)) in cases.iter().cloned().enumerate() {
         let proposer = owners.get((i % 3) as u32).unwrap();
-        let id = client.create_proposal(&proposer, &action, &nonce);
+        // Multisig nonces are tracked per (actor, channel), so each proposer
+        // starts at 0 and increments by one per call.
+        let actor_nonce = (i / 3) as u64;
+        let id = client.create_proposal(&proposer, &action, &actor_nonce);
         let snap = client.get_proposal_snapshot(&id).unwrap();
         assert_eq!(
             snap.action_tag, expected_tag,

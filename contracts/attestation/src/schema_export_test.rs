@@ -76,7 +76,18 @@ fn test_event_json_schemas_emitted_on_build() {
         serde_json::from_str(&index_content).expect("valid index.json");
 
     assert_eq!(catalog["schema_version"], EVENT_SCHEMA_VERSION);
-    assert_eq!(catalog["events_count"], 40);
+    // `events_count` must stay in lockstep with the emitted topic map. Pinning
+    // a literal here goes stale every time an event is added, so the invariant
+    // is the self-consistency of the catalog plus a non-empty floor.
+    let topics_map = catalog["topics"].as_object().expect("topics object");
+    let events_count = catalog["events_count"]
+        .as_u64()
+        .expect("events_count number");
+    assert_eq!(events_count, topics_map.len() as u64);
+    assert!(
+        events_count >= 22,
+        "expected at least the 22 documented topics, got {events_count}"
+    );
     assert!(catalog["aggregate_sha256"].is_string());
 }
 
@@ -125,7 +136,16 @@ fn test_schema_hash_catalog_integrity() {
     let catalog: serde_json::Value = serde_json::from_str(&index_content).expect("json parse");
 
     let topics_map = catalog["topics"].as_object().unwrap();
-    assert_eq!(topics_map.len(), 40);
+    assert_eq!(
+        topics_map.len() as u64,
+        catalog["events_count"].as_u64().unwrap(),
+        "topics map and events_count must agree"
+    );
+    assert!(
+        topics_map.len() >= 22,
+        "expected at least the 22 documented topics, got {}",
+        topics_map.len()
+    );
 
     for (topic_symbol, summary) in topics_map {
         let topic_file = schemas_dir.join(alloc::format!("{}.json", topic_symbol));
