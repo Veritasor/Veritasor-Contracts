@@ -3938,6 +3938,8 @@ mod rate_limit_test;
 mod registry_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod replay_nonce_test;
+#[cfg(test)]
+mod require_admin_adversarial_test;
 /// Focused tests for `access_control::require_operator` (closes issue #require-operator).
 /// Runs under the default test profile — no feature flag required.
 #[cfg(test)]
