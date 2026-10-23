@@ -18,7 +18,7 @@ use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{Address, Env, String, Vec};
 
 /// Fresh contract initialised with `admin` and a zero replay nonce.
-fn new_client(env: &Env, admin: &Address) -> AggregatedAttestationsContractClient<'_> {
+fn new_client<'a>(env: &'a Env, admin: &Address) -> AggregatedAttestationsContractClient<'a> {
     let contract_address = env.register_contract(None, AggregatedAttestationsContract);
     let client = AggregatedAttestationsContractClient::new(env, &contract_address);
     client.initialize(admin, &0u64);
@@ -35,7 +35,7 @@ fn activate_admin_without_pending_rotation_panics_and_preserves_admin() {
     assert_eq!(client.get_admin(), admin);
 
     // No rotation was ever proposed: activation must be rejected.
-    let result = std::panic::catch_unwind(|| client.activate_admin());
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| client.activate_admin()));
     assert!(
         result.is_err(),
         "activation without pending admin must panic"
@@ -89,7 +89,7 @@ fn activate_admin_one_tick_early_panics_and_keeps_pending_rotation() {
     // One tick before the activation time the rotation must be rejected and the
     // original admin retained.
     env.ledger().with_mut(|l| l.timestamp = delay - 1);
-    let result = std::panic::catch_unwind(|| client.activate_admin());
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| client.activate_admin()));
     assert!(
         result.is_err(),
         "activation before the time-lock must panic"
@@ -120,7 +120,7 @@ fn activate_admin_success_clears_pending_rotation() {
 
     // The pending rotation is cleared on success, so a second activation has
     // nothing to promote and must panic without changing the admin.
-    let result = std::panic::catch_unwind(|| client.activate_admin());
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| client.activate_admin()));
     assert!(result.is_err(), "second activation must panic");
     assert_eq!(client.get_admin(), new_admin);
 }

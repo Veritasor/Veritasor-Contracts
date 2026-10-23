@@ -39,6 +39,15 @@ fn submit_attestation(
     business: &Address,
     period: &str,
 ) {
+    let admin = client.get_admin();
+    client.grant_role(&admin, business, &ROLE_BUSINESS);
+    client.register_business(
+        business,
+        &BytesN::from_array(env, &[7u8; 32]),
+        &soroban_sdk::symbol_short!("US"),
+        &soroban_sdk::Vec::new(env),
+    );
+    client.approve_business(&admin, business);
     let root = BytesN::from_array(env, &[7u8; 32]);
     client.submit_attestation(
         business,
