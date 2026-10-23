@@ -3881,6 +3881,9 @@ mod dispute_test;
 /// Focused adversarial tests for `set_dispute_deadline`.
 #[cfg(test)]
 mod test_set_dispute_deadline;
+/// Focused adversarial tests for `get_dispute_deadline`.
+#[cfg(test)]
+mod test_get_dispute_deadline;
 #[cfg(all(test, feature = "full-tests"))]
 mod dynamic_fees_test;
 #[cfg(all(test, feature = "full-tests"))]
@@ -3942,6 +3945,9 @@ mod replay_nonce_test;
 /// Runs under the default test profile — no feature flag required.
 #[cfg(test)]
 mod require_operator_test;
+/// Focused adversarial coverage for `access_control::require_business` (issue #897).
+#[cfg(test)]
+mod require_business_test;
 #[cfg(all(test, feature = "full-tests"))]
 mod revocation_test;
 /// Focused tests for `set_paused` in access_control.rs (issue #369).
